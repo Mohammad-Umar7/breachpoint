@@ -230,7 +230,7 @@ export class UIManager {
       const net = s.netDebug;
       this.el.drawCalls.textContent =
         `${s.drawCalls} draws · ${(s.triangles / 1000).toFixed(1)}k tris`
-        + (net ? ` · ${net.bodies}b built:${net.built} buf:${net.interp}ms` : '');
+        + (net ? ` · ${net.bodies}b buf:${net.interp}ms hit:${net.confirmed}/${net.claimed}` : '');
     }
 
     // --- damage vignette decay ---

@@ -18,6 +18,7 @@
 
 import * as THREE from 'three';
 import { damp } from '../core/MathUtils.js';
+import { getWeaponDef } from '../weapons/WeaponDefinitions.js';
 import { FLAG } from './protocol.js';
 
 /** Parts that make up a body, and which material role each takes. */
@@ -102,6 +103,7 @@ export class RemotePlayers {
       // Head follows aim, clamped so a straight-up look does not snap the neck.
       body.head.rotation.x = THREE.MathUtils.clamp(-s.pitch, -0.7, 0.7);
 
+      this._setWeapon(body, s.weapon);
       this._animate(body, s, dt);
       this._updateTag(body, s, roster.get(id));
     }
@@ -266,10 +268,67 @@ export class RemotePlayers {
       }
     }
 
+    // Weapon holder, animated in _animate. Parented to the body rather than to
+    // the arm on purpose: the arm swings through a wide aim blend, and a child
+    // of it would need its rotation counter-cancelled at every angle. Carrying
+    // it on the body and moving it between a hip pose and a shouldered pose is
+    // what Enemy does, and it reads correctly from every angle.
+    record.weaponGroup = new THREE.Group();
+    record.weaponGroup.position.set(0.22, 1.28, -0.26);
+    group.add(record.weaponGroup);
+    record.weaponId = null;
+
     this._buildTag(record);
     this.scene.add(group);
     this.created++;
     return record;
+  }
+
+  /**
+   * Put the weapon the player is actually holding into their hands.
+   *
+   * Clones the real authored view model rather than approximating it with boxes,
+   * so the silhouette you see across the map is the same gun you would be
+   * holding. `Object3D.clone()` shares geometry AND materials with the original,
+   * so this costs a handful of Mesh objects and no GPU memory — and because the
+   * materials are shared, it triggers no shader recompilation either.
+   *
+   * Rebuilt only when the weapon changes, which is a deliberate player action
+   * and therefore rare.
+   */
+  _setWeapon(body, weaponId) {
+    if (body.weaponId === weaponId) return;
+    body.weaponId = weaponId;
+
+    // Drop the previous one. Geometry and materials belong to the shared source
+    // model, so nothing here may be disposed — only detached.
+    for (const child of [...body.weaponGroup.children]) body.weaponGroup.remove(child);
+
+    // The snapshot carries the WEAPON id ('rifle'), which is not the MODEL id
+    // ('ar15') — most match, the carbine does not. Looking the model up by
+    // weapon id silently produced an empty weapon group, so the gun was
+    // "there" with zero meshes in it.
+    const modelId = getWeaponDef(weaponId)?.modelId ?? weaponId;
+    const source = this.assets.getModel?.(modelId);
+    if (!source) return;          // procedural-only weapon, or model missing
+
+    const model = source.clone(true);
+    model.traverse((o) => {
+      if (!o.isMesh) return;
+      o.castShadow = true;
+      o.receiveShadow = false;
+      // The source is a view model on the weapon layer, which the world camera
+      // cannot see. A gun in a remote player's hands is world geometry.
+      o.layers.set(0);
+      o.frustumCulled = true;
+    });
+    // Anchors (sight/muzzle/reticle empties) come along in the clone and are
+    // harmless, but the reticle would draw a floating red dot in mid-air.
+    for (const name of ['reticle', 'sight', 'eject']) {
+      const anchor = model.getObjectByName(name);
+      if (anchor) anchor.visible = false;
+    }
+    body.weaponGroup.add(model);
   }
 
   _buildTag(record) {
@@ -353,6 +412,18 @@ export class RemotePlayers {
     if (body.armL) {
       body.armL.rotation.x = THREE.MathUtils.lerp(swing * 0.55, -1.3, aim);
       body.armL.rotation.z = THREE.MathUtils.lerp(0, 0.45, aim);
+    }
+
+    // Weapon rides between a relaxed hip carry and a shouldered pose, tracking
+    // the same aim blend as the arms so gun and hands move together.
+    if (body.weaponGroup) {
+      body.weaponGroup.position.set(
+        THREE.MathUtils.lerp(0.22, 0.06, aim),
+        THREE.MathUtils.lerp(1.28, 1.42, aim),
+        THREE.MathUtils.lerp(-0.26, -0.34, aim),
+      );
+      body.weaponGroup.rotation.x = THREE.MathUtils.lerp(0.25, -s.pitch * 0.9, aim);
+      body.weaponGroup.rotation.y = THREE.MathUtils.lerp(-0.12, 0, aim);
     }
 
     // Crouch: drop the body and shorten the stride.

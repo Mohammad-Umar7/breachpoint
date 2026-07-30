@@ -80,6 +80,8 @@ export class NetworkClient {
     this.ping = 0;
     this.lastError = null;
     /** Diagnostics: how often the server has moved us against our will. */
+    this.shotsClaimed = 0;
+    this.hitsConfirmed = 0;
     this.corrections = 0;
     this.respawns = 0;
 
@@ -263,6 +265,11 @@ export class NetworkClient {
    */
   sendShot({ origin, direction, weaponId, hits }) {
     if (!this.connected || !hits?.length) return;
+    // Counted so the F3 panel can separate "my client never claimed a hit"
+    // (a local aiming / raycast problem) from "I claimed it and the server
+    // refused" (a validation problem). Without that split, "my shots do
+    // nothing" is unactionable.
+    this.shotsClaimed++;
     this._send(MSG.SHOT, {
       q: ++this._inputSeq,
       o: [round2(origin.x), round2(origin.y), round2(origin.z)],
@@ -320,6 +327,7 @@ export class NetworkClient {
         break;
 
       case MSG.HIT: {
+        if (msg.a === this.selfId) this.hitsConfirmed++;
         const victim = this.players.get(msg.v);
         if (victim) victim.hp = msg.hp;
         this.onHit?.({

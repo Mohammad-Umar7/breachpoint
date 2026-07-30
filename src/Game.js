@@ -669,14 +669,26 @@ export class Game {
 
     this._updateFps(dt);
 
-    if (this.state === GAME_STATE.PLAYING) {
-      this._updatePlaying(dt);
-    } else {
-      this._updateIdle(dt);
+    // endFrame() clears the one-frame press edges, and it MUST run even if
+    // something above it throws.
+    //
+    // It used to be the last statement after _render(). When a renderer
+    // exception started firing every frame, endFrame() was skipped every frame
+    // with it — so `keysPressed` and `mousePressed` were never cleared and every
+    // edge latched permanently: weapon switching stuck on whichever slot was
+    // pressed first, and semi-auto fire and ADS toggles misbehaved. The visible
+    // symptom was "the controls are stuck", which points nowhere near a
+    // rendering bug. A `finally` makes that failure mode impossible.
+    try {
+      if (this.state === GAME_STATE.PLAYING) {
+        this._updatePlaying(dt);
+      } else {
+        this._updateIdle(dt);
+      }
+      this._render(dt);
+    } finally {
+      this.input.endFrame();
     }
-
-    this._render(dt);
-    this.input.endFrame();
   }
 
   _updateFps(dt) {
@@ -1049,6 +1061,8 @@ export class Game {
           bodies: this.remotes?.bodies.size ?? 0,
           built: this.remotes?.created ?? 0,
           interp: Math.round(this.net.interpDelay),
+          claimed: this.net.shotsClaimed,
+          confirmed: this.net.hitsConfirmed,
         } : null,
         drawCalls: this.renderer.info.render.calls,
         triangles: this.renderer.info.render.triangles,
