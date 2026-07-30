@@ -1,0 +1,67 @@
+# Render Blueprint — deploys BOTH halves of Breachpoint on the free tier.
+#
+# Render reads this file and creates both services itself, so there are no
+# fields to fill in by hand and nothing to wire together afterwards.
+#
+#   render.com  ->  New  ->  Blueprint  ->  pick the breachpoint repo  ->  Apply
+#
+# The two services:
+#   breachpoint-server  the Node game server (WebSocket)
+#   breachpoint         the game itself, served as static files
+#
+# The static site's VITE_SERVER_HOST is filled in from the server's own
+# hostname via fromService, which is why nothing needs configuring manually.
+# That is also why NetworkClient accepts a bare hostname: a Blueprint can
+# inject another service's host, but it cannot prepend "wss://" to it.
+
+services:
+  # ------------------------------------------------------------------ server
+  - type: web
+    name: breachpoint-server
+    runtime: node
+    plan: free
+    # Change to whichever is closest to the people playing — ping matters far
+    # more than anything else in a shooter. Options include: oregon, ohio,
+    # virginia, frankfurt, singapore.
+    region: frankfurt
+    # Build from the repo root, NOT from server/. The server imports the
+    # client's own weapon definitions and arena data (../src/...), which is what
+    # stops the two sides drifting — so it needs the whole tree present.
+    rootDir: .
+    buildCommand: cd server && npm install
+    startCommand: node server/index.js
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+
+  # ------------------------------------------------------------------ client
+  - type: web
+    name: breachpoint
+    runtime: static
+    buildCommand: npm install && npm run build
+    staticPublishPath: ./dist
+    envVars:
+      # Injected from the server service above — no manual step.
+      - key: VITE_SERVER_HOST
+        fromService:
+          name: breachpoint-server
+          type: web
+          property: host
+    headers:
+      # Vite fingerprints these filenames, so the bytes behind a given URL can
+      # never change. Cache them forever.
+      - path: /assets/*
+        name: Cache-Control
+        value: public, max-age=31536000, immutable
+      # Model filenames are NOT fingerprinted, so they must revalidate or a
+      # rebuilt weapon would never reach someone who had already played.
+      - path: /models/*
+        name: Cache-Control
+        value: public, max-age=86400, must-revalidate
+    routes:
+      # Single-page app: send unknown paths to index.html so an invite link
+      # like /?room=ABC23 still loads the game.
+      - type: rewrite
+        source: /*
+        destination: /index.html

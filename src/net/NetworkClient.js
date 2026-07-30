@@ -53,13 +53,24 @@ export const NET_STATE = Object.freeze({
 export class NetworkClient {
   constructor({ url } = {}) {
     /**
-     * Server URL. Set VITE_SERVER_URL at build time for production; in dev it
-     * falls back to the same host on the server's default port, which is what
-     * `npm run dev` alongside `cd server && npm start` gives you.
+     * Where the game server lives, resolved in order of specificity:
+     *
+     *   VITE_SERVER_URL   a full url, e.g. wss://my-server.onrender.com
+     *   VITE_SERVER_HOST  a bare hostname; wss:// is added
+     *   (neither)         same host on port 8787, which is what running
+     *                     `npm run dev` alongside `cd server && npm start`
+     *                     gives you locally
+     *
+     * VITE_SERVER_HOST exists for Render's blueprint, which can inject another
+     * service's hostname automatically but cannot prepend a scheme to it. That
+     * one variable is what makes deployment need no manual wiring at all.
      */
+    const env = (typeof import.meta !== 'undefined' && import.meta.env) || {};
+    const secure = location.protocol === 'https:';
     this.url = url
-      || (typeof import.meta !== 'undefined' && import.meta.env?.VITE_SERVER_URL)
-      || `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.hostname}:8787`;
+      || env.VITE_SERVER_URL
+      || (env.VITE_SERVER_HOST && `${secure ? 'wss' : 'ws'}://${env.VITE_SERVER_HOST}`)
+      || `${secure ? 'wss' : 'ws'}://${location.hostname}:8787`;
 
     this.state = NET_STATE.OFFLINE;
     this.socket = null;
