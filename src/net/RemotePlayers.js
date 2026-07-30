@@ -187,13 +187,32 @@ export class RemotePlayers {
       visor: this.assets.getMaterial('enemyEye').clone(),
     };
     mats.body.color.setHex(tint);
-    for (const m of Object.values(mats)) m.emissive = new THREE.Color(0x000000);
+
+    /**
+     * Materials that can take a hit flash — i.e. that actually have an
+     * emissive channel.
+     *
+     * This MUST NOT include the visor. `enemyEye` is a MeshBasicMaterial, which
+     * has no emissive uniform, and assigning `.emissive` to one is catastrophic
+     * rather than merely useless: three.js's refreshUniformsCommon does
+     *
+     *     if ( material.emissive ) uniforms.emissive.value.copy( ... )
+     *
+     * so bolting the property on makes it take that branch, then dereference a
+     * uniform that does not exist. The result is a TypeError thrown inside the
+     * renderer on every frame for every visor mesh — nearly 12,000 of them in
+     * one session — which ground the game to a halt the moment a second player
+     * appeared, on LAN and hosted alike. Enemy.js excludes the eye from its own
+     * flash list for exactly this reason.
+     */
+    const flashable = [mats.body, mats.gear, mats.skin, mats.helmet]
+      .filter((m) => m.emissive !== undefined);
 
     const group = new THREE.Group();
     group.name = `remote_${id}`;
 
     const record = {
-      id, name, group, mats, flash: 0, phase: Math.random() * 6.28,
+      id, name, group, mats, flashMats: flashable, flash: 0, phase: Math.random() * 6.28,
       head: null, legL: null, legR: null, armL: null, armR: null,
       // The model stands with its feet at y=0, but the server reports the
       // player's CAPSULE CENTRE. Without this offset every body floats.
@@ -344,7 +363,9 @@ export class RemotePlayers {
     if (body.flash > 0) {
       body.flash = Math.max(0, body.flash - dt * 5);
       const k = body.flash;
-      for (const m of Object.values(body.mats)) m.emissive.setRGB(0.9 * k, 0.15 * k, 0.12 * k);
+      // flashMats only — see the note in _create. Iterating every material here
+      // would dereference `.emissive` on the visor's MeshBasicMaterial.
+      for (const m of body.flashMats) m.emissive.setRGB(0.9 * k, 0.15 * k, 0.12 * k);
     }
   }
 
