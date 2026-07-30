@@ -1,0 +1,48 @@
+# Fly.io config for the Breachpoint game server.
+#
+# The build context is the repository ROOT, not server/, because the server
+# imports the client's own weapon definitions and arena data — that shared
+# import is what stops the two sides drifting.
+#
+#   fly launch --no-deploy      # once, to claim an app name
+#   fly deploy
+#   fly regions add fra sin     # add regions as you get players
+#   fly scale count 3
+#
+# Rename `app` to whatever `fly launch` gives you.
+
+app = "breachpoint-server"
+primary_region = "fra"
+
+[build]
+  dockerfile = "server/Dockerfile"
+
+[env]
+  PORT = "8080"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # WebSockets are long-lived, so the machine must not be stopped underneath
+  # a live match. auto_start brings it back on the next connection.
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type = "connections"
+    soft_limit = 200
+    hard_limit = 400
+
+[[http_service.checks]]
+  interval = "20s"
+  timeout = "4s"
+  grace_period = "10s"
+  method = "GET"
+  path = "/health"
+
+# Smallest machine Fly offers. A 30 Hz tick relaying eight players is nowhere
+# near CPU-bound — scale up only if you add server-side physics later.
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
