@@ -170,6 +170,26 @@ export const LIMITS = Object.freeze({
   /** Fire-rate allowance: 0.8 lets a client be 20% early, absorbing timer
    *  jitter without permitting a meaningful rate hack. */
   fireIntervalSlack: 0.8,
+  /**
+   * Rounds a player may bank, per weapon.
+   *
+   * Fire rate is a token bucket for the same reason movement is: the server
+   * cannot see when you pulled the trigger, only when the message reached it,
+   * and networks deliver in bursts. Comparing arrival gaps against the weapon's
+   * minimum interval throws away real shots — measured at a legitimate 720 RPM,
+   * evenly delivered fire registered 5 of 5 rounds while the same fire arriving
+   * in pairs registered 1 of 5.
+   *
+   * That is what "my bullets go straight through him" was. It is asymmetric
+   * between players because it depends on each one's own path to the server,
+   * so whoever had the steadier connection appeared to land shots while the
+   * other appeared to be shooting blanks.
+   *
+   * Five rounds of burst covers realistic bunching. Sustained rate is still
+   * capped, so the worst a rate hack achieves is five rounds early and then
+   * the legitimate rate for as long as it keeps firing.
+   */
+  shotBurst: 5,
   /** Beyond a weapon's range * this, a hit claim is discarded. */
   rangeSlack: 1.25,
   /** Inputs per second above which a client is throttled. */

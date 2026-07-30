@@ -174,8 +174,12 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   for (let i = 0; i < 40; i++) a.shootAt(b.id, 'torso');   // no delay at all
   await sleep(400);
   const spamHits = a.drain(MSG.HIT).length + a.drain(MSG.KILL).length;
-  check('fire-rate spam is throttled', spamHits <= 2,
-    `${spamHits} of 40 instant shots registered`);
+  // Fire rate is a token bucket, so a burst of up to LIMITS.shotBurst rounds is
+  // allowed through before the sustained rate takes over — that headroom is
+  // what stops a jittery connection losing legitimate shots. What must NOT
+  // happen is 40 rounds landing at once.
+  check('fire-rate spam is throttled', spamHits <= LIMITS.shotBurst + 1,
+    `${spamHits} of 40 instant shots registered (burst allowance ${LIMITS.shotBurst})`);
 
   // --- self damage ---------------------------------------------------------
   a.clear();
@@ -184,8 +188,13 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   check('cannot damage yourself', a.drain(MSG.HIT).length === 0);
 
   // --- headshot multiplier ------------------------------------------------
+  // Put B back to full health first. The spam test above now lands its whole
+  // burst allowance, which leaves B low enough that a 48-damage headshot kills
+  // instead of registering — the check would then read a KILL as a missing HIT.
   a.clear();
-  await sleep(300);
+  for (let i = 0; i < 6 && a; i++) { a.shootAt(b.id, 'torso'); await sleep(90); }
+  await sleep(MATCH_RULES.respawnDelaySec * 1000 + 700);
+  a.clear();
   a.shootAt(b.id, 'head');
   await sleep(250);
   const hs = a.drain(MSG.HIT)[0];

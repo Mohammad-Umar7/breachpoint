@@ -89,7 +89,8 @@ class Player {
     this.lastInputAt = 0;
     /** Movement token bucket, in metres. See LIMITS.moveBurstMetres. */
     this.moveBudget = LIMITS.moveBurstMetres;
-    this.lastShotAt = new Map();  // weaponId -> ms
+    /** weaponId -> { tokens, at } fire-rate bucket. See LIMITS.shotBurst. */
+    this.shotBudget = new Map();
     this.lastSeenAt = Date.now();
     this.lastPongAt = 0;
 
@@ -496,10 +497,22 @@ function handleShot(player, msg) {
 
   // Rate limit per weapon, so switching weapons cannot be used to fire faster
   // than any single one allows.
+  //
+  // A token bucket, NOT a minimum gap between arrivals. The server has no way
+  // to know when the trigger was actually pulled — only when the message got
+  // here — and a network that briefly delays one packet delivers it together
+  // with the next. Judged on arrival gaps that reads as firing too fast, and
+  // the round is dropped with nothing sent back, so the shooter sees their
+  // bullets pass through the target and do nothing. See LIMITS.shotBurst.
   const now = Date.now();
-  const last = player.lastShotAt.get(weapon.id) ?? 0;
-  if (now - last < minFireInterval(weapon) * 1000) return;
-  player.lastShotAt.set(weapon.id, now);
+  const rec = player.shotBudget.get(weapon.id) ?? { tokens: LIMITS.shotBurst, at: now };
+  const elapsed = Math.max(0, (now - rec.at) / 1000);
+  const allowedPerSec = 1 / minFireInterval(weapon);
+  rec.tokens = Math.min(LIMITS.shotBurst, rec.tokens + allowedPerSec * elapsed);
+  rec.at = now;
+  if (rec.tokens < 1) { player.shotBudget.set(weapon.id, rec); return; }
+  rec.tokens -= 1;
+  player.shotBudget.set(weapon.id, rec);
 
   const hits = Array.isArray(msg.h) ? msg.h.slice(0, 12) : [];
   if (!hits.length) return;

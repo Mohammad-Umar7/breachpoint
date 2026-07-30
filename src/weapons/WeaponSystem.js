@@ -687,6 +687,38 @@ export class WeaponSystem {
           excludeCollider: this.player.collider,
           filter: (tag) => !!tag && tag.kind !== TAG_KIND.PLAYER,
         });
+
+        // Other players have to be tested separately, exactly as _castBullet
+        // does — they are drawn by RemotePlayers and are NOT in the physics
+        // world, so a physics raycast can never return one.
+        //
+        // Without this a projectile weapon simply cannot hit anybody in
+        // multiplayer. The sniper is the only projectile weapon in the game,
+        // which is why hit registration looked like it depended on who was
+        // holding what: hitscan players landed shots, the sniper's rounds flew
+        // straight through their target and carried on to the wall behind.
+        const reach = hit ? hit.distance : step;
+        const remote = this.remoteHitTest ? this.remoteHitTest(p.prev, this._tmp, reach) : null;
+
+        if (remote) {
+          const weapon = this.pool.get(p.weaponId);
+          // Falloff uses the distance the round has actually flown, not the
+          // length of this one step.
+          const r = this._resolveRemoteHit(
+            { ...remote, distance: p.travelled - step + remote.distance },
+            this._tmp,
+            weapon,
+          );
+          if (r?.hitEnemy) this._registerHit(r.damage, r.headshot, r.killed, r.point);
+          this.fx.spawnTracer(p.tracerFrom ?? p.prev, remote.point, {
+            color: weapon.def.tracerColor,
+            width: weapon.def.tracerWidth,
+            speed: weapon.def.tracerSpeed,
+          });
+          p.alive = false;
+          continue;
+        }
+
         if (hit) {
           const weapon = this.pool.get(p.weaponId);
           const r = this._resolveImpact(hit, this._tmp, weapon, p.travelled);
