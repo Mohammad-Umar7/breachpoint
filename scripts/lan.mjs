@@ -25,10 +25,43 @@
  */
 
 import { spawn } from 'node:child_process';
+import net from 'node:net';
 import os from 'node:os';
 
 const GAME_PORT = 5173;
 const SERVER_PORT = 8787;
+
+/** Is anything listening on this port? */
+function portInUse(port) {
+  return new Promise((resolve) => {
+    const socket = net.connect({ port, host: '127.0.0.1' });
+    const done = (result) => { socket.destroy(); resolve(result); };
+    socket.setTimeout(600);
+    socket.once('connect', () => done(true));
+    socket.once('timeout', () => done(false));
+    socket.once('error', () => done(false));
+  });
+}
+
+/**
+ * Is the thing on that port OUR game server, or something unrelated?
+ *
+ * Worth distinguishing. A previous run that was never shut down cleanly is by
+ * far the most common cause, and the right response is to reuse it silently
+ * rather than crash with EADDRINUSE and a stack trace — which reads as a bug in
+ * the game rather than "it is already running".
+ */
+async function identifyServer(port) {
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/health`, {
+      signal: AbortSignal.timeout(1500),
+    });
+    const body = await res.json();
+    return body?.ok === true && typeof body.protocol === 'number' ? 'ours' : 'foreign';
+  } catch {
+    return 'foreign';
+  }
+}
 
 /**
  * Best guess at this machine's address on the local network.
@@ -116,7 +149,26 @@ function shutdown(code = 0) {
   setTimeout(() => process.exit(code), 250);
 }
 
-start('server', 'node', ['server/index.js']);
+// Reuse a game server that is already running rather than failing on
+// EADDRINUSE. A leftover process from an earlier run is the usual cause, and a
+// raw Node stack trace about port binding gives no clue what to do about it.
+if (await portInUse(SERVER_PORT)) {
+  const who = await identifyServer(SERVER_PORT);
+  if (who === 'ours') {
+    console.log(`[server] already running on :${SERVER_PORT} — reusing it\n`);
+  } else {
+    console.log(`\n  Port ${SERVER_PORT} is taken by something that is not the game server.`);
+    console.log('  Close whatever is using it, or find and stop it with:\n');
+    console.log(`      netstat -ano | findstr :${SERVER_PORT}`);
+    console.log('      taskkill /PID <the number at the end> /F\n');
+    process.exit(1);
+  }
+} else {
+  start('server', 'node', ['server/index.js']);
+}
+
+// Vite picks the next free port by itself if 5173 is taken, and announces the
+// one it chose, so it needs no equivalent handling.
 start('game', 'npx', ['vite', '--host']);
 
 for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => shutdown(0));
