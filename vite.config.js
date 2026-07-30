@@ -54,6 +54,10 @@ export default defineConfig({
   plugins: [htmlSiteUrl()],
   server: {
     port: 5173,
+    // Listen on every interface, not just localhost, so someone else on the
+    // same Wi-Fi can open the game. Without this Vite binds 127.0.0.1 and a
+    // second machine cannot reach it at all.
+    host: true,
     // Set to true if you want the dev server to launch your browser for you.
     open: false,
   },

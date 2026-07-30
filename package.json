@@ -6,6 +6,7 @@
   "description": "A browser-based first-person shooter built with Three.js, Rapier physics and Vite.",
   "scripts": {
     "dev": "vite",
+    "lan": "node scripts/lan.mjs",
     "build": "vite build",
     "preview": "vite preview"
   },
