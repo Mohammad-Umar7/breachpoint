@@ -18,7 +18,13 @@ export default defineConfig({
   },
   build: {
     target: 'es2022',
-    sourcemap: true,
+    // Off for production. The map was 5.3 MB — bigger than the bundle itself,
+    // half the total deploy, and it publishes the full readable source to
+    // anyone with the URL, which rather undoes keeping the repo private.
+    //
+    // Need it to debug a live issue? Build with:
+    //   SOURCEMAP=true npm run build
+    sourcemap: process.env.SOURCEMAP === 'true',
     chunkSizeWarningLimit: 2000,
   },
   optimizeDeps: {
