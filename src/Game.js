@@ -1045,6 +1045,11 @@ export class Game {
         leader: this.net?.connected ? (this.net.roster()[0] ?? null) : null,
         score: this.stats.kills,
         fps: this.clock.fps,
+        netDebug: this.net?.connected ? {
+          bodies: this.remotes?.bodies.size ?? 0,
+          built: this.remotes?.created ?? 0,
+          interp: Math.round(this.net.interpDelay),
+        } : null,
         drawCalls: this.renderer.info.render.calls,
         triangles: this.renderer.info.render.triangles,
         fov: this.camera.fov,

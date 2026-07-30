@@ -53,6 +53,18 @@ export class RemotePlayers {
     this._tmp = new THREE.Vector3();
     /** @type {Map<number, object>|null} last interpolated sample, for raycast */
     this._lastSample = null;
+
+    /**
+     * Lifetime counters, surfaced in the F3 panel.
+     *
+     * `created` should equal the number of people who have joined. If it keeps
+     * climbing while nobody is joining, bodies are being destroyed and rebuilt
+     * — and since each build clones five materials, that forces a shader
+     * recompile every time, which stutters badly. Cheap to count, and it turns
+     * "it feels laggy" into a number.
+     */
+    this.created = 0;
+    this.destroyed = 0;
   }
 
   /** False when soldier.glb failed to load; Game falls back to plain capsules. */
@@ -237,6 +249,7 @@ export class RemotePlayers {
 
     this._buildTag(record);
     this.scene.add(group);
+    this.created++;
     return record;
   }
 
@@ -337,6 +350,7 @@ export class RemotePlayers {
 
   // ----------------------------------------------------------------- teardown
   _destroy(body) {
+    this.destroyed++;
     this.scene.remove(body.group);
     // Geometry is SHARED with the AI enemies and every other remote body —
     // disposing it here would blank out all of them. Only the per-player

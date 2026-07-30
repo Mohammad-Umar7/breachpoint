@@ -222,7 +222,15 @@ export class UIManager {
 
     if (this.statsVisible) {
       this.el.fps.textContent = Math.round(s.fps);
-      this.el.drawCalls.textContent = `${s.drawCalls} draws · ${(s.triangles / 1000).toFixed(1)}k tris`;
+      // Second line carries the multiplayer diagnostics too. `bodies` should
+      // match the number of other players; `built` climbing while nobody joins
+      // means bodies are being rebuilt every frame, which recompiles shaders
+      // and stutters. That distinction is the difference between a network
+      // problem and a rendering one, and it is not guessable from feel.
+      const net = s.netDebug;
+      this.el.drawCalls.textContent =
+        `${s.drawCalls} draws · ${(s.triangles / 1000).toFixed(1)}k tris`
+        + (net ? ` · ${net.bodies}b built:${net.built} buf:${net.interp}ms` : '');
     }
 
     // --- damage vignette decay ---
