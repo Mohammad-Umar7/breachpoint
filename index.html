@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+    <title>BREACHPOINT — Three.js FPS</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='11' fill='none' stroke='%2366ddff' stroke-width='2'/><path d='M16 2v6M16 24v6M2 16h6M24 16h6' stroke='%2366ddff' stroke-width='2'/></svg>" />
+    <link rel="stylesheet" href="/src/styles/main.css" />
+  </head>
+  <body>
+    <!-- ===================== RENDER SURFACE ===================== -->
+    <canvas id="game-canvas"></canvas>
+
+    <!-- ===================== SCREEN EFFECTS ===================== -->
+    <div id="damage-vignette" class="fullscreen-fx"></div>
+    <div id="heal-flash" class="fullscreen-fx"></div>
+    <div id="low-health-pulse" class="fullscreen-fx"></div>
+    <div id="breath-vignette" class="fullscreen-fx"></div>
+
+    <!-- ===================== HUD ===================== -->
+    <div id="hud" class="hidden">
+      <!-- Crosshair: four dynamic arms + centre dot. Gap tracks real spread. -->
+      <div id="crosshair">
+        <div class="ch-dot"></div>
+        <div class="ch-arm ch-top"></div>
+        <div class="ch-arm ch-bottom"></div>
+        <div class="ch-arm ch-left"></div>
+        <div class="ch-arm ch-right"></div>
+        <div id="hitmarker"><span></span><span></span><span></span><span></span></div>
+      </div>
+
+      <!-- Top-left: mission state -->
+      <div id="hud-top-left">
+        <div class="panel">
+          <div class="label">WAVE</div>
+          <div class="value" id="hud-wave">1 / 5</div>
+        </div>
+        <div class="panel">
+          <div class="label">HOSTILES</div>
+          <div class="value" id="hud-enemies">0</div>
+        </div>
+        <div class="panel small" id="hud-difficulty-panel">
+          <div class="label">THREAT</div>
+          <div class="value" id="hud-difficulty">SOLDIER</div>
+        </div>
+      </div>
+
+      <!-- Top-right: score + optional perf stats -->
+      <div id="hud-top-right">
+        <div class="panel align-right">
+          <div class="label">SCORE</div>
+          <div class="value" id="hud-score">0</div>
+        </div>
+        <div class="panel align-right small hidden" id="hud-stats">
+          <div class="label">FPS</div>
+          <div class="value" id="hud-fps">60</div>
+          <div class="label" id="hud-draws">0 draws</div>
+        </div>
+      </div>
+
+      <div id="kill-feed"></div>
+      <div id="banner"><span id="banner-text"></span></div>
+
+      <!-- Bottom-left: vitals -->
+      <div id="hud-bottom-left">
+        <div class="bar-row">
+          <span class="bar-icon">&#10010;</span>
+          <div class="bar"><div class="bar-fill health" id="health-fill"></div></div>
+          <span class="bar-num" id="health-num">100</span>
+        </div>
+        <div class="bar-row">
+          <span class="bar-icon">&#9737;</span>
+          <div class="bar"><div class="bar-fill armor" id="armor-fill"></div></div>
+          <span class="bar-num" id="armor-num">50</span>
+        </div>
+        <div class="bar-row hidden" id="breath-row">
+          <span class="bar-icon">&#9788;</span>
+          <div class="bar thin"><div class="bar-fill breath" id="breath-fill"></div></div>
+          <span class="bar-tag">HOLD</span>
+        </div>
+        <div id="lean-indicator">
+          <span class="lean-pip" data-side="left">&#9664;</span>
+          <span class="lean-label">LEAN</span>
+          <span class="lean-pip" data-side="right">&#9654;</span>
+        </div>
+      </div>
+
+      <!-- Bottom-right: weapon -->
+      <div id="hud-bottom-right">
+        <div id="weapon-name">AR-15 CARBINE</div>
+        <div id="ammo-line">
+          <span id="ammo-mag">30</span><span id="ammo-sep">/</span><span id="ammo-reserve">180</span>
+        </div>
+        <div id="weapon-meta">
+          <span id="fire-mode">AUTO</span>
+          <span id="zoom-tag" class="hidden">5&times;</span>
+        </div>
+        <div id="reload-hint" class="hidden">PRESS [R] TO RELOAD</div>
+        <div id="weapon-slots"></div>
+      </div>
+
+      <div id="reload-ring" class="hidden">
+        <svg viewBox="0 0 36 36">
+          <circle class="ring-bg" cx="18" cy="18" r="15.9"></circle>
+          <circle class="ring-fg" cx="18" cy="18" r="15.9"></circle>
+        </svg>
+        <span>RELOADING</span>
+      </div>
+
+      <div id="pickup-toast"></div>
+      <div id="damage-dirs"></div>
+    </div>
+
+    <!-- ===================== MENUS ===================== -->
+    <div id="overlay">
+      <!-- Ambient scan-line / grid treatment over the live 3D background -->
+      <div id="menu-fx"></div>
+
+      <!-- ---------- Loading ---------- -->
+      <section id="screen-loading" class="screen centered active">
+        <h1 class="logo">BREACH<span>POINT</span></h1>
+        <div class="loader"><div id="loader-bar"></div></div>
+        <p id="loader-text">Initialising…</p>
+      </section>
+
+      <!-- ---------- Main menu ---------- -->
+      <section id="screen-menu" class="screen menu-root">
+        <div class="menu-brand">
+          <h1 class="logo">BREACH<span>POINT</span></h1>
+          <p class="tagline">Industrial yard &middot; five waves &middot; no extraction</p>
+        </div>
+        <nav class="menu-nav" id="main-nav">
+          <button class="nav-btn primary" id="btn-play"><span class="k">01</span>DEPLOY</button>
+          <button class="nav-btn hidden" id="btn-continue"><span class="k">02</span>CONTINUE</button>
+          <button class="nav-btn" id="btn-loadout"><span class="k">03</span>LOADOUT</button>
+          <button class="nav-btn" id="btn-difficulty"><span class="k">04</span>DIFFICULTY</button>
+          <button class="nav-btn" id="btn-settings-menu"><span class="k">05</span>SETTINGS</button>
+          <button class="nav-btn" id="btn-controls"><span class="k">06</span>CONTROLS</button>
+          <button class="nav-btn" id="btn-credits"><span class="k">07</span>CREDITS</button>
+        </nav>
+        <div class="menu-footer">
+          <div class="chip"><span>DIFFICULTY</span><b id="menu-difficulty-tag">SOLDIER</b></div>
+          <div class="chip"><span>PRIMARY</span><b id="menu-primary-tag">AR-15</b></div>
+          <div class="chip"><span>SECONDARY</span><b id="menu-secondary-tag">M9</b></div>
+        </div>
+        <p class="hint">Move the mouse to look &middot; <kbd>Esc</kbd> to pause at any time</p>
+      </section>
+
+      <!-- ---------- Difficulty ---------- -->
+      <section id="screen-difficulty" class="screen wide">
+        <h2>SELECT THREAT LEVEL</h2>
+        <div class="card-grid" id="difficulty-cards"></div>
+        <div class="screen-footer">
+          <button class="back-btn" data-back="screen-menu">BACK</button>
+        </div>
+      </section>
+
+      <!-- ---------- Loadout ---------- -->
+      <section id="screen-loadout" class="screen wide">
+        <h2>LOADOUT</h2>
+        <div class="loadout-tabs">
+          <button class="tab active" data-loadout-slot="primary">PRIMARY</button>
+          <button class="tab" data-loadout-slot="secondary">SECONDARY</button>
+        </div>
+        <div class="loadout-body">
+          <div class="weapon-list" id="weapon-list"></div>
+          <div class="weapon-detail" id="weapon-detail"></div>
+        </div>
+        <div class="screen-footer">
+          <div class="chip"><span>PRIMARY</span><b id="loadout-primary-tag">AR-15</b></div>
+          <div class="chip"><span>SECONDARY</span><b id="loadout-secondary-tag">M9</b></div>
+          <button class="back-btn" data-back="screen-menu">BACK</button>
+        </div>
+      </section>
+
+      <!-- ---------- Controls ---------- -->
+      <section id="screen-controls" class="screen wide">
+        <h2>CONTROLS</h2>
+        <div class="controls-columns">
+          <div>
+            <h3>Movement</h3>
+            <div class="controls-grid">
+              <div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></div><div>Move</div>
+              <div><kbd>Shift</kbd></div><div>Sprint &middot; hold breath when scoped</div>
+              <div><kbd>Space</kbd></div><div>Jump</div>
+              <div><kbd>Ctrl</kbd> / <kbd>C</kbd></div><div>Crouch</div>
+              <div><kbd>Q</kbd> / <kbd>E</kbd></div><div>Lean left / right</div>
+            </div>
+          </div>
+          <div>
+            <h3>Combat</h3>
+            <div class="controls-grid">
+              <div><kbd>Mouse</kbd></div><div>Look / aim</div>
+              <div><kbd>LMB</kbd></div><div>Fire</div>
+              <div><kbd>RMB</kbd></div><div>Aim down sights</div>
+              <div><kbd>R</kbd></div><div>Reload</div>
+              <div><kbd>V</kbd></div><div>Quick melee</div>
+              <div><kbd>G</kbd></div><div>Quick grenade</div>
+            </div>
+          </div>
+          <div>
+            <h3>Weapons</h3>
+            <div class="controls-grid">
+              <div><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd><kbd>4</kbd></div><div>Primary / secondary / knife / frag</div>
+              <div><kbd>Wheel</kbd></div><div>Cycle weapons &middot; zoom when scoped</div>
+              <div><kbd>X</kbd></div><div>Previous weapon</div>
+              <div><kbd>B</kbd></div><div>Toggle scope magnification</div>
+              <div><kbd>T</kbd></div><div>Inspect weapon</div>
+            </div>
+          </div>
+          <div>
+            <h3>System</h3>
+            <div class="controls-grid">
+              <div><kbd>Esc</kbd> / <kbd>P</kbd></div><div>Pause</div>
+              <div><kbd>F3</kbd></div><div>Performance stats</div>
+            </div>
+          </div>
+        </div>
+        <div class="screen-footer">
+          <button class="back-btn" data-back="screen-menu">BACK</button>
+        </div>
+      </section>
+
+      <!-- ---------- Credits ---------- -->
+      <section id="screen-credits" class="screen">
+        <h2>CREDITS</h2>
+        <div class="credits">
+          <p><b>BREACHPOINT</b> — a browser-native first-person shooter.</p>
+          <dl>
+            <dt>Engine</dt><dd>Three.js (WebGL 2)</dd>
+            <dt>Physics</dt><dd>Rapier 3D (WASM)</dd>
+            <dt>Build</dt><dd>Vite</dd>
+            <dt>Art</dt><dd>100% procedural — textures painted to canvas, normals derived by Sobel, models built from primitives</dd>
+            <dt>Audio</dt><dd>100% synthesised at runtime with the Web Audio API</dd>
+            <dt>Assets</dt><dd>None. Not one binary file.</dd>
+          </dl>
+          <p class="dim">Built as a demonstration of what fits in a few thousand lines of JavaScript.</p>
+        </div>
+        <div class="screen-footer">
+          <button class="back-btn" data-back="screen-menu">BACK</button>
+        </div>
+      </section>
+
+      <!-- ---------- Pause ---------- -->
+      <section id="screen-pause" class="screen centered">
+        <h2>PAUSED</h2>
+        <nav class="menu-nav compact">
+          <button class="nav-btn primary" id="btn-resume">RESUME</button>
+          <button class="nav-btn" id="btn-settings-pause">SETTINGS</button>
+          <button class="nav-btn" id="btn-controls-pause">CONTROLS</button>
+          <button class="nav-btn" id="btn-restart-pause">RESTART MISSION</button>
+          <button class="nav-btn danger" id="btn-quit">ABANDON MISSION</button>
+        </nav>
+      </section>
+
+      <!-- ---------- Settings ---------- -->
+      <section id="screen-settings" class="screen wide">
+        <h2>SETTINGS</h2>
+        <div class="settings-tabs" id="settings-tabs"></div>
+        <div class="settings-scroll" id="settings-body"></div>
+        <div class="screen-footer">
+          <button id="btn-reset-section">RESET THIS TAB</button>
+          <button id="btn-reset-settings">RESET ALL</button>
+          <button class="primary" id="btn-settings-back">BACK</button>
+        </div>
+      </section>
+
+      <!-- ---------- Results ---------- -->
+      <section id="screen-gameover" class="screen centered">
+        <h2 class="fail">MISSION FAILED</h2>
+        <div class="stats" id="gameover-stats"></div>
+        <nav class="menu-nav compact">
+          <button class="nav-btn primary" id="btn-restart-over">RETRY</button>
+          <button class="nav-btn" id="btn-menu-over">MAIN MENU</button>
+        </nav>
+      </section>
+
+      <section id="screen-victory" class="screen centered">
+        <h2 class="win">AREA SECURED</h2>
+        <div class="stats" id="victory-stats"></div>
+        <nav class="menu-nav compact">
+          <button class="nav-btn primary" id="btn-restart-win">PLAY AGAIN</button>
+          <button class="nav-btn" id="btn-menu-win">MAIN MENU</button>
+        </nav>
+      </section>
+
+      <!-- ---------- Fatal error ---------- -->
+      <section id="screen-error" class="screen centered">
+        <h2 class="fail">SOMETHING WENT WRONG</h2>
+        <pre id="error-text"></pre>
+        <button class="nav-btn primary" id="btn-error-reload">RELOAD</button>
+      </section>
+    </div>
+
+    <noscript>
+      <p style="color:#fff;font:16px sans-serif;padding:2rem">
+        This game requires JavaScript and WebGL 2.
+      </p>
+    </noscript>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

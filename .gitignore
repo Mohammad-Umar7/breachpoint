@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.vite/
+*.log
+.DS_Store
+
+# Blender writes a .blend1 rollback copy next to the file on every save.
+# The .blend itself IS tracked — it is the source for public/models/*.glb —
+# but the backup is a duplicate and would double the repo's binary churn.
+*.blend1
+*.blend2
