@@ -1008,8 +1008,9 @@ export class Game {
     });
 
     this._netSample = net.sample(performance.now(), this._netSample);
-    const roster = new Map([...net.players].map(([id, pl]) => [id, pl]));
-    this.remotes.sync(this._netSample, roster, dt);
+    // net.players is already a Map of exactly what sync() wants. Rebuilding it
+    // here was allocating an array and a Map on every single frame for nothing.
+    this.remotes.sync(this._netSample, net.players, dt);
 
     // Dead: hold still and offer a respawn once the server's timer is up.
     if (!this.player.alive && this._respawnAt) {
