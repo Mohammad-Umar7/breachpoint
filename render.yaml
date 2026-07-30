@@ -42,12 +42,26 @@ services:
     buildCommand: npm install && npm run build
     staticPublishPath: ./dist
     envVars:
-      # Injected from the server service above — no manual step.
-      - key: VITE_SERVER_HOST
-        fromService:
-          name: breachpoint-server
-          type: web
-          property: host
+      # The one value you must supply, because Render cannot derive it.
+      #
+      # `fromService: property: host` looks like the answer and is NOT: it
+      # returns the INTERNAL hostname used for service-to-service calls inside
+      # Render's network — literally "breachpoint-server", with no domain. A
+      # browser cannot reach that, so multiplayer silently fails to connect.
+      # There is no blueprint property for a service's PUBLIC url.
+      #
+      # `sync: false` makes Render prompt for this on deploy. Paste the game
+      # server's public url with a wss:// scheme, e.g.
+      #     wss://breachpoint-server.onrender.com
+      # (find it on the breachpoint-server page, and swap https for wss)
+      - key: VITE_SERVER_URL
+        sync: false
+
+      # Optional. Only affects the image shown when the game's link is shared
+      # in a chat app; the game plays fine without it. Set it to the static
+      # site's own url, e.g. https://breachpoint-q7s5.onrender.com
+      - key: VITE_SITE_URL
+        sync: false
     headers:
       # Vite fingerprints these filenames, so the bytes behind a given URL can
       # never change. Cache them forever.
