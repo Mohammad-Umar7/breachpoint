@@ -63,7 +63,11 @@ export class PhysicsWorld {
     // dedicated one for the player so their tuning can differ.
     this.playerController = this._makeController(0.02, {
       autostepHeight: 0.45,
-      autostepMinWidth: 0.25,
+      // Must not exceed the depth of a single stair tread, or the controller
+      // refuses to step up at all and the player grinds to a halt against the
+      // flight. The mezzanine stairs use a 0.18 m run, so this has to sit
+      // comfortably below that.
+      autostepMinWidth: 0.12,
       snapToGround: 0.35,
       maxSlope: 52,
       minSlideSlope: 44,

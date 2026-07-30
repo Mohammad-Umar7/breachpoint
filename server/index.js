@@ -31,7 +31,7 @@ import http from 'node:http';
 import { WebSocketServer } from 'ws';
 
 import {
-  MSG, FLAG, TICK_MS, MATCH_STATE, MATCH_RULES, LIMITS,
+  MSG, FLAG, TICK_MS, MATCH_STATE, MATCH_RULES, LIMITS, PLAYER_MAX_HEALTH,
   PROTOCOL_VERSION, ROOM_CODE_ALPHABET, ROOM_CODE_LENGTH,
   isValidRoomCode, sanitizeName,
 } from '../src/net/protocol.js';
@@ -78,7 +78,7 @@ class Player {
     this.flags = 0;
     this.weapon = 'rifle';
 
-    this.hp = 100;
+    this.hp = PLAYER_MAX_HEALTH;
     this.alive = false;          // false until the first spawn
     this.respawnAt = 0;
     this.kills = 0;
@@ -250,7 +250,7 @@ class Room {
         .map((p) => ({ x: p.x, z: p.z, alive: p.alive })),
     );
     player.x = at.x; player.y = at.y; player.z = at.z;
-    player.hp = 100;
+    player.hp = PLAYER_MAX_HEALTH;
     player.alive = true;
     player.flags = 0;
     player.respawnAt = 0;

@@ -13,7 +13,10 @@
  * dry (no panner) so they always sit centred and loud.
  */
 
-const MAX_VOICES = 48;
+// Raised from 48 when weapons gained a transient and an action layer: an LMG
+// at full rate now holds roughly four more voices at once, and overshooting
+// this ceiling drops whole sounds rather than degrading them.
+const MAX_VOICES = 64;
 
 export class AudioManager {
   constructor(settings) {
@@ -63,6 +66,57 @@ export class AudioManager {
       this.muffle = this.ctx.createBiquadFilter();
       this.muffle.type = 'lowpass';
       this.muffle.frequency.value = 22050;
+
+      /**
+       * Saturation on the weapon bus.
+       *
+       * Real gunfire is recorded far into a microphone's clipping range, and
+       * that soft-clipped edge is most of what the ear reads as "loud". Pure
+       * synthesised noise through a filter is clean, and clean reads as weak
+       * and toy-like no matter how much gain you add. A tanh-shaped curve adds
+       * the harmonics that give a shot its crack.
+       */
+      this.shotShaper = this.ctx.createWaveShaper();
+      this.shotShaper.curve = this._saturationCurve(1.6);
+      this.shotShaper.oversample = '4x';
+      this.shotDrive = this.ctx.createGain();
+      this.shotDrive.gain.value = 1.15;     // into the curve
+      this.shotTrim = this.ctx.createGain();
+      this.shotTrim.gain.value = 0.9;       // back down after it
+
+      /**
+       * Convolution reverb, fed by a send.
+       *
+       * This is the single biggest step towards sounding like a real space.
+       * The previous "tail" was a filtered noise burst played alongside the
+       * shot — it decays, but it carries no sense of the room, because every
+       * shot's tail is identical regardless of where it happened. A real
+       * impulse response smears the shot across a plausible set of early
+       * reflections instead, which is what makes gunfire sound like it is
+       * happening *in* the industrial yard rather than in a vacuum.
+       *
+       * The impulse is generated, not sampled, so nothing has to be shipped.
+       *
+       * Kept SHORT and fairly dry on purpose. An open industrial yard is not a
+       * concert hall: a long wet tail on every round makes rapid fire smear
+       * into continuous mush and pushes the gun away from the listener, which
+       * is the opposite of what a weapon should feel like. The punch has to
+       * come from the shot itself — the reverb only places it somewhere.
+       */
+      this.reverb = this.ctx.createConvolver();
+      this.reverb.buffer = this._makeImpulse(0.85, 3.4, 2600);
+      this.reverbSend = this.ctx.createGain();
+      this.reverbSend.gain.value = 0.085;
+      this.reverbReturn = this.ctx.createGain();
+      this.reverbReturn.gain.value = 0.8;
+
+      this.shotDrive.connect(this.shotShaper);
+      this.shotShaper.connect(this.shotTrim);
+      this.shotTrim.connect(this.sfxBus);
+      this.shotTrim.connect(this.reverbSend);
+      this.reverbSend.connect(this.reverb);
+      this.reverb.connect(this.reverbReturn);
+      this.reverbReturn.connect(this.sfxBus);
 
       this.sfxBus.connect(this.muffle);
       this.musicBus.connect(this.muffle);
@@ -125,6 +179,15 @@ export class AudioManager {
    */
   updateListener(pos, forward, up) {
     if (!this.ready) return;
+    // A non-finite camera transform makes setTargetAtTime throw, and this is
+    // called from the middle of the frame update — so one NaN would take out
+    // movement, weapons and rendering for every frame after it. Skipping the
+    // update instead costs nothing: the listener simply stays where it was.
+    if (!Number.isFinite(pos.x) || !Number.isFinite(pos.y) || !Number.isFinite(pos.z)
+      || !Number.isFinite(forward.x) || !Number.isFinite(forward.y) || !Number.isFinite(forward.z)
+      || !Number.isFinite(up.x) || !Number.isFinite(up.y) || !Number.isFinite(up.z)) {
+      return;
+    }
     const l = this.ctx.listener;
     const t = this.ctx.currentTime;
     if (l.positionX) {
@@ -151,6 +214,240 @@ export class AudioManager {
 
   _canPlay() {
     return this.enabled && this.ready && this.ctx.state !== 'closed' && this.voices < MAX_VOICES;
+  }
+
+  /**
+   * tanh-shaped soft clipper for the WaveShaper.
+   *
+   * Soft rather than hard clipping: a hard clip generates harsh odd harmonics
+   * that sound like digital breakup, whereas tanh rounds the knee and reads as
+   * an overdriven microphone, which is what a gunshot recording actually is.
+   */
+  _saturationCurve(drive = 2.5, samples = 2048) {
+    const curve = new Float32Array(samples);
+    for (let i = 0; i < samples; i++) {
+      const x = (i / (samples - 1)) * 2 - 1;
+      curve[i] = Math.tanh(x * drive) / Math.tanh(drive);
+    }
+    return curve;
+  }
+
+  /**
+   * Synthesise a reverb impulse response.
+   *
+   * Exponentially decaying noise, low-passed more heavily as it decays (high
+   * frequencies are absorbed faster by real surfaces), with a handful of
+   * discrete early reflections stamped in. Those early reflections are what
+   * convey room SIZE — without them a decaying noise tail sounds like a
+   * generic wash rather than a specific space.
+   *
+   * @param {number} seconds  tail length
+   * @param {number} decay    higher = faster fall-off
+   * @param {number} damping  starting brightness in Hz
+   */
+  _makeImpulse(seconds = 1.6, decay = 2.4, damping = 3800) {
+    const rate = this.ctx.sampleRate;
+    const length = Math.max(1, Math.floor(rate * seconds));
+    const buffer = this.ctx.createBuffer(2, length, rate);
+
+    // Early reflections: delay in ms and relative level. Spaced irregularly so
+    // they do not comb-filter into an audible pitch.
+    const early = [[11, 0.5], [19, 0.42], [27, 0.34], [41, 0.28], [58, 0.2], [79, 0.15]];
+
+    for (let ch = 0; ch < 2; ch++) {
+      const data = buffer.getChannelData(ch);
+      let lp = 0;
+      for (let i = 0; i < length; i++) {
+        const t = i / length;
+        const env = Math.pow(1 - t, decay);
+        // One-pole low-pass that closes as the tail decays.
+        const cutoff = Math.min(1, (damping * (1 - t * 0.85)) / (rate * 0.5));
+        lp += cutoff * ((Math.random() * 2 - 1) - lp);
+        data[i] = lp * env;
+      }
+      // Stamp the early reflections in, offset per channel for width.
+      for (const [ms, level] of early) {
+        const idx = Math.floor((ms + (ch ? 3.5 : 0)) * 0.001 * rate);
+        if (idx < length) data[idx] += level * (ch ? -1 : 1);
+      }
+    }
+    return buffer;
+  }
+
+  /**
+   * The initial crack: a single-sample impulse, high-passed.
+   *
+   * A real muzzle blast rises to peak in well under a millisecond. No gain
+   * envelope can do that — even the shortest exponential ramp takes several
+   * milliseconds and reads as a "whump" rather than a "crack". Writing the
+   * impulse straight into a buffer is the only way to get an edge that sharp.
+   */
+  _transient(bus, position, { gain = 0.8, freq = 1800, refDistance = 12 } = {}) {
+    const rate = this.ctx.sampleRate;
+    const buf = this.ctx.createBuffer(1, Math.ceil(rate * 0.012), rate);
+    const d = buf.getChannelData(0);
+    d[0] = 1;
+    // A few samples of dense noise behind the spike, decaying fast, so it has
+    // body rather than sounding like a click track.
+    for (let i = 1; i < d.length; i++) {
+      d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / d.length, 6);
+    }
+    const src = this.ctx.createBufferSource();
+    src.buffer = buf;
+
+    const filt = this.ctx.createBiquadFilter();
+    filt.type = 'highpass';
+    filt.frequency.value = freq;
+    filt.Q.value = 0.7;
+
+    const t = this._now();
+    const { input, tail } = this._dest(bus, position, refDistance);
+    input.gain.setValueAtTime(gain, t);
+    src.connect(filt);
+    filt.connect(input);
+    src.start(t);
+    src.stop(t + 0.03);
+    this._trackVoice(tail === input ? input : tail, 0.05);
+  }
+
+  /**
+   * Bolt, spring and brass — the mechanical layer.
+   *
+   * Two quick metallic ticks a few milliseconds apart (bolt back, bolt home)
+   * over a band-passed noise scrape. Delayed behind the muzzle report because
+   * that is the real order of events, and hearing them separately is what
+   * makes a weapon read as a mechanism rather than a sound effect.
+   */
+  _mech(bus, position, { delay = 0.04, gain = 0.15, freq = 3000, refDistance = 12 } = {}) {
+    const t0 = this._now() + delay;
+    for (const [offset, level, f] of [[0, 1, freq], [0.026, 0.7, freq * 0.72]]) {
+      const rate = this.ctx.sampleRate;
+      const buf = this.ctx.createBuffer(1, Math.ceil(rate * 0.02), rate);
+      const d = buf.getChannelData(0);
+      for (let i = 0; i < d.length; i++) {
+        d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / d.length, 9);
+      }
+      const src = this.ctx.createBufferSource();
+      src.buffer = buf;
+
+      const filt = this.ctx.createBiquadFilter();
+      filt.type = 'bandpass';
+      filt.frequency.value = f;
+      filt.Q.value = 3.2;      // narrow — reads as metal, not as noise
+
+      const t = t0 + offset;
+      const { input, tail } = this._dest(bus, position, refDistance);
+      input.gain.setValueAtTime(gain * level, t);
+      src.connect(filt);
+      filt.connect(input);
+      src.start(t);
+      src.stop(t + 0.05);
+      this._trackVoice(tail === input ? input : tail, delay + offset + 0.08);
+    }
+  }
+
+  /**
+   * A complete gunshot, built the way a real one is built.
+   *
+   * The previous version layered three or four noise bursts of 200–500 ms.
+   * That is the classic synthesised-gun mistake: a real muzzle report is
+   * mostly *over* in about 60 ms, and stretching it turns a bang into a
+   * "whoosh". Everything after those 60 ms should be the environment
+   * answering, not the gun still going.
+   *
+   * So the model here is four separate physical events:
+   *
+   *   1. CRACK     — the pressure spike. Sub-millisecond, broadband.
+   *   2. BLAST     — the muzzle report proper. Short, loud, sweeping downward
+   *                  as the gas ball expands and cools.
+   *   3. THUMP     — the low-frequency punch you feel in the chest. A fast
+   *                  downward pitch sweep; this is what carries "power", and
+   *                  its absence is most of why the old shots sounded weak.
+   *   4. SLAPBACK  — two or three DISCRETE reflections off nearby surfaces.
+   *                  Outdoor gunfire is instantly recognisable by these; a
+   *                  smooth reverb tail alone never sounds like a gunshot
+   *                  outdoors, it sounds like a gunshot in a hall.
+   *
+   * @param {object} spec
+   *   bore     Hz, the thump's starting pitch — bigger calibre, lower number
+   *   crack    Hz, high-pass corner of the initial spike
+   *   blast    Hz, centre of the muzzle report
+   *   bodyMs   length of the report
+   *   power    overall level
+   *   ref      panner reference distance (how far it carries)
+   *   slaps    [[delayMs, level], ...] discrete reflections
+   */
+  _shot(bus, position, spec) {
+    const {
+      bore = 220, crack = 2000, blast = 1100, bodyMs = 55,
+      power = 1, ref = 12, slaps = [[34, 0.26], [73, 0.16], [121, 0.09]],
+    } = spec;
+    const body = bodyMs / 1000;
+
+    // 1. CRACK
+    this._transient(bus, position, { gain: 0.85 * power, freq: crack, refDistance: ref });
+
+    // 2. BLAST — two bands. The low band is the report; the high band is the
+    // edge that makes it read as close by rather than distant.
+    this._burst(bus, position, {
+      duration: body, gain: 1.0 * power, type: 'bandpass',
+      freq: blast, freqEnd: blast * 0.22, q: 0.55, curve: 5, refDistance: ref,
+    });
+    this._burst(bus, position, {
+      duration: body * 0.45, gain: 0.55 * power, type: 'highpass',
+      freq: blast * 3.2, curve: 6, refDistance: ref,
+    });
+
+    // 3. THUMP — sweeps down roughly two octaves in well under a tenth of a
+    // second. Slower than that and it turns into an audible pitch drop rather
+    // than a hit.
+    this._tone(bus, position, {
+      type: 'triangle', freq: bore, freqEnd: bore * 0.24,
+      duration: body * 1.35, gain: 0.9 * power, attack: 0.002, refDistance: ref,
+    });
+
+    // 4. SLAPBACK — progressively darker and quieter with each bounce, the way
+    // air and surfaces actually absorb.
+    //
+    // These are kept deliberately FAINT and SHORT. Measured against the old
+    // sound, the first attempt at this held the signal at about -30 dB for a
+    // quarter of a second instead of letting it fall away — a flat shelf of
+    // noise after the bang, which is audibly worse than no reflections at all.
+    // A gunshot's envelope has to keep dropping; reflections are punctuation,
+    // not sustain.
+    for (let i = 0; i < slaps.length; i++) {
+      const [ms, level] = slaps[i];
+      this._echo(bus, position, {
+        delay: ms / 1000,
+        gain: level * 0.4 * power,
+        freq: blast * Math.pow(0.62, i + 1),
+        duration: body * 0.5,
+        refDistance: ref * 1.4,
+      });
+    }
+  }
+
+  /** One discrete reflection: a short, dark copy of the report, delayed. */
+  _echo(bus, position, { delay = 0.04, gain = 0.2, freq = 700, duration = 0.06, refDistance = 16 } = {}) {
+    const src = this.ctx.createBufferSource();
+    src.buffer = this._noise(Math.max(0.06, duration));
+
+    const filt = this.ctx.createBiquadFilter();
+    filt.type = 'lowpass';
+    filt.frequency.value = Math.max(120, freq);
+    filt.Q.value = 0.7;
+
+    const t = this._now() + delay;
+    const { input, tail } = this._dest(bus, position, refDistance);
+    input.gain.setValueAtTime(0.0001, t);
+    input.gain.exponentialRampToValueAtTime(Math.max(0.0002, gain), t + 0.002);
+    input.gain.exponentialRampToValueAtTime(0.0001, t + duration);
+
+    src.connect(filt);
+    filt.connect(input);
+    src.start(t);
+    src.stop(t + duration + 0.02);
+    this._trackVoice(tail === input ? input : tail, delay + duration);
   }
 
   /** Creates (or reuses) a white-noise buffer of the given length. */
@@ -272,6 +569,45 @@ export class AudioManager {
   }
 
   /**
+   * Load real recorded sounds from `public/audio/` and let them replace the
+   * synths.
+   *
+   * Synthesis has a ceiling. A gunshot is a supersonic pressure wave clipping
+   * a microphone, and no arrangement of oscillators and filters is going to be
+   * mistaken for a recording of one. This is the escape hatch: drop a file
+   * named after a sound — `public/audio/shootRifle.wav` — and `play()` will
+   * use it instead, because `play()` checks `this.buffers` before `SYNTHS`.
+   *
+   * Every file is optional and every failure is silent. A missing or broken
+   * file just means that sound keeps using its synth, so the game always has
+   * working audio and files can be added one at a time.
+   *
+   * @param {string[]} names sound names to look for
+   * @param {string} [dir]
+   * @returns {Promise<string[]>} the names that were actually loaded
+   */
+  async loadSamples(names, dir = 'audio/') {
+    if (!this.ready) return [];
+    const loaded = [];
+    await Promise.all(names.map(async (name) => {
+      for (const ext of ['ogg', 'wav', 'mp3']) {
+        try {
+          const res = await fetch(`${dir}${name}.${ext}`);
+          // A dev server happily returns index.html for a missing file, so
+          // check the content type rather than trusting the status code.
+          if (!res.ok || !/audio|octet-stream/.test(res.headers.get('content-type') ?? '')) continue;
+          const buf = await this.ctx.decodeAudioData(await res.arrayBuffer());
+          this.registerBuffer(name, buf);
+          loaded.push(name);
+          return;
+        } catch { /* try the next extension, then fall back to the synth */ }
+      }
+    }));
+    if (loaded.length) console.info(`[Audio] Using recorded samples for: ${loaded.join(', ')}`);
+    return loaded;
+  }
+
+  /**
    * Play a named sound.
    * @param {string} name
    * @param {{position?:{x,y,z}, volume?:number, rate?:number}} [opts]
@@ -292,11 +628,13 @@ export class AudioManager {
     }
   }
 
-  _playSample(buffer, { position = null, volume = 1, rate = 1 }) {
+  _playSample(buffer, { position = null, volume = 1, rate = 1, refDistance = 12 }) {
     const src = this.ctx.createBufferSource();
     src.buffer = buffer;
     src.playbackRate.value = rate;
-    const { input, tail } = this._dest(this.sfxBus, position);
+    // 12 m rather than the 6 m default: recorded samples are overwhelmingly
+    // used for weapons here, and gunfire has to stay audible across the map.
+    const { input, tail } = this._dest(this.sfxBus, position, refDistance);
     input.gain.value = volume;
     src.connect(input);
     src.start();
@@ -397,81 +735,94 @@ export class AudioManager {
    ========================================================================= */
 const SYNTHS = {
   // ------------------------------------------------------------- weapons
+  // 9 mm: sharp and light. Little bore, so the thump sits high and short.
   shootPistol(a, { position = null, volume = 1 } = {}) {
-    const bus = a.sfxBus;
-    a._burst(bus, position, { duration: 0.16, gain: 0.75 * volume, type: 'bandpass', freq: 2400, freqEnd: 500, q: 0.8, refDistance: 10 });
-    a._burst(bus, position, { duration: 0.05, gain: 0.55 * volume, type: 'highpass', freq: 4200, refDistance: 10 });
-    a._tone(bus, position, { type: 'sine', freq: 190, freqEnd: 62, duration: 0.13, gain: 0.5 * volume, refDistance: 10 });
+    // Through the saturated, reverb-sent weapon chain — see init().
+    const bus = a.shotDrive ?? a.sfxBus;
+    a._shot(bus, position, { bore: 150, crack: 2600, blast: 1500, bodyMs: 42, power: 0.78 * volume, ref: 10,
+        slaps: [[29, 0.22], [64, 0.13], [104, 0.07]] });
+    a._mech(bus, position, { delay: 0.045, gain: 0.13 * volume, freq: 3200, refDistance: 10 });
   },
 
+  // 5.56 carbine: the reference shot. Hard crack, tight body, real punch.
   shootRifle(a, { position = null, volume = 1 } = {}) {
-    const bus = a.sfxBus;
-    a._burst(bus, position, { duration: 0.2, gain: 0.85 * volume, type: 'bandpass', freq: 1700, freqEnd: 320, q: 0.7, refDistance: 12 });
-    a._burst(bus, position, { duration: 0.045, gain: 0.7 * volume, type: 'highpass', freq: 5200, refDistance: 12 });
-    a._tone(bus, position, { type: 'sine', freq: 150, freqEnd: 48, duration: 0.17, gain: 0.62 * volume, refDistance: 12 });
-    // Tail: the room answering back.
-    a._burst(bus, position, { duration: 0.5, gain: 0.13 * volume, type: 'lowpass', freq: 900, freqEnd: 240, attack: 0.03, refDistance: 14 });
+    // Through the saturated, reverb-sent weapon chain — see init().
+    const bus = a.shotDrive ?? a.sfxBus;
+    a._shot(bus, position, { bore: 165, crack: 2200, blast: 1150, bodyMs: 55, power: 1.0 * volume, ref: 13,
+        slaps: [[34, 0.26], [73, 0.16], [121, 0.09]] });
+    a._mech(bus, position, { delay: 0.038, gain: 0.16 * volume, freq: 2800, refDistance: 13 });
   },
 
+  // 12 gauge: no crack to speak of, all bore. Wide, low, and slow to leave.
   shootShotgun(a, { position = null, volume = 1 } = {}) {
-    const bus = a.sfxBus;
-    a._burst(bus, position, { duration: 0.34, gain: 0.95 * volume, type: 'lowpass', freq: 2600, freqEnd: 220, q: 0.5, refDistance: 14 });
-    a._burst(bus, position, { duration: 0.07, gain: 0.8 * volume, type: 'highpass', freq: 3200, refDistance: 14 });
-    a._tone(bus, position, { type: 'sine', freq: 110, freqEnd: 34, duration: 0.3, gain: 0.85 * volume, refDistance: 14 });
-    a._burst(bus, position, { duration: 0.7, gain: 0.16 * volume, type: 'lowpass', freq: 700, freqEnd: 160, attack: 0.04, refDistance: 16 });
+    // Through the saturated, reverb-sent weapon chain — see init().
+    const bus = a.shotDrive ?? a.sfxBus;
+    a._shot(bus, position, { bore: 98, crack: 1300, blast: 620, bodyMs: 88, power: 1.15 * volume, ref: 15,
+        slaps: [[38, 0.3], [82, 0.19], [138, 0.11]] });
   },
 
+  // .44 revolver: enormous for its size — long barrel, huge charge.
   shootMagnum(a, { position = null, volume = 1 } = {}) {
-    const bus = a.sfxBus;
-    a._burst(bus, position, { duration: 0.3, gain: 1.0 * volume, type: 'bandpass', freq: 1500, freqEnd: 260, q: 0.6, refDistance: 16 });
-    a._burst(bus, position, { duration: 0.06, gain: 0.8 * volume, type: 'highpass', freq: 4600, refDistance: 16 });
-    a._tone(bus, position, { type: 'sine', freq: 120, freqEnd: 36, duration: 0.26, gain: 0.95 * volume, refDistance: 16 });
-    a._burst(bus, position, { duration: 0.7, gain: 0.17 * volume, type: 'lowpass', freq: 800, freqEnd: 180, attack: 0.04, refDistance: 20 });
+    // Through the saturated, reverb-sent weapon chain — see init().
+    const bus = a.shotDrive ?? a.sfxBus;
+    a._shot(bus, position, { bore: 120, crack: 1900, blast: 900, bodyMs: 72, power: 1.2 * volume, ref: 17,
+        slaps: [[36, 0.32], [79, 0.2], [132, 0.12]] });
   },
 
+  // Burst rifle: same round as the carbine, shorter barrel — snappier, less body.
   shootBurst(a, { position = null, volume = 1 } = {}) {
-    const bus = a.sfxBus;
-    a._burst(bus, position, { duration: 0.16, gain: 0.8 * volume, type: 'bandpass', freq: 2100, freqEnd: 400, q: 0.9, refDistance: 12 });
-    a._burst(bus, position, { duration: 0.035, gain: 0.65 * volume, type: 'highpass', freq: 5800, refDistance: 12 });
-    a._tone(bus, position, { type: 'sine', freq: 165, freqEnd: 54, duration: 0.14, gain: 0.55 * volume, refDistance: 12 });
+    // Through the saturated, reverb-sent weapon chain — see init().
+    const bus = a.shotDrive ?? a.sfxBus;
+    a._shot(bus, position, { bore: 172, crack: 2700, blast: 1400, bodyMs: 44, power: 0.86 * volume, ref: 12,
+        slaps: [[31, 0.23], [68, 0.14], [112, 0.08]] });
+    a._mech(bus, position, { delay: 0.030, gain: 0.12 * volume, freq: 3400, refDistance: 12 });
   },
 
+  // SMG: pistol round, high rate. Deliberately the lightest report here so
+  // sustained fire never turns into mud.
   shootSmg(a, { position = null, volume = 1 } = {}) {
-    const bus = a.sfxBus;
-    a._burst(bus, position, { duration: 0.13, gain: 0.72 * volume, type: 'bandpass', freq: 2300, freqEnd: 520, q: 0.85, refDistance: 10 });
-    a._burst(bus, position, { duration: 0.03, gain: 0.55 * volume, type: 'highpass', freq: 6000, refDistance: 10 });
-    a._tone(bus, position, { type: 'sine', freq: 175, freqEnd: 62, duration: 0.11, gain: 0.42 * volume, refDistance: 10 });
+    // Through the saturated, reverb-sent weapon chain — see init().
+    const bus = a.shotDrive ?? a.sfxBus;
+    a._shot(bus, position, { bore: 158, crack: 3000, blast: 1600, bodyMs: 34, power: 0.7 * volume, ref: 10,
+        slaps: [[27, 0.18], [59, 0.1]] });
+    a._mech(bus, position, { delay: 0.026, gain: 0.11 * volume, freq: 3600, refDistance: 10 });
   },
 
+  // LMG: belt-fed 7.62. Heavier bore than the carbine and a much louder action.
   shootLmg(a, { position = null, volume = 1 } = {}) {
-    const bus = a.sfxBus;
-    a._burst(bus, position, { duration: 0.24, gain: 0.9 * volume, type: 'bandpass', freq: 1400, freqEnd: 280, q: 0.6, refDistance: 15 });
-    a._burst(bus, position, { duration: 0.05, gain: 0.7 * volume, type: 'highpass', freq: 4800, refDistance: 15 });
-    a._tone(bus, position, { type: 'sine', freq: 128, freqEnd: 42, duration: 0.2, gain: 0.72 * volume, refDistance: 15 });
-    a._burst(bus, position, { duration: 0.55, gain: 0.15 * volume, type: 'lowpass', freq: 820, freqEnd: 200, attack: 0.03, refDistance: 18 });
+    // Through the saturated, reverb-sent weapon chain — see init().
+    const bus = a.shotDrive ?? a.sfxBus;
+    a._shot(bus, position, { bore: 132, crack: 1900, blast: 950, bodyMs: 66, power: 1.08 * volume, ref: 16,
+        slaps: [[36, 0.28], [77, 0.18], [128, 0.1]] });
+    a._mech(bus, position, { delay: 0.042, gain: 0.2 * volume, freq: 2500, refDistance: 16 });
   },
 
+  // Anti-materiel rifle: the biggest thing on the map. Deep bore, hard crack,
+  // and slaps that carry much further because it is genuinely that loud.
   shootSniper(a, { position = null, volume = 1 } = {}) {
-    const bus = a.sfxBus;
-    a._burst(bus, position, { duration: 0.42, gain: 1.0 * volume, type: 'lowpass', freq: 3400, freqEnd: 180, q: 0.5, refDistance: 24 });
-    a._burst(bus, position, { duration: 0.05, gain: 0.9 * volume, type: 'highpass', freq: 5200, refDistance: 24 });
-    a._tone(bus, position, { type: 'sine', freq: 96, freqEnd: 28, duration: 0.38, gain: 1.0 * volume, refDistance: 24 });
-    // Long crack rolling off the buildings.
-    a._burst(bus, position, { duration: 1.5, gain: 0.24 * volume, type: 'lowpass', freq: 900, freqEnd: 120, attack: 0.06, refDistance: 30 });
+    // Through the saturated, reverb-sent weapon chain — see init().
+    const bus = a.shotDrive ?? a.sfxBus;
+    a._shot(bus, position, { bore: 88, crack: 1700, blast: 780, bodyMs: 95, power: 1.3 * volume, ref: 26,
+        slaps: [[42, 0.36], [91, 0.24], [152, 0.15], [228, 0.08]] });
   },
 
+  // Semi-auto marksman rifle: between the carbine and the sniper.
   shootMarksman(a, { position = null, volume = 1 } = {}) {
-    const bus = a.sfxBus;
-    a._burst(bus, position, { duration: 0.28, gain: 0.88 * volume, type: 'bandpass', freq: 1600, freqEnd: 300, q: 0.65, refDistance: 18 });
-    a._burst(bus, position, { duration: 0.045, gain: 0.72 * volume, type: 'highpass', freq: 5000, refDistance: 18 });
-    a._tone(bus, position, { type: 'sine', freq: 118, freqEnd: 40, duration: 0.24, gain: 0.8 * volume, refDistance: 18 });
-    a._burst(bus, position, { duration: 0.9, gain: 0.16 * volume, type: 'lowpass', freq: 760, freqEnd: 150, attack: 0.05, refDistance: 22 });
+    // Through the saturated, reverb-sent weapon chain — see init().
+    const bus = a.shotDrive ?? a.sfxBus;
+    a._shot(bus, position, { bore: 112, crack: 2000, blast: 880, bodyMs: 74, power: 1.12 * volume, ref: 19,
+        slaps: [[38, 0.3], [83, 0.19], [138, 0.11]] });
+    a._mech(bus, position, { delay: 0.048, gain: 0.15 * volume, freq: 2600, refDistance: 19 });
   },
 
+  // AI weapon: same model, pulled back so a firefight full of them does not
+  // drown out the player’s own gun.
   shootEnemy(a, { position = null, volume = 1 } = {}) {
-    const bus = a.sfxBus;
-    a._burst(bus, position, { duration: 0.18, gain: 0.62 * volume, type: 'bandpass', freq: 1350, freqEnd: 300, q: 0.9, refDistance: 8 });
-    a._tone(bus, position, { type: 'sine', freq: 130, freqEnd: 46, duration: 0.14, gain: 0.4 * volume, refDistance: 8 });
+    // Through the saturated, reverb-sent weapon chain — see init().
+    const bus = a.shotDrive ?? a.sfxBus;
+    a._shot(bus, position, { bore: 160, crack: 2400, blast: 1200, bodyMs: 50, power: 0.6 * volume, ref: 9,
+        slaps: [[32, 0.16], [70, 0.09]] });
+    a._mech(bus, position, { delay: 0.040, gain: 0.08 * volume, freq: 3000, refDistance: 9 });
   },
 
   dryFire(a, { volume = 1 } = {}) {

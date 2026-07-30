@@ -366,7 +366,12 @@ export class Game {
       this.ui.showDamage(clamp(amount / 45, 0.12, 0.6), angle);
     };
     this.player.onHeal = () => this.ui.showHeal();
-    this.player.onDeath = () => this._gameOver();
+    // In a match the server owns life and death, and dying just means waiting
+    // to respawn. The single-player GAME OVER screen must not appear.
+    this.player.onDeath = () => {
+      if (this.net?.connected) return;
+      this._gameOver();
+    };
     // Sprinting is loud — nearby soldiers will come and look.
     this.player.onFootstep = (loudness) =>
       this.enemies.alertNear(this.player.position, loudness, 'footstep');
@@ -508,10 +513,29 @@ export class Game {
     this.state = state;
   }
 
+  /**
+   * Pick up any recorded sound files the project has been given.
+   *
+   * Fire-and-forget and entirely optional — see AudioManager.loadSamples.
+   * Nothing waits on it, so a slow or missing file never delays the match;
+   * whatever finishes loading simply starts being used from that point on.
+   * Runs once per session.
+   */
+  _loadAudioSamples() {
+    if (this._samplesRequested) return;
+    this._samplesRequested = true;
+    this.audio.loadSamples?.([
+      'shootRifle', 'shootPistol', 'shootShotgun', 'shootMagnum', 'shootBurst',
+      'shootSmg', 'shootLmg', 'shootSniper', 'shootMarksman', 'shootEnemy',
+      'reload', 'reloadEmpty', 'explosion', 'hitmarker', 'killConfirm',
+    ]).catch(() => { /* optional by design */ });
+  }
+
   startGame() {
     this.audio.init();
     this.audio.resume();
     this.audio.startAmbience();
+    this._loadAudioSamples();
 
     this._resetWorld();
     this.stats = this._blankStats();
@@ -910,13 +934,31 @@ export class Game {
       if (h.isSelfVictim) {
         // Health is server-owned; mirror it rather than subtracting locally.
         this.player.health = h.hp;
-        this.player.onDamaged?.(h.damage);
-        this.ui.flashDamage?.(h.damage / 60);
+        this.stats.damageTaken += h.damage;
+
+        // Point the damage arc at whoever shot us. Without a direction you
+        // have no idea where the fire is coming from, which is the single most
+        // disorienting thing about being shot at in a shooter.
+        //
+        // The attacker's position comes from the interpolated sample, which is
+        // where they were drawn when the shot landed — so the arc agrees with
+        // what was on screen. Same angle convention as the single-player path
+        // above: world bearing, then rotated into the player's own frame.
+        let angle = null;
+        const shooter = this._netSample?.get(h.attacker);
+        if (shooter) {
+          this._tmpA.set(shooter.x, shooter.y, shooter.z).sub(this.player.position);
+          angle = Math.atan2(this._tmpA.x, this._tmpA.z) - (this.player.yaw + Math.PI);
+        }
+        this.ui.showDamage(clamp(h.damage / 45, 0.12, 0.6), angle);
         this.audio.play('playerHurt', { volume: 0.8 });
       } else {
         this.remotes.flash(h.victim);
       }
-      if (h.isSelfAttacker) this.ui.showHitmarker(h.part === 'head');
+      // showHitmarker(kill, headshot) — the headshot flag has to go in the
+      // SECOND slot. Passing it first drew every headshot as a kill marker and
+      // meant the headshot marker never appeared at all.
+      if (h.isSelfAttacker) this.ui.showHitmarker(false, h.part === 'head');
     };
 
     net.onKill = (k) => {
@@ -927,14 +969,20 @@ export class Game {
       if (k.isSelfAttacker) {
         this.stats.kills++;
         if (k.headshot) this.stats.headshots++;
-        this.audio.play('hitConfirm', { volume: 0.9 });
+        // 'killConfirm' — there is no synth called 'hitConfirm', so this was
+        // silently warning to the console and playing nothing on every kill.
+        this.audio.play('killConfirm', { volume: 0.9 });
       }
       if (k.isSelfVictim) {
         this.player.alive = false;
         this.player.health = 0;
         this._respawnAt = performance.now() + 2500;
         this.ui.showRespawn?.(k.attackerName);
-        this.input.exitPointerLock?.();
+        // Deliberately does NOT release pointer lock. Doing so fires
+        // onPointerLockChange(false), which pauses the game — so every death
+        // threw up the PAUSE menu with a RESUME button, in the middle of a
+        // match, for both the victim and after every kill. You stay locked in
+        // and watch the respawn counter, which is what a shooter should do.
       }
     };
 

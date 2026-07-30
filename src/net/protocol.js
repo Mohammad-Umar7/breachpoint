@@ -98,6 +98,19 @@ export const MATCH_STATE = Object.freeze({
   OVER: 'over',
 });
 
+/**
+ * Starting health, shared by both sides.
+ *
+ * Lives here rather than in Player.js because in a match the SERVER owns
+ * health — it subtracts damage and reports the result. If the two disagreed,
+ * the HUD bar would not match the number that actually kills you.
+ *
+ * Raised from 100: at 100, a rifle's 24 damage killed in 5 rounds and fights
+ * were over before either player could react. 150 makes it 7, which leaves
+ * room to take cover and shoot back without dragging fights out.
+ */
+export const PLAYER_MAX_HEALTH = 150;
+
 /** Free-for-all rules. */
 export const MATCH_RULES = Object.freeze({
   killTarget: 25,

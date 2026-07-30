@@ -23,6 +23,7 @@
 
 import * as THREE from 'three';
 import { clamp, damp, lerp } from '../core/MathUtils.js';
+import { PLAYER_MAX_HEALTH } from '../net/protocol.js';
 import { TAG_KIND } from '../physics/PhysicsWorld.js';
 import { SURFACE } from '../core/AssetManager.js';
 import { footstepSoundFor } from '../audio/AudioManager.js';
@@ -90,7 +91,7 @@ export class Player {
     this.speed01 = 0;
 
     // --- vitals ----------------------------------------------------------
-    this.maxHealth = 100;
+    this.maxHealth = PLAYER_MAX_HEALTH;
     this.health = 100;
     this.maxArmor = 100;
     this.armor = 50;
@@ -307,8 +308,9 @@ export class Player {
 
     // ---- jump -----------------------------------------------------------
     this.coyote = this.grounded ? COYOTE_TIME : Math.max(0, this.coyote - dt);
-    if (this.enabled && this.input.wasPressed('jump')) this.jumpBuffer = JUMP_BUFFER;
-    else this.jumpBuffer = Math.max(0, this.jumpBuffer - dt);
+    // The edge itself is latched in updateLook() at render rate — see the note
+    // there. Here we only age the buffer out and spend it.
+    this.jumpBuffer = Math.max(0, this.jumpBuffer - dt);
 
     if (this.jumpBuffer > 0 && this.coyote > 0) {
       this.velocity.y = JUMP_VELOCITY;
@@ -425,6 +427,24 @@ export class Player {
    * so movement uses this frame's facing rather than the previous frame's.
    */
   updateLook(dt) {
+    // ---- latch the jump edge ------------------------------------------
+    // This has to happen at RENDER rate even though the jump itself is applied
+    // in fixedUpdate, because `wasPressed` is a single-frame edge that
+    // `input.endFrame()` wipes at the end of every rendered frame — while
+    // fixedUpdate only runs when the accumulator crosses 1/60 s.
+    //
+    // At 60 fps those line up and nothing is lost. At 240 fps — which is what
+    // this actually ran at — only one rendered frame in four steps physics, so
+    // three out of four Space presses were cleared before fixedUpdate ever saw
+    // them. It presented as the jump key being unreliable and needing several
+    // taps, and it got worse the higher the frame rate went.
+    //
+    // Latching here means the press is recorded the instant it arrives; the
+    // fixed step then consumes the buffer whenever it next runs.
+    if (this.enabled && this.alive && this.input.wasPressed('jump')) {
+      this.jumpBuffer = JUMP_BUFFER;
+    }
+
     this.input.consumeLookDelta(this._look);
     if (!this.enabled || !this.alive) {
       this._look.x = this._look.y = 0;

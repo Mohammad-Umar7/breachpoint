@@ -13,7 +13,7 @@
 
 import { WebSocket } from 'ws';
 import {
-  MSG, PROTOCOL_VERSION, MATCH_STATE, MATCH_RULES, LIMITS,
+  MSG, PROTOCOL_VERSION, MATCH_STATE, MATCH_RULES, LIMITS, PLAYER_MAX_HEALTH,
 } from '../src/net/protocol.js';
 
 const URL = process.env.URL || 'ws://localhost:8787';
@@ -137,7 +137,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   a.pos = [...before];
   a.input(a.pos);
   b.clear(); a.clear();
-  const rifleShotsToKill = Math.ceil(100 / 24);   // rifle damage is 24
+  const rifleShotsToKill = Math.ceil(PLAYER_MAX_HEALTH / 24);   // rifle damage is 24
   for (let i = 0; i < rifleShotsToKill + 2; i++) {
     a.shootAt(b.id, 'torso');
     await sleep(130);        // rifle rpm allows ~8.3/s; stay under it
@@ -165,7 +165,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   check('victim is respawned automatically', !!respawn,
     respawn ? `at ${JSON.stringify(respawn.sp)}` : 'never respawned');
   const bAlive = b.drain(MSG.SNAPSHOT).at(-1)?.p?.find((r) => r[0] === b.id);
-  check('respawned player is back to full health', bAlive?.[8] === 100, `hp=${bAlive?.[8]}`);
+  // Against the shared constant, not a literal — client and server both read
+  // PLAYER_MAX_HEALTH, so the test has to move with them or it goes stale.
+  check('respawned player is back to full health', bAlive?.[8] === PLAYER_MAX_HEALTH, `hp=${bAlive?.[8]}`);
 
   // --- fire-rate limiting --------------------------------------------------
   a.clear();

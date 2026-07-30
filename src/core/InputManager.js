@@ -66,6 +66,8 @@ export class InputManager {
     this.wheelDelta = 0;
 
     this.pointerLocked = false;
+    /** True once navigator.keyboard.lock() has been granted — see _lockKeyboard. */
+    this._keyboardLocked = false;
     this.enabled = true;
 
     /** Consumers can hook this to react to lock loss (e.g. auto-pause). */
@@ -81,6 +83,9 @@ export class InputManager {
     this._onKeyDown = (e) => {
       // Stop the browser scrolling / quick-find while playing.
       if (SWALLOWED_KEYS.has(e.code)) e.preventDefault();
+      // While locked, the game owns every key it binds — see BOUND_KEYS for
+      // why (Ctrl+W / Ctrl+D / Ctrl+R collisions with crouch).
+      if (this.pointerLocked && BOUND_KEYS.has(e.code)) e.preventDefault();
       if (e.repeat) return;
       if (e.code === 'F3') e.preventDefault();
 
@@ -127,7 +132,10 @@ export class InputManager {
 
     this._onPointerLockChange = () => {
       this.pointerLocked = document.pointerLockElement === this.canvas;
-      if (!this.pointerLocked) {
+      if (this.pointerLocked) {
+        this._lockKeyboard();
+      } else {
+        this._unlockKeyboard();
         // Never leave a button "stuck down" when focus is lost.
         this.mouseButtons.clear();
         this.keys.clear();
@@ -191,6 +199,35 @@ export class InputManager {
     if (p && typeof p.catch === 'function') {
       p.catch(() => this._plainPointerLock());
     }
+  }
+
+  /**
+   * Capture the keys the browser refuses to hand over.
+   *
+   * `preventDefault()` covers most Ctrl combinations, but a few are reserved by
+   * the browser itself and never reach the page's default-prevention at all —
+   * Ctrl+W above everything, which is *crouch + forward* and would close the
+   * tab mid-match. The Keyboard Lock API exists for exactly this, and is the
+   * only way to hold on to those keys.
+   *
+   * It is only granted in fullscreen, so this is best-effort: it succeeds for
+   * players in fullscreen and quietly does nothing otherwise. Nothing depends
+   * on it — it is a second layer over the preventDefault path.
+   */
+  _lockKeyboard() {
+    const kb = navigator.keyboard;
+    if (!kb?.lock || this._keyboardLocked) return;
+    // Naming the keys rather than locking everything keeps Escape working, so
+    // there is always a way out of the game.
+    kb.lock(['KeyW', 'KeyT', 'KeyN', 'KeyD', 'KeyR', 'KeyS', 'KeyA', 'KeyF', 'KeyP'])
+      .then(() => { this._keyboardLocked = true; })
+      .catch(() => { /* not fullscreen, or unsupported — preventDefault still applies */ });
+  }
+
+  _unlockKeyboard() {
+    if (!this._keyboardLocked) return;
+    this._keyboardLocked = false;
+    try { navigator.keyboard?.unlock?.(); } catch { /* noop */ }
   }
 
   _plainPointerLock() {
@@ -276,6 +313,7 @@ export class InputManager {
   }
 
   dispose() {
+    this._unlockKeyboard();
     window.removeEventListener('keydown', this._onKeyDown);
     window.removeEventListener('keyup', this._onKeyUp);
     window.removeEventListener('blur', this._onBlur);
@@ -293,6 +331,25 @@ const SWALLOWED_KEYS = new Set([
   'Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
   'Tab', 'F3',
 ]);
+
+/**
+ * Every key the game binds, flattened.
+ *
+ * While pointer lock is held, ALL of these get `preventDefault()` — not just
+ * the scroll keys above. The reason is modifier collisions: crouch is bound to
+ * Ctrl, so crouch-walking is Ctrl+W, crouch-strafing right is Ctrl+D, and
+ * crouch-reloading is Ctrl+R. Those are Chrome's close-tab, bookmark and
+ * reload shortcuts. Crouching and moving would pop the bookmark dialog or
+ * reload the page mid-match.
+ *
+ * Escape is deliberately excluded — it has to keep working to release pointer
+ * lock, otherwise there is no way out of the game.
+ */
+const BOUND_KEYS = new Set(
+  Object.entries(KEY_BINDINGS)
+    .flatMap(([, codes]) => codes)
+    .filter((code) => code !== 'Escape'),
+);
 
 const MAX_MOUSE_STEP = 260;
 function clampSpike(v) {

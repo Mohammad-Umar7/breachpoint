@@ -343,7 +343,16 @@ export class Level {
     }
 
     // --- Stairs up to the mezzanine (runs along -Z next to the east wall) ---
-    this._stairs('metal', [10.9, 0, -5.4], [0, -1], 10, 0.34, 0.36, 1.6);
+    //
+    // Same total rise (3.4 m) and footprint (3.6 m) as before, but split into
+    // 20 fine steps instead of 10 coarse ones.
+    //
+    // The old 0.34 m rise meant the character controller had to autostep the
+    // player up a third of a metre at a time, which reads as a lurch on every
+    // single step — the "sluggish going up" complaint. At 0.17 m per step the
+    // climb is smooth. The staircase is still steep at 43 degrees; what
+    // changed is the granularity, so it costs no extra floor space.
+    this._stairs('metal', [10.9, 0, -5.4], [0, -1], 20, 0.17, 0.18, 1.6);
     // Landing joining the top step to the platform
     this._box('metal', [10.9, 3.2, -9.4], [1.6, 0.3, 1.0], { tile: 1, surface: SURFACE.METAL });
 

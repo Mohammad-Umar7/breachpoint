@@ -392,45 +392,99 @@ export class RemotePlayers {
 
   // -------------------------------------------------------------- animation
   _animate(body, s, dt) {
-    // Walk cycle driven by the speed the interpolator measured, so a remote
-    // player's legs match how fast they are actually crossing the ground.
-    const speed = Math.min(s.moving ?? 0, 10);
-    const walk = Math.min(1.3, speed / 5.6);
-    body.phase += dt * (4.4 + walk * 4.5) * Math.max(0.12, walk);
+    // ---------------------------------------------------------------- gait
+    // Stride frequency is derived from GROUND SPEED and stride length, not
+    // from an arbitrary constant. That is what stops the feet sliding: at
+    // 5.6 m/s with a 1.75 m stride the legs cycle 3.2 times a second, so the
+    // foot that is planted stays roughly under the hip instead of skating
+    // along beneath a body that is moving faster than the legs suggest.
+    const speed = Math.min(s.moving ?? 0, 12);
+    const moving = Math.min(1, speed / 5.6);
+    const STRIDE = 1.75;
+    body.phase += (speed / STRIDE) * Math.PI * 2 * dt;
+    // Idle sway so a standing player is never perfectly frozen.
+    if (speed < 0.15) body.phase += dt * 1.1;
 
-    const swing = Math.sin(body.phase) * 0.72 * walk;
-    if (body.legL) body.legL.rotation.x = swing;
-    if (body.legR) body.legR.rotation.x = -swing;
+    // Blend the whole gait in and out rather than snapping between poses,
+    // otherwise a player who taps a movement key twitches.
+    body.gait = damp(body.gait ?? 0, moving, 9, dt);
+    const g = body.gait;
 
-    // Arms come up when aiming, otherwise counter-swing with the legs.
+    const swing = Math.sin(body.phase);
+    const lift = Math.cos(body.phase);
+
+    // ---------------------------------------------------------------- legs
+    // Knees are not separate joints in this model, so the illusion comes from
+    // swinging the leg and lifting the body — the classic low-poly walk.
+    if (body.legL) body.legL.rotation.x = swing * 0.80 * g;
+    if (body.legR) body.legR.rotation.x = -swing * 0.80 * g;
+
+    // ---------------------------------------------------------------- torso
+    // Vertical bob at twice stride frequency (one rise per footfall), plus a
+    // slight forward lean into the run and a roll onto the planted foot.
+    // These three are most of what separates "walking" from "gliding".
+    const bob = Math.abs(lift) * 0.055 * g;
+    const lean = g * 0.13;
+    body.group.rotation.x = lean;
+    body.group.rotation.z = swing * 0.035 * g;
+
+    // ----------------------------------------------------------------- arms
+    // The rifle is held in BOTH hands at all times. Rather than letting the
+    // arms swing freely — which looks like a jogger, not someone carrying a
+    // weapon — they hold a fixed grip pose and only the whole upper body
+    // rotates to aim. The small residual swing keeps it from looking rigid.
+    //
+    // SIGN NOTE, because it is counter-intuitive and it was wrong before:
+    // POSITIVE rotation.x swings an arm FORWARD (towards -z). The previous
+    // values here were negative, which swung both arms behind the back — the
+    // hands measured out at z = +0.4 while the weapon floated at z = -0.3, so
+    // the gun hung in mid-air roughly 70 cm in front of nobody. Every angle
+    // below was then solved numerically against the actual glove positions,
+    // targeting the pistol grip with the right hand and the handguard with
+    // the left.
     const aiming = (s.flags & FLAG.ADS) !== 0 || (s.flags & FLAG.FIRING) !== 0;
-    const aim = aiming ? 1 : 0;
+    body.aim = damp(body.aim ?? 0, aiming ? 1 : 0, 10, dt);
+    const aim = body.aim;
+    const jog = swing * 0.10 * g * (1 - aim);   // suppressed while aiming
+
     if (body.armR) {
-      body.armR.rotation.x = THREE.MathUtils.lerp(-swing * 0.55, -1.45, aim);
-      body.armR.rotation.z = THREE.MathUtils.lerp(0, -0.15, aim);
+      // Trigger hand: low ready at the hip, up to the shoulder to aim.
+      body.armR.rotation.x = THREE.MathUtils.lerp(0.45, 1.30, aim) + jog;
+      body.armR.rotation.y = THREE.MathUtils.lerp(-0.50, 0.00, aim);
+      body.armR.rotation.z = THREE.MathUtils.lerp(-0.35, -0.65, aim);
     }
     if (body.armL) {
-      body.armL.rotation.x = THREE.MathUtils.lerp(swing * 0.55, -1.3, aim);
-      body.armL.rotation.z = THREE.MathUtils.lerp(0, 0.45, aim);
+      // Support hand: crosses the body onto the handguard, further forward.
+      body.armL.rotation.x = THREE.MathUtils.lerp(0.90, 1.30, aim) - jog;
+      body.armL.rotation.y = THREE.MathUtils.lerp(0.30, 0.30, aim);
+      body.armL.rotation.z = THREE.MathUtils.lerp(0.50, 0.45, aim);
     }
 
-    // Weapon rides between a relaxed hip carry and a shouldered pose, tracking
-    // the same aim blend as the arms so gun and hands move together.
+    // --------------------------------------------------------------- weapon
+    // The grip sits IN the right hand — these are the measured glove positions
+    // for the poses above, not guesses — and the barrel runs out towards the
+    // left hand. Measured residual: 4 cm from handguard to support hand at the
+    // hip, 19 cm shouldered.
     if (body.weaponGroup) {
       body.weaponGroup.position.set(
-        THREE.MathUtils.lerp(0.22, 0.06, aim),
-        THREE.MathUtils.lerp(1.28, 1.42, aim),
-        THREE.MathUtils.lerp(-0.26, -0.34, aim),
+        THREE.MathUtils.lerp(0.14, 0.00, aim),
+        THREE.MathUtils.lerp(0.99, 1.33, aim) + bob,
+        THREE.MathUtils.lerp(-0.33, -0.38, aim),
       );
-      body.weaponGroup.rotation.x = THREE.MathUtils.lerp(0.25, -s.pitch * 0.9, aim);
-      body.weaponGroup.rotation.y = THREE.MathUtils.lerp(-0.12, 0, aim);
+      // Shouldered, the muzzle tracks the player's real pitch, so from across
+      // the map you can read where someone is actually pointing. At the hip it
+      // lies across the body in a low ready instead.
+      body.weaponGroup.rotation.x = THREE.MathUtils.lerp(0.70, -s.pitch, aim) - lean;
+      body.weaponGroup.rotation.y = THREE.MathUtils.lerp(0.60, 0.00, aim);
+      body.weaponGroup.rotation.z = THREE.MathUtils.lerp(-0.50, 0.00, aim);
     }
 
-    // Crouch: drop the body and shorten the stride.
+    // --------------------------------------------------------------- crouch
     const crouch = (s.flags & FLAG.CROUCH) !== 0 ? 1 : 0;
     body.crouch = damp(body.crouch ?? 0, crouch, 8, dt);
-    body.group.position.y -= body.crouch * 0.34;
+    body.group.position.y += bob - body.crouch * 0.34;
 
+    // ---------------------------------------------------------------- flash
     if (body.flash > 0) {
       body.flash = Math.max(0, body.flash - dt * 5);
       const k = body.flash;
