@@ -3,7 +3,44 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-    <title>BREACHPOINT — Three.js FPS</title>
+
+    <!--
+      A WebGL game is nearly invisible to a search crawler: the page is a canvas
+      and ~1.8 kB of UI labels, with no article text to rank. These tags are
+      what make it presentable anyway.
+
+      The Open Graph block matters MORE than the search tags here, because the
+      realistic way anyone finds this is a link pasted into Discord, WhatsApp or
+      a group chat — and a link that unfurls with a title, description and image
+      gets clicked far more often than a bare URL.
+
+      __SITE_URL__ is substituted at build time from VITE_SITE_URL — see the
+      htmlSiteUrl plugin in vite.config.js. Absolute URLs are required: crawlers
+      do not resolve relative og:image paths reliably.
+    -->
+    <title>Breachpoint — free browser FPS, play with friends instantly</title>
+    <meta name="description"
+          content="Breachpoint is a free multiplayer first-person shooter that runs in your browser — no download, no account. Create a match, send a link, and play free-for-all deathmatch with friends. Twelve weapons, real physics, built with Three.js." />
+    <meta name="theme-color" content="#0b1117" />
+    <link rel="canonical" href="__SITE_URL__/" />
+
+    <!-- Open Graph: how the link looks when shared -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Breachpoint" />
+    <meta property="og:title" content="Breachpoint — free browser FPS" />
+    <meta property="og:description"
+          content="Multiplayer deathmatch in your browser. No download. Create a match, send the link, play." />
+    <meta property="og:url" content="__SITE_URL__/" />
+    <meta property="og:image" content="__SITE_URL__/og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="Breachpoint — a first-person view down the sights of a rifle in an industrial arena" />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Breachpoint — free browser FPS" />
+    <meta name="twitter:description"
+          content="Multiplayer deathmatch in your browser. No download. Create a match, send the link, play." />
+    <meta name="twitter:image" content="__SITE_URL__/og.png" />
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='11' fill='none' stroke='%2366ddff' stroke-width='2'/><path d='M16 2v6M16 24v6M2 16h6M24 16h6' stroke='%2366ddff' stroke-width='2'/></svg>" />
     <link rel="stylesheet" href="/src/styles/main.css" />
   </head>

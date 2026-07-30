@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { defineConfig } from 'vite';
 
 /**
@@ -9,8 +11,47 @@ import { defineConfig } from 'vite';
  * on some setups. We keep it in `optimizeDeps.include` because the compat
  * build is plain ESM and pre-bundling speeds up cold starts noticeably.
  */
+/**
+ * Substitute __SITE_URL__ in index.html at build time.
+ *
+ * Open Graph and canonical tags need ABSOLUTE urls — crawlers and link
+ * unfurlers do not reliably resolve relative og:image paths — but the deployed
+ * hostname is not known until the site exists. So it comes from the
+ * environment:
+ *
+ *   VITE_SITE_URL=https://breachpoint.pages.dev npm run build
+ *
+ * Left unset, the placeholder collapses to an empty string, which yields
+ * relative urls. Those are harmless locally; they just mean shared links will
+ * not show a preview image until the variable is set.
+ */
+function htmlSiteUrl() {
+  const site = () => (process.env.VITE_SITE_URL || '').replace(/\/+$/, '');
+  return {
+    name: 'html-site-url',
+    transformIndexHtml(html) {
+      return html.replaceAll('__SITE_URL__', site());
+    },
+    /**
+     * robots.txt and sitemap.xml live in public/, which Vite copies verbatim —
+     * transformIndexHtml never sees them. Patch the emitted copies instead, so
+     * all three files carry the same URL and cannot drift.
+     */
+    writeBundle(options) {
+      const outDir = options.dir || 'dist';
+      for (const name of ['robots.txt', 'sitemap.xml']) {
+        const file = path.join(outDir, name);
+        if (!fs.existsSync(file)) continue;
+        const patched = fs.readFileSync(file, 'utf8').replaceAll('__SITE_URL__', site());
+        fs.writeFileSync(file, patched, 'utf8');
+      }
+    },
+  };
+}
+
 export default defineConfig({
   base: './',
+  plugins: [htmlSiteUrl()],
   server: {
     port: 5173,
     // Set to true if you want the dev server to launch your browser for you.

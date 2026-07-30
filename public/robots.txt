@@ -1,0 +1,8 @@
+# Allow everything. There is nothing private here and nothing to protect from
+# crawlers — the whole point is to be found.
+User-agent: *
+Allow: /
+
+# Sitemap URL is rewritten at build time; if it still reads __SITE_URL__ then
+# VITE_SITE_URL was not set when this was built.
+Sitemap: __SITE_URL__/sitemap.xml
