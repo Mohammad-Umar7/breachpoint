@@ -79,6 +79,9 @@ export class NetworkClient {
     this.name = 'OPERATOR';
     this.ping = 0;
     this.lastError = null;
+    /** Diagnostics: how often the server has moved us against our will. */
+    this.corrections = 0;
+    this.respawns = 0;
 
     /** Server-reported roster: id -> { id, name, kills, deaths, ping, alive } */
     this.players = new Map();
@@ -361,8 +364,8 @@ export class NetworkClient {
           const self = this.players.get(this.selfId);
           const wasDead = self && !self.alive;
           if (self) { self.alive = true; self.hp = 100; }
-          if (wasDead) this.onRespawn?.(msg.sp);
-          else this.onCorrection?.(msg.sp);
+          if (wasDead) { this.respawns++; this.onRespawn?.(msg.sp); }
+          else { this.corrections++; this.onCorrection?.(msg.sp); }
         }
         this.onMatch?.(this.match);
         break;

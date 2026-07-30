@@ -161,17 +161,43 @@ export class InputManager {
   // ------------------------------------------------------------ pointer lock
   requestPointerLock() {
     if (this.pointerLocked) return;
-    const p = this.canvas.requestPointerLock?.({ unadjustedMovement: true });
-    // Chrome returns a promise when `unadjustedMovement` is requested; if raw
-    // input is unsupported it rejects and we retry with the plain call.
+
+    // `unadjustedMovement` asks for raw, unaccelerated mouse input — and it is
+    // only available in a SECURE CONTEXT (https, or localhost).
+    //
+    // This mattered far more than it looks. On an insecure origin — which a LAN
+    // address like http://192.168.1.50:5173 is — Chrome rejects the promise.
+    // The old code retried with the plain call inside .catch(), but by the time
+    // a rejected promise's handler runs, the transient user activation from the
+    // click has expired, so the retry is refused as well. Both attempts fail
+    // silently, pointer lock never engages, and the game renders perfectly at
+    // full frame rate while the mouse does nothing at all. It presents as the
+    // game being completely stuck rather than as a permissions problem.
+    //
+    // So: only ask for raw input where it can actually be granted, and
+    // otherwise make the plain request synchronously, still inside the gesture.
+    if (!window.isSecureContext) {
+      this._plainPointerLock();
+      return;
+    }
+
+    let p;
+    try {
+      p = this.canvas.requestPointerLock?.({ unadjustedMovement: true });
+    } catch {
+      this._plainPointerLock();
+      return;
+    }
     if (p && typeof p.catch === 'function') {
-      p.catch(() => {
-        try {
-          this.canvas.requestPointerLock();
-        } catch (err) {
-          console.warn('[Input] Pointer lock unavailable.', err);
-        }
-      });
+      p.catch(() => this._plainPointerLock());
+    }
+  }
+
+  _plainPointerLock() {
+    try {
+      this.canvas.requestPointerLock();
+    } catch (err) {
+      console.warn('[Input] Pointer lock unavailable.', err);
     }
   }
 
