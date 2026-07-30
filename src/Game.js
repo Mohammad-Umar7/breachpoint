@@ -514,6 +514,21 @@ export class Game {
   }
 
   /**
+   * Build the effect shaders up front, once per session.
+   *
+   * Deliberately not awaited: it runs alongside the opening seconds of the
+   * match rather than delaying the start, and every shot fired before it
+   * finishes simply compiles as it always would. See ParticleManager.warmup
+   * for why this exists at all.
+   */
+  _warmShaders() {
+    if (this._shadersWarmed) return;
+    this._shadersWarmed = true;
+    this.fx?.warmup?.(this.renderer, this.camera)
+      .catch(() => { /* an optimisation, never a requirement */ });
+  }
+
+  /**
    * Pick up any recorded sound files the project has been given.
    *
    * Fire-and-forget and entirely optional — see AudioManager.loadSamples.
@@ -536,6 +551,7 @@ export class Game {
     this.audio.resume();
     this.audio.startAmbience();
     this._loadAudioSamples();
+    this._warmShaders();
 
     this._resetWorld();
     this.stats = this._blankStats();

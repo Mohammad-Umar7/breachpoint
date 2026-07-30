@@ -320,12 +320,29 @@ export class ParticleManager {
 
     // A small pool of dynamic point lights. Shadow casting is off — one
     // shadow-casting light (the sun) is all we can afford at 60 FPS.
+    //
+    // These stay visible for the entire session and are silenced with
+    // intensity 0, NEVER with `visible = false`. That looks like a pointless
+    // distinction and is in fact the single worst stall in the game.
+    //
+    // three.js bakes the number of active lights into every shader as
+    // NUM_POINT_LIGHTS. Toggling a light's visibility changes that number,
+    // which invalidates the programs of every lit material in the scene and
+    // recompiles them — synchronously, in the middle of a frame. Measured on
+    // the first exploding barrel: 20 programs rebuilt, two frames of 1540 ms
+    // and 1751 ms against a 2.1 ms baseline. That is the one-off freeze people
+    // hit the first time something blows up, and it recurs at every new peak
+    // number of simultaneous lights.
+    //
+    // Holding the count constant at LIGHT_MAX costs a few always-on light
+    // evaluations per fragment and removes the recompilation entirely.
     this.LIGHT_MAX = 6;
     this.lights = [];
     for (let i = 0; i < this.LIGHT_MAX; i++) {
       const light = new THREE.PointLight(0xffc070, 0, 24, 2);
       light.castShadow = false;
-      light.visible = false;
+      light.visible = true;      // deliberate — see above
+      light.intensity = 0;
       this.scene.add(light);
       this.lights.push({ light, alive: false, life: 0, maxLife: 0.1, peak: 10 });
     }
@@ -334,6 +351,44 @@ export class ParticleManager {
   _getFlash() {
     if (this.flashCount < this.FLASH_MAX) return this.flashes[this.flashCount++];
     return this.flashes[0];
+  }
+
+  /**
+   * Compile every effect's shader before the match starts.
+   *
+   * WebGL builds a shader program the first time an object is actually drawn,
+   * and that build blocks the frame it happens on. Anything hidden until it is
+   * needed therefore pays for itself at the worst possible moment — the
+   * fireball shells are invisible until something explodes, so the first
+   * explosion compiled its programs mid-fight and froze the game for over a
+   * second.
+   *
+   * Making them briefly visible and asking the renderer to compile moves that
+   * cost into loading, where a pause is expected and free.
+   *
+   * @param {THREE.WebGLRenderer} renderer
+   * @param {THREE.Camera} camera
+   */
+  async warmup(renderer, camera) {
+    const hidden = [];
+    for (const fb of this.fireballs) {
+      if (!fb.mesh.visible) {
+        hidden.push(fb.mesh);
+        fb.mesh.visible = true;
+        // Zero opacity keeps it off-screen visually while still being drawn,
+        // so nothing flashes up during loading.
+        fb.mat.opacity = 0;
+      }
+    }
+    try {
+      if (renderer.compileAsync) await renderer.compileAsync(this.scene, camera);
+      else renderer.compile(this.scene, camera);
+    } catch (err) {
+      // Warmup is an optimisation, never a requirement.
+      console.warn('[FX] Shader warmup skipped:', err);
+    } finally {
+      for (const mesh of hidden) mesh.visible = false;
+    }
   }
 
   /** Briefly light the world from a point (muzzle flash, explosion). */
@@ -348,7 +403,6 @@ export class ParticleManager {
       entry.light.distance = distance;
       entry.light.position.copy(pos);
       entry.light.intensity = intensity;
-      entry.light.visible = true;
       return entry;
     }
     return null;
@@ -1012,8 +1066,7 @@ export class ParticleManager {
       e.life += dt;
       if (e.life >= e.maxLife) {
         e.alive = false;
-        e.light.visible = false;
-        e.light.intensity = 0;
+        e.light.intensity = 0;   // NOT visible=false — see the light pool note
         continue;
       }
       const t = e.life / e.maxLife;
@@ -1098,7 +1151,7 @@ export class ParticleManager {
     hideAll(this.decalMesh, this.decals, null);
     hideAll(this.bloodMesh, this.bloods, null);
     for (const fb of this.fireballs) { fb.alive = false; fb.mesh.visible = false; }
-    for (const l of this.lights) { l.alive = false; l.light.visible = false; l.light.intensity = 0; }
+    for (const l of this.lights) { l.alive = false; l.light.intensity = 0; }
   }
 
   dispose() {
