@@ -102,7 +102,10 @@ export const MATCH_STATE = Object.freeze({
 export const MATCH_RULES = Object.freeze({
   killTarget: 25,
   timeLimitSec: 600,
-  maxPlayers: 8,
+  // 12, so a group of ten can all get in with headroom. The arena has 13 spawn
+  // points, which is the real ceiling — beyond that players would start
+  // spawning on top of each other.
+  maxPlayers: 12,
   respawnDelaySec: 2.5,
   /** Match restarts this long after it ends, so a lobby never gets stuck. */
   postMatchSec: 12,

@@ -93,6 +93,7 @@ export class NetworkClient {
     this.onCorrection = null;    // ([x,y,z])  server rejected our position
     this.onRespawn = null;       // ([x,y,z])
     this.onDenied = null;        // (reason)
+    this.onProgress = null;      // (message) slow-connect progress, for the lobby
   }
 
   get connected() { return this.state === NET_STATE.CONNECTED; }
@@ -132,9 +133,27 @@ export class NetworkClient {
 
       // A server that is down often leaves the socket "connecting" rather than
       // erroring, so without this the menu would hang on JOINING forever.
+      //
+      // The window is generous because free hosting sleeps. Render's free tier
+      // spins a service down after 15 minutes idle and takes about a minute to
+      // wake, so the first person to join after a quiet spell waits far longer
+      // than a warm server would need. An 8-second timeout — the first value
+      // here — made the free tier look permanently broken to whoever arrived
+      // first. Progress is reported so the wait can be explained rather than
+      // just endured.
+      const slowAt = setTimeout(() => {
+        if (!settled) {
+          this.onProgress?.('Waking the server — this can take up to a minute '
+            + 'if nobody has played recently.');
+        }
+      }, 3500);
       const timeout = setTimeout(() => {
-        if (!settled) { try { socket.close(); } catch { /* noop */ } fail('the server did not respond'); }
-      }, 8000);
+        if (!settled) {
+          try { socket.close(); } catch { /* noop */ }
+          fail('the server did not respond');
+        }
+      }, 75000);
+      const clearTimers = () => { clearTimeout(slowAt); clearTimeout(timeout); };
 
       socket.onopen = () => {
         this._send(MSG.JOIN, { n: this.name, r: room || undefined, v: PROTOCOL_VERSION });
@@ -145,13 +164,13 @@ export class NetworkClient {
         try { msg = JSON.parse(ev.data); } catch { return; }
         if (msg.t === MSG.WELCOME && !settled) {
           settled = true;
-          clearTimeout(timeout);
+          clearTimers();
           this._handleWelcome(msg);
           resolve(msg);
           return;
         }
         if (msg.t === MSG.DENIED && !settled) {
-          clearTimeout(timeout);
+          clearTimers();
           fail(msg.why || 'the server refused the connection');
           try { socket.close(); } catch { /* noop */ }
           return;
@@ -160,12 +179,12 @@ export class NetworkClient {
       };
 
       socket.onerror = () => {
-        clearTimeout(timeout);
+        clearTimers();
         fail('could not reach the server — is it running?');
       };
 
       socket.onclose = (ev) => {
-        clearTimeout(timeout);
+        clearTimers();
         this._stopPing();
         if (!settled) {
           fail(ev.reason || 'the connection closed before joining');

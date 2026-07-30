@@ -839,6 +839,10 @@ export class Game {
   async _connect({ name, room }) {
     if (name) this.settings.set('playerName', name);
     this._wireNet();
+    // Free hosting sleeps, so a first connection can legitimately take up to a
+    // minute. Surface that instead of leaving the player staring at
+    // "Connecting..." wondering whether it is broken.
+    this.net.onProgress = (msg) => this.menus.setLobbyStatus(msg);
     try {
       const welcome = await this.net.connect({
         name: name || this.settings.get('playerName') || 'OPERATOR',
