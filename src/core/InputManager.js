@@ -40,6 +40,8 @@ export const KEY_BINDINGS = Object.freeze({
   flashlight: ['KeyF'],
   pause: ['Escape', 'KeyP'],
   stats: ['F3'],
+  /** Held, not toggled — the scoreboard shows for as long as you hold it. */
+  scoreboard: ['Tab'],
 });
 
 export class InputManager {

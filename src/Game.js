@@ -46,6 +46,9 @@ import { ScopeRenderer, LAYER_WORLD } from './fx/ScopeRenderer.js';
 import { AudioManager } from './audio/AudioManager.js';
 import { UIManager } from './ui/UIManager.js';
 import { MenuManager } from './ui/MenuManager.js';
+import { NetworkClient, NET_STATE, inviteUrl, roomFromUrl } from './net/NetworkClient.js';
+import { RemotePlayers } from './net/RemotePlayers.js';
+import { FLAG, MATCH_STATE } from './net/protocol.js';
 import { clamp, damp, randRange } from './core/MathUtils.js';
 
 export const GAME_STATE = Object.freeze({
@@ -119,8 +122,13 @@ export class Game {
       this.level.captureResetState();
       this.nav = new NavigationSystem(this.level, this.physics);
 
+      // Multiplayer. The client is created but idle until a match is joined,
+      // so a failed or absent server never blocks the game from booting.
+      this.net = new NetworkClient();
+
       this.menus.setLoadingProgress(0.72, 'Spawning effects');
       this.fx = new ParticleManager(this.scene, this.assets, this.settings);
+      this.remotes = new RemotePlayers({ scene: this.scene, assets: this.assets });
 
       this.menus.setLoadingProgress(0.78, 'Arming player');
       this.lean = new LeanSystem(this.input, this.settings, this.physics);
@@ -287,6 +295,23 @@ export class Game {
   // ============================================================== callbacks
   _bindUi() {
     this.menus.onPlay = () => this.startGame();
+    // Someone following an invite link lands straight on the join screen with
+    // the code already filled in, so the link is one click rather than "now
+    // type these five characters".
+    const invited = roomFromUrl();
+    if (invited) {
+      this.menus.openLobby('join', invited);
+      // Drop it from the address bar so a later reload does not silently
+      // rejoin a match that has long since ended.
+      try {
+        const clean = new URL(location.href);
+        clean.searchParams.delete('room');
+        history.replaceState(null, '', clean.toString());
+      } catch { /* non-fatal */ }
+    }
+
+    this.menus.onCreateMatch = (name) => this._connect({ name, room: null });
+    this.menus.onJoinMatch = (code, name) => this._connect({ name, room: code });
     this.menus.onContinue = () => this.resume();
     this.menus.onResume = () => this.resume();
     this.menus.onRestart = () => this.restart();
@@ -500,8 +525,17 @@ export class Game {
     this.input.clearAll();
     this.input.requestPointerLock();
 
-    this.enemies.startNextWave();
-    this.ui.showBanner('SECURE THE YARD', 2.4);
+    // Re-apply the server's spawn. _resetWorld() above puts the player back at
+    // Level.playerSpawn, which in a match would drop everyone onto one tile.
+    if (this.net?.connected && this._pendingSpawn) this._placePlayer(this._pendingSpawn);
+
+    // Deathmatch: opponents are other players, so no AI wave is started.
+    // EnemyManager stays wired up but idle, ready for a future PvE mode.
+    this.ui.showBanner(
+      this.net?.connected && this.net.isWarmup
+        ? 'WAITING FOR PLAYERS' : 'FIGHT',
+      2.4,
+    );
   }
 
   restart() {
@@ -529,6 +563,7 @@ export class Game {
   }
 
   quitToMenu() {
+    this.leaveMatch();
     this.audio.setMuffled(false);
     this._setState(GAME_STATE.MENU);
     this.hasActiveRun = false;
@@ -659,6 +694,17 @@ export class Game {
 
     if (this.input.wasPressed('stats')) this.ui.toggleStats();
 
+    // Scoreboard is held, not toggled. Forced open when the match is over so
+    // everyone sees the final standings without having to reach for Tab.
+    if (this.net?.connected) {
+      const forced = this.net.match.state === MATCH_STATE.OVER;
+      const want = forced || this.input.isDown('scoreboard');
+      if (want !== this._scoreboardShown) {
+        this._scoreboardShown = want;
+        this.ui.setScoreboardVisible(want);
+      }
+    }
+
     // 1. Look first: movement should use this frame's facing.
     this.player.updateLook(dt);
 
@@ -678,6 +724,7 @@ export class Game {
     // 5. Weapons need the final camera transform for accurate raycasts.
     this.weapons.update(dt);
     this.viewModel.syncCamera();
+    this._updateNetwork(dt);
 
     // 6. Everything else.
     this.enemies.update(dt, this.physics.alpha);
@@ -780,6 +827,204 @@ export class Game {
     this.postfx.setFocus(hit ? hit.distance : 60, dt);
   }
 
+
+  // ============================================================ multiplayer
+  /**
+   * Join or create a match, then drop straight into it.
+   *
+   * Resolves either way — a failure is reported in the lobby rather than
+   * thrown, because this is called from a button handler and an unhandled
+   * rejection would leave the UI stuck on "Connecting...".
+   */
+  async _connect({ name, room }) {
+    if (name) this.settings.set('playerName', name);
+    this._wireNet();
+    try {
+      const welcome = await this.net.connect({
+        name: name || this.settings.get('playerName') || 'OPERATOR',
+        room,
+      });
+      this.menus.inviteLink = inviteUrl(welcome.r);
+      this.menus.showInvite(welcome.r);
+      this.menus.setLobbyStatus(
+        room ? 'Joined. Dropping in...' : 'Match created. Dropping in...', 'ok',
+      );
+      // Brief pause so the code and invite link are actually readable before
+      // the overlay disappears.
+      setTimeout(() => { if (this.net.connected) this.startGame(); }, room ? 350 : 1400);
+    } catch (err) {
+      this.menus.setLobbyStatus(err.message || 'Could not connect.', 'error');
+    }
+  }
+
+  /** Attach handlers once; connect() may be called repeatedly. */
+  _wireNet() {
+    if (this._netWired) return;
+    this._netWired = true;
+    const net = this.net;
+
+    net.onWelcome = ({ spawn }) => {
+      // The server owns spawn points, so adopt the one it gave us rather than
+      // the single-player start.
+      //
+      // Held as well as applied, because startGame() runs shortly afterwards
+      // and its _resetWorld() respawns the player at Level.playerSpawn — which
+      // silently put every player on the same tile.
+      this._pendingSpawn = spawn;
+      if (spawn) this._placePlayer(spawn);
+    };
+
+    net.onCorrection = (pos) => {
+      // The server rejected where we said we were. Snap, do not smooth: easing
+      // toward a corrected position keeps feeding it rejected inputs.
+      this._placePlayer(pos);
+    };
+
+    net.onRespawn = (pos) => {
+      this._pendingSpawn = pos;
+      this._placePlayer(pos);
+      this.player.health = this.player.maxHealth;
+      this.player.alive = true;
+      this.ui.hideRespawn?.();
+      this._respawnAt = 0;
+      this.input.requestPointerLock?.();
+    };
+
+    net.onHit = (h) => {
+      if (h.isSelfVictim) {
+        // Health is server-owned; mirror it rather than subtracting locally.
+        this.player.health = h.hp;
+        this.player.onDamaged?.(h.damage);
+        this.ui.flashDamage?.(h.damage / 60);
+        this.audio.play('playerHurt', { volume: 0.8 });
+      } else {
+        this.remotes.flash(h.victim);
+      }
+      if (h.isSelfAttacker) this.ui.showHitmarker(h.part === 'head');
+    };
+
+    net.onKill = (k) => {
+      this.ui.addKillFeed?.(
+        k.attackerName + ' \u2192 ' + k.victimName + (k.headshot ? '  HS' : ''),
+        k.isSelfAttacker,
+      );
+      if (k.isSelfAttacker) {
+        this.stats.kills++;
+        if (k.headshot) this.stats.headshots++;
+        this.audio.play('hitConfirm', { volume: 0.9 });
+      }
+      if (k.isSelfVictim) {
+        this.player.alive = false;
+        this.player.health = 0;
+        this._respawnAt = performance.now() + 2500;
+        this.ui.showRespawn?.(k.attackerName);
+        this.input.exitPointerLock?.();
+      }
+    };
+
+    net.onScore = (roster) => this.ui.setScoreboard?.(roster, net.selfId, net.match);
+    net.onMatch = (match) => {
+      this.ui.setScoreboard?.(net.roster(), net.selfId, match);
+      if (match.state === MATCH_STATE.OVER) {
+        const winner = net.nameOf(match.winnerId);
+        this.ui.showBanner((match.winnerId === net.selfId ? 'YOU WIN' : winner + ' WINS'), 4);
+        this.ui.setScoreboardVisible?.(true);
+      } else if (match.state === MATCH_STATE.LIVE) {
+        this.ui.setScoreboardVisible?.(false);
+      }
+    };
+
+    net.onLeft = (id) => this.remotes.bodies.has(id) && this.remotes.sync(
+      new Map([...(this.remotes._lastSample ?? [])].filter(([k]) => k !== id)),
+      new Map(), 0,
+    );
+
+    net.onStateChange = (state, detail) => {
+      if (state === NET_STATE.OFFLINE && this.hasActiveRun) {
+        this.ui.showNetWarning?.(detail || 'Disconnected from the match.');
+      }
+    };
+
+    net.onDenied = (why) => this.ui.showNetWarning?.(why);
+
+    // Hit registration: the weapon asks who is on the ray, and reports claims.
+    this.weapons.remoteHitTest = (origin, dir, maxDist) =>
+      (net.connected ? this.remotes.raycast(origin, dir, maxDist) : null);
+    this.weapons.onRemoteHit = (hit) => {
+      net.sendShot({
+        origin: hit.point, direction: this._camForward,
+        weaponId: hit.weaponId,
+        hits: [{ victimId: hit.victimId, part: hit.part }],
+      });
+    };
+  }
+
+  /** Put the local player exactly where the server says, physics included. */
+  _placePlayer(pos) {
+    this.player.position.set(pos[0], pos[1], pos[2]);
+    this._syncPlayerBody();
+  }
+
+  /** Keep the physics body in step after the server moves us. */
+  _syncPlayerBody() {
+    this.player.body?.setTranslation?.(
+      { x: this.player.position.x, y: this.player.position.y, z: this.player.position.z },
+      true,
+    );
+    this.player.prevPosition.copy(this.player.position);
+    this.player.renderPosition.copy(this.player.position);
+  }
+
+  /** Pack the local player's animation state for the wire. */
+  _playerFlags() {
+    let f = 0;
+    const p = this.player;
+    if (p.crouching) f |= FLAG.CROUCH;
+    if (p.sprinting) f |= FLAG.SPRINT;
+    if (!p.grounded) f |= FLAG.AIRBORNE;
+    if (this.weapons.ads.progress > 0.5) f |= FLAG.ADS;
+    if (this.weapons.fireBuffer > 0) f |= FLAG.FIRING;
+    if (!p.alive) f |= FLAG.DEAD;
+    if (this.lean.amount < -0.3) f |= FLAG.LEAN_L;
+    if (this.lean.amount > 0.3) f |= FLAG.LEAN_R;
+    return f;
+  }
+
+  /** Send our state, then draw everyone else. */
+  _updateNetwork(dt) {
+    const net = this.net;
+    if (!net?.connected) return;
+
+    net.sendInput({
+      position: this.player.position,
+      yaw: this.player.yaw,
+      pitch: this.player.pitch,
+      flags: this._playerFlags(),
+      weaponId: this.weapons.current?.def?.id ?? 'rifle',
+    });
+
+    this._netSample = net.sample(performance.now(), this._netSample);
+    const roster = new Map([...net.players].map(([id, pl]) => [id, pl]));
+    this.remotes.sync(this._netSample, roster, dt);
+
+    // Dead: hold still and offer a respawn once the server's timer is up.
+    if (!this.player.alive && this._respawnAt) {
+      const left = Math.max(0, this._respawnAt - performance.now());
+      this.ui.updateRespawn?.(Math.ceil(left / 1000));
+      if (left <= 0) net.requestRespawn();
+    }
+  }
+
+  leaveMatch() {
+    this.net?.disconnect();
+    this.remotes?.clear();
+    this.weapons.remoteHitTest = null;
+    this.weapons.onRemoteHit = null;
+    this._respawnAt = 0;
+    this.ui.hideRespawn?.();
+    this.ui.hideNetWarning?.();
+  }
+
   _pushHud(dt) {
     this.ui.updateHud(
       {
@@ -789,11 +1034,11 @@ export class Game {
         maxArmor: this.player.maxArmor,
         weapon: this.weapons.hudState(),
         lean: this.lean.amount,
-        wave: Math.max(1, this.enemies.waveIndex + 1),
-        totalWaves: this.enemies.totalWaves,
-        enemiesRemaining: Math.max(0, this.enemies.remainingThisWave),
-        difficultyLabel: this.enemies.difficulty.label,
-        score: this.stats.score,
+        match: this.net?.connected ? this.net.match : null,
+        room: this.net?.room ?? null,
+        ping: this.net?.ping ?? 0,
+        leader: this.net?.connected ? (this.net.roster()[0] ?? null) : null,
+        score: this.stats.kills,
         fps: this.clock.fps,
         drawCalls: this.renderer.info.render.calls,
         triangles: this.renderer.info.render.triangles,

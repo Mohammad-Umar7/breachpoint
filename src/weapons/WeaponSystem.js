@@ -89,6 +89,20 @@ export class WeaponSystem {
 
     // --- callbacks (wired by Game) ---
     this.onHit = null;
+
+    /**
+     * Multiplayer hooks, installed by Game while connected to a match.
+     *
+     * remoteHitTest(origin, dir, maxDist) returns the nearest other player on
+     * the ray, or null. Other players carry no physics colliders on purpose
+     * (see RemotePlayers.raycast), so they are tested separately and take
+     * precedence whenever they are nearer than whatever the physics ray struck.
+     *
+     * onRemoteHit(hit) reports the claim to the server, which decides the
+     * damage. Nothing here applies damage locally.
+     */
+    this.remoteHitTest = null;
+    this.onRemoteHit = null;
     this.onKill = null;
     this.onShotFired = null;
     this.onPropHit = null;
@@ -500,8 +514,14 @@ export class WeaponSystem {
       filter: (tag) => !!tag && tag.kind !== TAG_KIND.PLAYER,
     });
 
+    // Other players are tested separately from the physics world and take
+    // precedence when nearer, so a round cannot pass through someone standing
+    // in front of a wall.
+    const reach = hit ? hit.distance : def.range;
+    const remote = this.remoteHitTest ? this.remoteHitTest(origin, this._spreadDir, reach) : null;
+
     // --- tracer ---
-    this._end.copy(origin).addScaledVector(this._spreadDir, hit ? hit.distance : def.range);
+    this._end.copy(origin).addScaledVector(this._spreadDir, remote ? remote.distance : reach);
     if (isPrimaryPellet || (def.pellets ?? 1) <= 3 || Math.random() < 0.45) {
       this.fx.spawnTracer(this._muzzle, this._end, {
         color: def.tracerColor,
@@ -510,8 +530,44 @@ export class WeaponSystem {
       });
     }
 
+    if (remote) return this._resolveRemoteHit(remote, this._spreadDir, weapon);
     if (!hit) return null;
     return this._resolveImpact(hit, this._spreadDir, weapon, hit.distance);
+  }
+
+  /**
+   * A hit on another player.
+   *
+   * Plays the local feedback — impact, blood, hit marker — and reports the
+   * claim upstream. Deliberately does NOT compute or apply damage: the server
+   * owns that, and the HIT message it sends back is what moves anyone's health.
+   * Applying it here as well would double-count, and would let a tampered
+   * client decide how hard it hits.
+   */
+  _resolveRemoteHit(remote, direction, weapon) {
+    const def = weapon.def;
+    const headshot = remote.part === 'head';
+
+    this._tmp2.copy(direction).negate();
+    this.fx.spawnImpact(remote.point, this._tmp2, SURFACE.FLESH, headshot ? 1.6 : 1);
+    this.fx.spawnBloodBurst(remote.point, direction, headshot ? 1.5 : 1);
+    this.audio.play(impactSoundFor(SURFACE.FLESH), { position: remote.point, volume: 0.8 });
+
+    this.onRemoteHit?.({
+      victimId: remote.id,
+      part: remote.part,
+      point: remote.point,
+      distance: remote.distance,
+      weaponId: def.id,
+      headshot,
+    });
+
+    // `killed` stays false: only the server can confirm a kill and it announces
+    // one over the wire. Guessing here would flash a phantom kill on screen.
+    return {
+      hitEnemy: true, remote: true, headshot, killed: false,
+      damage: weapon.damageAtRange(remote.distance), point: remote.point,
+    };
   }
 
   /** Shared impact handling for hitscan bullets and projectiles. */

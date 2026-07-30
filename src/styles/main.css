@@ -530,3 +530,108 @@ kbd {
   .settings-scroll { max-height: 42vh; }
   .screen { gap: 12px; padding: 20px 24px; }
 }
+
+/* ==========================================================================
+   Multiplayer UI
+   Lobby, scoreboard, respawn overlay, connection warning.
+   Reuses the existing panel/nav vocabulary so it does not read as bolted on.
+   ========================================================================== */
+
+/* ---------- Lobby ---------- */
+.lobby-block {
+  width: min(420px, 90vw);
+  margin: 0 auto 18px;
+  text-align: left;
+}
+.lobby-label {
+  display: block; font-size: 12px; letter-spacing: 2.5px;
+  color: var(--ink-dim); margin-bottom: 6px;
+}
+.lobby-input {
+  width: 100%; box-sizing: border-box;
+  background: var(--surface-2); color: var(--ink);
+  border: 1px solid var(--panel-border); border-left: 3px solid var(--accent-dim);
+  padding: 11px 14px; font-family: var(--font-ui);
+  font-size: 17px; letter-spacing: 2px; outline: none;
+  transition: border-color 0.15s var(--ease);
+}
+.lobby-input:focus { border-left-color: var(--accent); border-color: var(--accent-dim); }
+.lobby-input::placeholder { color: rgba(147, 168, 180, 0.45); }
+/* Match codes are case-insensitive and read aloud, so force the display form. */
+.lobby-input.code {
+  text-transform: uppercase; font-family: var(--font-mono);
+  font-size: 26px; letter-spacing: 10px; text-align: center;
+}
+.lobby-help { font-size: 12px; color: var(--ink-dim); margin: 6px 0 0; letter-spacing: 0.5px; }
+
+.lobby-code {
+  font-family: var(--font-mono); font-size: 40px; letter-spacing: 14px;
+  text-align: center; color: var(--accent);
+  background: var(--surface-2); border: 1px solid var(--panel-border);
+  padding: 12px 0 12px 14px; margin-bottom: 10px;
+  text-shadow: 0 0 18px rgba(102, 221, 255, 0.35);
+}
+.lobby-status {
+  min-height: 20px; font-size: 13px; letter-spacing: 1px;
+  color: var(--warn); margin: 4px 0 14px;
+}
+.lobby-status.error { color: var(--danger); }
+.lobby-status.ok { color: var(--good); }
+
+/* ---------- Scoreboard ---------- */
+#scoreboard {
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  min-width: min(560px, 92vw);
+  background: var(--surface); border: 1px solid var(--panel-border);
+  padding: 18px 22px 12px; pointer-events: none;
+}
+.sb-head {
+  display: flex; justify-content: space-between; align-items: baseline;
+  border-bottom: 1px solid var(--panel-border); padding-bottom: 8px; margin-bottom: 10px;
+}
+.sb-head span:first-child { font-size: 19px; letter-spacing: 4px; color: var(--accent); }
+.sb-head span:last-child { font-size: 12px; letter-spacing: 2px; color: var(--ink-dim); }
+#scoreboard table { width: 100%; border-collapse: collapse; }
+#scoreboard th {
+  font-size: 11px; letter-spacing: 2px; color: var(--ink-dim);
+  text-align: right; padding: 4px 8px; font-weight: 500;
+}
+#scoreboard th:nth-child(1), #scoreboard th:nth-child(2) { text-align: left; }
+#scoreboard td {
+  font-size: 15px; padding: 5px 8px; text-align: right;
+  border-top: 1px solid rgba(102, 221, 255, 0.08);
+}
+#scoreboard td:nth-child(1) { text-align: left; color: var(--ink-dim); width: 32px; }
+#scoreboard td:nth-child(2) { text-align: left; letter-spacing: 1px; }
+/* Your own row, so you can find yourself at a glance. */
+#scoreboard tr.self td { color: var(--accent); background: rgba(102, 221, 255, 0.07); }
+#scoreboard tr.dead td:nth-child(2) { opacity: 0.45; }
+.sb-hint { font-size: 11px; color: var(--ink-dim); text-align: center; margin: 10px 0 0; }
+
+/* ---------- Respawn ---------- */
+#respawn-overlay {
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  text-align: center; pointer-events: none;
+}
+.ro-killer { font-size: 15px; letter-spacing: 2px; color: var(--ink-dim); margin-bottom: 6px; }
+.ro-killer b { color: var(--danger); }
+.ro-count {
+  font-size: 74px; line-height: 1; color: var(--ink);
+  text-shadow: 0 0 26px rgba(0, 0, 0, 0.8);
+}
+.ro-hint { font-size: 12px; letter-spacing: 5px; color: var(--ink-dim); margin-top: 4px; }
+
+/* ---------- Connection warning ---------- */
+#net-warning {
+  position: absolute; top: 14px; left: 50%; transform: translateX(-50%);
+  background: rgba(60, 10, 10, 0.86); border: 1px solid var(--danger);
+  color: var(--ink); padding: 8px 18px; font-size: 14px; letter-spacing: 1.5px;
+  animation: slideIn 0.2s ease-out;
+}
+
+@media (max-width: 720px) {
+  #scoreboard { min-width: 94vw; padding: 12px 12px 8px; }
+  #scoreboard td { font-size: 13px; }
+  .lobby-input.code { font-size: 20px; letter-spacing: 6px; }
+  .lobby-code { font-size: 28px; letter-spacing: 8px; }
+}

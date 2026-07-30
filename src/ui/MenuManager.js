@@ -2,7 +2,6 @@
  * MenuManager — every screen that isn't the HUD.
  *
  * Screens are declarative:
- *   - Difficulty cards are generated from `DIFFICULTIES`.
  *   - The loadout browser is generated from `WEAPON_DEFS`, including stat bars
  *     computed from the same numbers the game actually uses.
  *   - The settings panel is generated from `SETTINGS_SCHEMA` below, so adding
@@ -13,7 +12,6 @@
  * including while paused mid-firefight.
  */
 
-import { DIFFICULTIES, DIFFICULTY_ORDER } from '../core/Difficulty.js';
 import { WEAPON_DEFS, CATEGORY_LABELS, opticMagnification } from '../weapons/WeaponDefinitions.js';
 import { DEFAULT_SETTINGS } from '../core/Settings.js';
 import { RETICLE_STYLES } from '../fx/ScopeRenderer.js';
@@ -21,7 +19,7 @@ import { effectiveAimSpeed } from '../core/SensitivityManager.js';
 import { clamp } from '../core/MathUtils.js';
 
 const SCREENS = [
-  'screen-loading', 'screen-menu', 'screen-difficulty', 'screen-loadout',
+  'screen-loading', 'screen-menu', 'screen-lobby', 'screen-loadout',
   'screen-controls', 'screen-credits', 'screen-pause', 'screen-settings',
   'screen-gameover', 'screen-victory', 'screen-error',
 ];
@@ -181,10 +179,6 @@ const SETTINGS_SCHEMA = {
       {
         title: 'Challenge',
         items: [
-          {
-            key: 'difficulty', label: 'Difficulty', type: 'select',
-            options: DIFFICULTY_ORDER.map((id) => [id, DIFFICULTIES[id].label]),
-          },
         ],
       },
       {
@@ -233,7 +227,8 @@ export class MenuManager {
     this._controls = [];
 
     // --- callbacks ---
-    this.onPlay = null;
+    this.onCreateMatch = null;   // () -> Promise, resolves when connected
+    this.onJoinMatch = null;     // (code) -> Promise
     this.onContinue = null;
     this.onResume = null;
     this.onRestart = null;
@@ -241,7 +236,6 @@ export class MenuManager {
     this.onLoadoutChanged = null;
 
     this._cache();
-    this._buildDifficultyCards();
     this._buildSettingsTabs();
     this._bind();
     this._hookButtonSounds();
@@ -255,12 +249,19 @@ export class MenuManager {
       menuFx: id('menu-fx'),
       loaderBar: id('loader-bar'),
       loaderText: id('loader-text'),
-      difficultyCards: id('difficulty-cards'),
       settingsTabs: id('settings-tabs'),
       settingsBody: id('settings-body'),
       weaponList: id('weapon-list'),
       weaponDetail: id('weapon-detail'),
-      menuDifficultyTag: id('menu-difficulty-tag'),
+      menuNameTag: id('menu-name-tag'),
+      lobbyTitle: id('lobby-title'),
+      lobbyStatus: id('lobby-status'),
+      lobbyCode: id('lobby-code'),
+      lobbyJoinBlock: id('lobby-join-block'),
+      lobbyInviteBlock: id('lobby-invite-block'),
+      lobbyGoBtn: id('btn-lobby-go'),
+      inputName: id('input-name'),
+      inputRoom: id('input-room'),
       menuPrimaryTag: id('menu-primary-tag'),
       menuSecondaryTag: id('menu-secondary-tag'),
       loadoutPrimaryTag: id('loadout-primary-tag'),
@@ -319,10 +320,8 @@ export class MenuManager {
   _bind() {
     const click = (id, fn) => document.getElementById(id)?.addEventListener('click', fn);
 
-    click('btn-play', () => this.onPlay?.());
     click('btn-continue', () => this.onContinue?.());
     click('btn-resume', () => this.onResume?.());
-    click('btn-restart-pause', () => this.onRestart?.());
     click('btn-restart-over', () => this.onRestart?.());
     click('btn-restart-win', () => this.onRestart?.());
     click('btn-quit', () => this.onQuitToMenu?.());
@@ -330,7 +329,10 @@ export class MenuManager {
     click('btn-menu-win', () => this.onQuitToMenu?.());
     click('btn-error-reload', () => window.location.reload());
 
-    click('btn-difficulty', () => this.showScreen('screen-difficulty'));
+    click('btn-create', () => this.openLobby('create'));
+    click('btn-join', () => this.openLobby('join'));
+    click('btn-lobby-go', () => this._lobbyGo());
+    click('btn-copy-invite', () => this._copyInvite());
     click('btn-credits', () => this.showScreen('screen-credits'));
     click('btn-loadout', () => this.openLoadout());
     click('btn-controls', () => { this.controlsReturnScreen = 'screen-menu'; this.showScreen('screen-controls'); });
@@ -386,40 +388,6 @@ export class MenuManager {
       const back = btn.classList.contains('back-btn') || btn.dataset.back;
       this.audio?.play(back ? 'menuBack' : 'menuSelect');
     });
-  }
-
-  // ------------------------------------------------------------ difficulty
-  _buildDifficultyCards() {
-    const host = this.el.difficultyCards;
-    host.innerHTML = '';
-    for (const id of DIFFICULTY_ORDER) {
-      const d = DIFFICULTIES[id];
-      const card = document.createElement('button');
-      card.className = 'diff-card';
-      card.dataset.difficulty = id;
-      card.innerHTML = `
-        <h4>${d.label}</h4>
-        <p>${d.blurb}</p>
-        ${meter('Accuracy', d.accuracyMul / 1.5)}
-        ${meter('Reactions', 1 - (d.reactionMul - 0.48) / 1.3)}
-        ${meter('Tactics', d.coverSkill)}
-        ${meter('Health', (d.healthMul - 0.8) / 0.5)}
-      `;
-      card.addEventListener('click', () => {
-        this.settings.set('difficulty', id);
-        this._markDifficulty();
-        this.refreshTags();
-      });
-      host.appendChild(card);
-    }
-    this._markDifficulty();
-  }
-
-  _markDifficulty() {
-    const current = this.settings.get('difficulty');
-    for (const card of this.el.difficultyCards.children) {
-      card.classList.toggle('selected', card.dataset.difficulty === current);
-    }
   }
 
   // --------------------------------------------------------------- loadout
@@ -629,7 +597,6 @@ export class MenuManager {
         this.settings.set(item.key, parsed);
         // A preset change rewrites its governed options — redraw the tab.
         if (item.key === 'quality') this.renderSettings();
-        if (item.key === 'difficulty') { this._markDifficulty(); this.refreshTags(); }
       });
       row.appendChild(select);
       this._controls.push({ item, input: select, out });
@@ -645,11 +612,83 @@ export class MenuManager {
     ctrl.out.textContent = this.settings.matchesPreset() ? '' : 'custom';
   }
 
+  // ----------------------------------------------------------------- lobby
+  /**
+   * @param {'create'|'join'} mode
+   * @param {string} [prefillCode] room code lifted from an invite link
+   */
+  openLobby(mode, prefillCode = '') {
+    this.lobbyMode = mode;
+    this.el.lobbyTitle.textContent = mode === 'create' ? 'CREATE MATCH' : 'JOIN MATCH';
+    this.el.lobbyGoBtn.textContent = mode === 'create' ? 'CREATE' : 'JOIN';
+    this.el.lobbyJoinBlock.classList.toggle('hidden', mode === 'create');
+    this.el.lobbyInviteBlock.classList.add('hidden');
+    this.setLobbyStatus('');
+    this.el.inputName.value = this.settings.get('playerName') || '';
+    if (prefillCode) this.el.inputRoom.value = prefillCode;
+    this.showScreen('screen-lobby');
+    // Focus whichever field the player still has to fill in.
+    const focusTarget = mode === 'join' && !prefillCode ? this.el.inputRoom : this.el.inputName;
+    setTimeout(() => focusTarget?.focus({ preventScroll: true }), 40);
+  }
+
+  setLobbyStatus(text, kind = '') {
+    const el = this.el.lobbyStatus;
+    if (!el) return;
+    el.textContent = text;
+    el.className = `lobby-status ${kind}`;
+  }
+
+  /** Show the code and invite link once a match exists. */
+  showInvite(room) {
+    this.el.lobbyCode.textContent = room;
+    this.el.lobbyInviteBlock.classList.remove('hidden');
+    this.el.lobbyJoinBlock.classList.add('hidden');
+  }
+
+  async _lobbyGo() {
+    const name = this.el.inputName.value.trim();
+    if (name) this.settings.set('playerName', name);
+    this.refreshTags();
+
+    if (this.lobbyMode === 'join') {
+      const code = this.el.inputRoom.value.trim().toUpperCase();
+      if (code.length !== 5) {
+        this.setLobbyStatus('A match code is 5 characters.', 'error');
+        return;
+      }
+      this.setLobbyStatus('Connecting…');
+      this.el.lobbyGoBtn.disabled = true;
+      try { await this.onJoinMatch?.(code, name); }
+      finally { this.el.lobbyGoBtn.disabled = false; }
+      return;
+    }
+
+    this.setLobbyStatus('Creating match…');
+    this.el.lobbyGoBtn.disabled = true;
+    try { await this.onCreateMatch?.(name); }
+    finally { this.el.lobbyGoBtn.disabled = false; }
+  }
+
+  async _copyInvite() {
+    const link = this.inviteLink;
+    if (!link) return;
+    try {
+      await navigator.clipboard.writeText(link);
+      this.setLobbyStatus('Invite link copied — send it to your friends.', 'ok');
+    } catch {
+      // Clipboard access needs a secure context and can be refused; showing the
+      // link is a worse experience than copying it but far better than silence.
+      this.setLobbyStatus(link, 'ok');
+    }
+  }
+
   // ------------------------------------------------------------------ tags
   /** Keep the summary chips on the main menu in sync. */
   refreshTags() {
-    const diff = DIFFICULTIES[this.settings.get('difficulty')] ?? DIFFICULTIES.normal;
-    if (this.el.menuDifficultyTag) this.el.menuDifficultyTag.textContent = diff.label;
+    if (this.el.menuNameTag) {
+      this.el.menuNameTag.textContent = this.settings.get('playerName') || 'OPERATOR';
+    }
     if (this.el.menuPrimaryTag) this.el.menuPrimaryTag.textContent = shortName(this.settings.get('loadoutPrimary'));
     if (this.el.menuSecondaryTag) this.el.menuSecondaryTag.textContent = shortName(this.settings.get('loadoutSecondary'));
   }
@@ -661,10 +700,6 @@ function shortName(id) {
   return WEAPON_DEFS.find((w) => w.id === id)?.short ?? id;
 }
 
-function meter(label, value01) {
-  const pctv = Math.round(clamp(value01, 0.04, 1) * 100);
-  return `<div class="diff-meter"><span>${label}</span><span class="track"><span class="fill" style="width:${pctv}%"></span></span></div>`;
-}
 
 function statBar(label, value01, text) {
   const pctv = Math.round(clamp(value01, 0.03, 1) * 100);

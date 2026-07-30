@@ -38,9 +38,21 @@ export class UIManager {
       hud: id('hud'),
       crosshair: id('crosshair'),
       hitmarker: id('hitmarker'),
-      wave: id('hud-wave'),
-      enemies: id('hud-enemies'),
-      difficulty: id('hud-difficulty'),
+      time: id('hud-time'),
+      leader: id('hud-leader'),
+      leaderLabel: id('hud-leader-label'),
+      room: id('hud-room'),
+      ping: id('hud-ping'),
+      scoreboard: id('scoreboard'),
+      sbRows: id('sb-rows'),
+      sbTitle: id('sb-title'),
+      sbSub: id('sb-sub'),
+      sbHint: id('sb-hint'),
+      respawnOverlay: id('respawn-overlay'),
+      respawnCount: id('ro-count'),
+      respawnKiller: id('ro-killer'),
+      netWarning: id('net-warning'),
+      netWarningText: id('net-warning-text'),
       score: id('hud-score'),
       fps: id('hud-fps'),
       statsPanel: id('hud-stats'),
@@ -182,10 +194,31 @@ export class UIManager {
     style.opacity = String(clamp(1 - w.ads * 1.6, 0, 1) * (w.scope > 0.2 ? 0 : 1));
 
     // --- counters ---
-    this.el.wave.textContent = `${s.wave} / ${s.totalWaves}`;
-    this.el.enemies.textContent = s.enemiesRemaining;
-    this.el.score.textContent = s.score.toLocaleString();
-    if (s.difficultyLabel) this.el.difficulty.textContent = s.difficultyLabel;
+    this.el.score.textContent = String(s.score ?? 0);
+
+    // Match state. Everything here is server-owned, so it simply mirrors
+    // whatever the last snapshot said rather than counting locally.
+    if (s.match) {
+      const secs = Math.max(0, s.match.timeLeft | 0);
+      const mm = String(Math.floor(secs / 60)).padStart(2, '0');
+      const ss = String(secs % 60).padStart(2, '0');
+      this.el.time.textContent = s.match.state === 'warmup' ? '--:--' : mm + ':' + ss;
+      if (s.leader) {
+        this.el.leaderLabel.textContent = 'LEADER';
+        this.el.leader.textContent = s.leader.name + '  ' + s.leader.kills;
+      } else {
+        this.el.leaderLabel.textContent = 'STATUS';
+        this.el.leader.textContent = 'WAITING';
+      }
+      this.el.room.textContent = s.room ?? '-----';
+      this.el.ping.textContent = s.ping ? String(s.ping) : '--';
+    } else {
+      this.el.time.textContent = '--:--';
+      this.el.leaderLabel.textContent = 'STATUS';
+      this.el.leader.textContent = 'OFFLINE';
+      this.el.room.textContent = '-----';
+      this.el.ping.textContent = '--';
+    }
 
     if (this.statsVisible) {
       this.el.fps.textContent = Math.round(s.fps);
@@ -310,6 +343,80 @@ export class UIManager {
   }
 
   /** Clear every transient HUD element (used on restart). */
+
+  // =========================================================== multiplayer
+  /**
+   * Kill feed line. Distinct from addKill(), which carries a score bonus that
+   * deathmatch does not have.
+   */
+  addKillFeed(text, byMe = false) {
+    const div = document.createElement('div');
+    div.className = 'kill-entry' + (byMe ? ' headshot' : '');
+    div.textContent = text;
+    this.el.killFeed.appendChild(div);
+    this._killFeed.push({ el: div, life: 5 });
+    while (this._killFeed.length > 6) this._killFeed.shift().el.remove();
+  }
+
+  /** Convenience wrapper so Game can flash damage without knowing the shape. */
+  flashDamage(intensity) { this.showDamage(clamp(intensity, 0.05, 0.85)); }
+
+  setScoreboard(roster, selfId, match) {
+    this._roster = roster;
+    this._selfId = selfId;
+    if (match) {
+      this.el.sbSub.textContent = match.killTarget ? 'FIRST TO ' + match.killTarget : '';
+    }
+    if (!this.el.scoreboard.classList.contains('hidden')) this._renderScoreboard();
+  }
+
+  setScoreboardVisible(visible) {
+    this.el.scoreboard.classList.toggle('hidden', !visible);
+    if (visible) this._renderScoreboard();
+  }
+
+  _renderScoreboard() {
+    const rows = this._roster ?? [];
+    this.el.sbRows.innerHTML = '';
+    rows.forEach((p, i) => {
+      const tr = document.createElement('tr');
+      if (p.id === this._selfId) tr.classList.add('self');
+      if (p.alive === false) tr.classList.add('dead');
+      for (const v of [i + 1, p.name, p.kills, p.deaths, p.ping || 0]) {
+        const td = document.createElement('td');
+        td.textContent = String(v);
+        tr.appendChild(td);
+      }
+      this.el.sbRows.appendChild(tr);
+    });
+    if (!rows.length) {
+      const tr = document.createElement('tr');
+      const td = document.createElement('td');
+      td.colSpan = 5;
+      td.textContent = 'Waiting for players...';
+      tr.appendChild(td);
+      this.el.sbRows.appendChild(tr);
+    }
+  }
+
+  showRespawn(killerName) {
+    this.el.respawnKiller.innerHTML = killerName
+      ? 'KILLED BY <b>' + escapeHtml(killerName) + '</b>' : 'YOU DIED';
+    this.el.respawnOverlay.classList.remove('hidden');
+  }
+
+  updateRespawn(seconds) {
+    this.el.respawnCount.textContent = String(Math.max(0, seconds));
+  }
+
+  hideRespawn() { this.el.respawnOverlay.classList.add('hidden'); }
+
+  showNetWarning(text) {
+    this.el.netWarningText.textContent = text;
+    this.el.netWarning.classList.remove('hidden');
+  }
+
+  hideNetWarning() { this.el.netWarning.classList.add('hidden'); }
   resetHud() {
     for (const k of this._killFeed) k.el.remove();
     this._killFeed.length = 0;
@@ -326,4 +433,15 @@ export class UIManager {
     this.el.banner.classList.remove('show');
     this._bannerTimer = 0;
   }
+}
+
+/**
+ * Player names are supplied by other clients, so they must never reach
+ * innerHTML raw. protocol.sanitizeName strips control and bidi characters
+ * server-side, but it does not strip angle brackets — this does.
+ */
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }

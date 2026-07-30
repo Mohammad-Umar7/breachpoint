@@ -61,7 +61,8 @@ export const DEFAULT_SETTINGS = Object.freeze({
   particleDensity: 1.0,
 
   // -------------------------------------------------------------- gameplay
-  difficulty: 'normal',      // easy | normal | hard | extreme
+  /** Shown above your body to other players, and on the scoreboard. */
+  playerName: '',            // empty => 'OPERATOR'
   loadoutPrimary: 'rifle',
   loadoutSecondary: 'pistol',
   // Scales every weapon's recoil pattern. The authored patterns are the

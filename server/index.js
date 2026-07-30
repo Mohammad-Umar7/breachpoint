@@ -89,6 +89,7 @@ class Player {
     this.lastInputAt = 0;
     this.lastShotAt = new Map();  // weaponId -> ms
     this.lastSeenAt = Date.now();
+    this.lastPongAt = 0;
 
     // Rolling rate counters, reset every second by the room tick.
     this.msgCount = 0;
@@ -605,7 +606,15 @@ wss.on('connection', (socket) => {
           // Round-trip is measured by the client; the server just echoes and
           // records the client's own estimate for the scoreboard.
           if (Number.isFinite(msg.rtt)) player.ping = Math.min(999, Math.round(msg.rtt));
-          player.send(MSG.PONG, { c: msg.c, s: Date.now() });
+          // Answer at most twice a second. A client that replies to our PONG
+          // with another PING creates a closed loop that saturates the socket —
+          // which is exactly the bug the first version of the browser client
+          // had. Never let a client's mistake become the server's problem.
+          const nowMs = Date.now();
+          if (nowMs - (player.lastPongAt ?? 0) >= 500) {
+            player.lastPongAt = nowMs;
+            player.send(MSG.PONG, { c: msg.c, s: nowMs });
+          }
         }
         break;
 

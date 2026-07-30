@@ -29,27 +29,31 @@
         <div id="hitmarker"><span></span><span></span><span></span><span></span></div>
       </div>
 
-      <!-- Top-left: mission state -->
+      <!-- Top-left: match state -->
       <div id="hud-top-left">
         <div class="panel">
-          <div class="label">WAVE</div>
-          <div class="value" id="hud-wave">1 / 5</div>
+          <div class="label">TIME</div>
+          <div class="value" id="hud-time">10:00</div>
         </div>
         <div class="panel">
-          <div class="label">HOSTILES</div>
-          <div class="value" id="hud-enemies">0</div>
+          <div class="label" id="hud-leader-label">LEADER</div>
+          <div class="value" id="hud-leader">&mdash;</div>
         </div>
-        <div class="panel small" id="hud-difficulty-panel">
-          <div class="label">THREAT</div>
-          <div class="value" id="hud-difficulty">SOLDIER</div>
+        <div class="panel small" id="hud-room-panel">
+          <div class="label">MATCH</div>
+          <div class="value" id="hud-room">-----</div>
         </div>
       </div>
 
-      <!-- Top-right: score + optional perf stats -->
+      <!-- Top-right: your kills + connection + optional perf stats -->
       <div id="hud-top-right">
         <div class="panel align-right">
-          <div class="label">SCORE</div>
+          <div class="label">KILLS</div>
           <div class="value" id="hud-score">0</div>
+        </div>
+        <div class="panel align-right small" id="hud-net-panel">
+          <div class="label">PING</div>
+          <div class="value" id="hud-ping">--</div>
         </div>
         <div class="panel align-right small hidden" id="hud-stats">
           <div class="label">FPS</div>
@@ -57,6 +61,31 @@
           <div class="label" id="hud-draws">0 draws</div>
         </div>
       </div>
+
+      <!-- Hold Tab. Also shown automatically when the match ends. -->
+      <div id="scoreboard" class="hidden">
+        <div class="sb-head">
+          <span id="sb-title">FREE-FOR-ALL</span>
+          <span id="sb-sub">FIRST TO 25</span>
+        </div>
+        <table>
+          <thead>
+            <tr><th>#</th><th>CALLSIGN</th><th>KILLS</th><th>DEATHS</th><th>PING</th></tr>
+          </thead>
+          <tbody id="sb-rows"></tbody>
+        </table>
+        <p class="sb-hint" id="sb-hint">Hold <kbd>Tab</kbd> for the scoreboard</p>
+      </div>
+
+      <!-- Shown while dead, counting down to respawn. -->
+      <div id="respawn-overlay" class="hidden">
+        <div class="ro-killer" id="ro-killer"></div>
+        <div class="ro-count" id="ro-count">3</div>
+        <div class="ro-hint">RESPAWNING</div>
+      </div>
+
+      <!-- Connection trouble, e.g. the server went away mid-match. -->
+      <div id="net-warning" class="hidden"><span id="net-warning-text"></span></div>
 
       <div id="kill-feed"></div>
       <div id="banner"><span id="banner-text"></span></div>
@@ -127,32 +156,57 @@
       <section id="screen-menu" class="screen menu-root">
         <div class="menu-brand">
           <h1 class="logo">BREACH<span>POINT</span></h1>
-          <p class="tagline">Industrial yard &middot; five waves &middot; no extraction</p>
+          <p class="tagline">Industrial yard &middot; free-for-all deathmatch</p>
         </div>
         <nav class="menu-nav" id="main-nav">
-          <button class="nav-btn primary" id="btn-play"><span class="k">01</span>DEPLOY</button>
-          <button class="nav-btn hidden" id="btn-continue"><span class="k">02</span>CONTINUE</button>
-          <button class="nav-btn" id="btn-loadout"><span class="k">03</span>LOADOUT</button>
-          <button class="nav-btn" id="btn-difficulty"><span class="k">04</span>DIFFICULTY</button>
+          <button class="nav-btn primary" id="btn-create"><span class="k">01</span>CREATE MATCH</button>
+          <button class="nav-btn" id="btn-join"><span class="k">02</span>JOIN MATCH</button>
+          <button class="nav-btn hidden" id="btn-continue"><span class="k">03</span>CONTINUE</button>
+          <button class="nav-btn" id="btn-loadout"><span class="k">04</span>LOADOUT</button>
           <button class="nav-btn" id="btn-settings-menu"><span class="k">05</span>SETTINGS</button>
           <button class="nav-btn" id="btn-controls"><span class="k">06</span>CONTROLS</button>
           <button class="nav-btn" id="btn-credits"><span class="k">07</span>CREDITS</button>
         </nav>
         <div class="menu-footer">
-          <div class="chip"><span>DIFFICULTY</span><b id="menu-difficulty-tag">SOLDIER</b></div>
+          <div class="chip"><span>CALLSIGN</span><b id="menu-name-tag">OPERATOR</b></div>
           <div class="chip"><span>PRIMARY</span><b id="menu-primary-tag">AR-15</b></div>
           <div class="chip"><span>SECONDARY</span><b id="menu-secondary-tag">M9</b></div>
         </div>
         <p class="hint">Move the mouse to look &middot; <kbd>Esc</kbd> to pause at any time</p>
       </section>
 
-      <!-- ---------- Difficulty ---------- -->
-      <section id="screen-difficulty" class="screen wide">
-        <h2>SELECT THREAT LEVEL</h2>
-        <div class="card-grid" id="difficulty-cards"></div>
-        <div class="screen-footer">
-          <button class="back-btn" data-back="screen-menu">BACK</button>
+      <!-- ---------- Multiplayer lobby ---------- -->
+      <section id="screen-lobby" class="screen centered">
+        <h2 id="lobby-title">MATCH</h2>
+
+        <div class="lobby-block">
+          <label class="lobby-label" for="input-name">YOUR CALLSIGN</label>
+          <input id="input-name" class="lobby-input" maxlength="16" autocomplete="off"
+                 spellcheck="false" placeholder="OPERATOR" />
         </div>
+
+        <div class="lobby-block" id="lobby-join-block">
+          <label class="lobby-label" for="input-room">MATCH CODE</label>
+          <input id="input-room" class="lobby-input code" maxlength="5" autocomplete="off"
+                 spellcheck="false" placeholder="ABC23" />
+          <p class="lobby-help">Ask your friend for their 5-character code.</p>
+        </div>
+
+        <div class="lobby-block hidden" id="lobby-invite-block">
+          <label class="lobby-label">INVITE FRIENDS</label>
+          <div class="lobby-code" id="lobby-code">-----</div>
+          <button class="nav-btn" id="btn-copy-invite">COPY INVITE LINK</button>
+          <p class="lobby-help" id="lobby-invite-help">
+            Send this link. Anyone who opens it joins your match.
+          </p>
+        </div>
+
+        <p class="lobby-status" id="lobby-status"></p>
+
+        <nav class="menu-nav compact">
+          <button class="nav-btn primary" id="btn-lobby-go">CONNECT</button>
+          <button class="nav-btn" data-back="screen-menu">BACK</button>
+        </nav>
       </section>
 
       <!-- ---------- Loadout ---------- -->
@@ -248,8 +302,7 @@
           <button class="nav-btn primary" id="btn-resume">RESUME</button>
           <button class="nav-btn" id="btn-settings-pause">SETTINGS</button>
           <button class="nav-btn" id="btn-controls-pause">CONTROLS</button>
-          <button class="nav-btn" id="btn-restart-pause">RESTART MISSION</button>
-          <button class="nav-btn danger" id="btn-quit">ABANDON MISSION</button>
+          <button class="nav-btn danger" id="btn-quit">LEAVE MATCH</button>
         </nav>
       </section>
 
