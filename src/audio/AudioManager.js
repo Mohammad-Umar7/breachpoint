@@ -376,11 +376,13 @@ export class AudioManager {
    *   power    overall level
    *   ref      panner reference distance (how far it carries)
    *   slaps    [[delayMs, level], ...] discrete reflections
+   *   roll     optional {ms, gain, freq} — the long rolling decay of a big gun
    */
   _shot(bus, position, spec) {
     const {
       bore = 220, crack = 2000, blast = 1100, bodyMs = 55,
       power = 1, ref = 12, slaps = [[34, 0.26], [73, 0.16], [121, 0.09]],
+      roll = null,
     } = spec;
     const body = bodyMs / 1000;
 
@@ -423,6 +425,29 @@ export class AudioManager {
         freq: blast * Math.pow(0.62, i + 1),
         duration: body * 0.5,
         refDistance: ref * 1.4,
+      });
+    }
+
+    // 5. THE ROLL — only for the big guns.
+    //
+    // This is what separates a sniper rifle from a carbine to the ear, and it
+    // is not loudness: it is that the report keeps going. A .338 is audible
+    // rolling off buildings and terrain for the better part of a second after
+    // the crack has gone, swelling slightly before it dies as sound arrives
+    // back from further and further away. A carbine has none of this.
+    //
+    // Slow attack on purpose — the roll should arrive after the shot, not
+    // alongside it, or it just thickens the report instead of following it.
+    if (roll) {
+      this._burst(bus, position, {
+        duration: roll.ms / 1000,
+        gain: roll.gain * power,
+        type: 'lowpass',
+        freq: roll.freq,
+        freqEnd: roll.freq * 0.3,
+        attack: Math.min(0.12, roll.ms / 9000),
+        curve: 2,
+        refDistance: ref * 1.8,
       });
     }
   }
@@ -802,8 +827,12 @@ const SYNTHS = {
   shootSniper(a, { position = null, volume = 1 } = {}) {
     // Through the saturated, reverb-sent weapon chain — see init().
     const bus = a.shotDrive ?? a.sfxBus;
-    a._shot(bus, position, { bore: 88, crack: 1700, blast: 780, bodyMs: 95, power: 1.3 * volume, ref: 26,
-        slaps: [[42, 0.36], [91, 0.24], [152, 0.15], [228, 0.08]] });
+    a._shot(bus, position, { bore: 92, crack: 3000, blast: 1050, bodyMs: 58, power: 1.35 * volume, ref: 28,
+        slaps: [[52, 0.34], [118, 0.26], [201, 0.18], [312, 0.11], [455, 0.06]],
+        roll: { ms: 1100, gain: 0.2, freq: 520 } });
+    // The bolt being worked, a beat after the shot — a sniper is the one
+    // weapon here where you hear the action as a separate event.
+    a._mech(bus, position, { delay: 0.34, gain: 0.13 * volume, freq: 2100, refDistance: 20 });
   },
 
   // Semi-auto marksman rifle: between the carbine and the sniper.

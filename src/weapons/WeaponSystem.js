@@ -68,6 +68,8 @@ export class WeaponSystem {
     this.shotsHit = 0;
     /** Seconds of remembered trigger press, used to bridge the sprint raise. */
     this.fireBuffer = 0;
+    /** This frame's raw aim request; cancels a sprint. Set in update(). */
+    this.aimIntent = false;
 
     // --- projectiles (sniper rounds) -------------------------------------
     this.projectiles = [];
@@ -179,12 +181,23 @@ export class WeaponSystem {
     const w = this.current;
 
     // --- ADS -------------------------------------------------------------
-    const adsAllowed =
-      alive &&
-      !w.def.noAds &&
-      !w.blocksAds &&
-      !(this.player.sprinting && this.ads.progress < 0.05);
+    // Sprinting deliberately does NOT block this.
+    //
+    // It used to: `!(player.sprinting && ads.progress < 0.05)`. That deadlocks.
+    // Aiming was refused while sprinting, so ads.progress stayed at 0; sprint
+    // is only cancelled once ads.progress passes 0.02; so the sprint never
+    // ended and aiming was never permitted. Holding Shift made the aim button
+    // do nothing whatsoever — you had to let go of Shift first.
+    //
+    // The trigger never had this problem because it suppresses the sprint
+    // directly rather than going through ADS progress. Aim now does the same:
+    // the intent cancels the sprint (see _handleFiring), the player drops to
+    // walking pace, and the weapon comes up — which is what every other
+    // shooter does.
+    const adsAllowed = alive && !w.def.noAds && !w.blocksAds;
     const intent = this.ads.computeIntent(w, adsAllowed);
+    /** Read by _handleFiring to end the sprint. */
+    this.aimIntent = intent;
 
     if (alive && this.ads.scopeProgress > 0.4) {
       // Mouse wheel and B cycle a variable-zoom optic while scoped.
@@ -326,8 +339,11 @@ export class WeaponSystem {
     else this.fireBuffer = Math.max(0, this.fireBuffer - dt);
 
     // Wanting to shoot (or aim) ends the sprint, so the weapon comes up.
+    // `aimIntent` is the raw request from this frame, and it has to be here
+    // rather than relying on ads.progress alone — progress cannot start rising
+    // until the sprint has already been cancelled.
     this.player.sprintSuppressed =
-      triggerHeld || this.fireBuffer > 0 || this.ads.progress > 0.02;
+      triggerHeld || this.fireBuffer > 0 || this.aimIntent || this.ads.progress > 0.02;
 
     // The weapon has to actually be shouldered before it can fire.
     const weaponStowed = this.viewModel.sprintBlend > 0.25;
