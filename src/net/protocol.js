@@ -145,6 +145,26 @@ export const LIMITS = Object.freeze({
   maxVerticalSpeed: 60,
   /** A single input may not move you further than this, regardless of dt. */
   maxStepDistance: 8.0,
+  /**
+   * Movement allowance the server lets a player bank up, in metres.
+   *
+   * Movement is checked as a token bucket rather than as instantaneous speed,
+   * because instantaneous speed cannot be measured from arrival times. Inputs
+   * go out every 33 ms, but the internet delivers them in bursts: a packet is
+   * held up, then it and the next one arrive together. The server sees two
+   * legitimate 0.30 m steps 8 ms apart and computes 37 m/s.
+   *
+   * That is what made hosted play rubber-band — sprinting only passed the old
+   * check if consecutive packets arrived at least 21 ms apart, which over a
+   * real network they frequently do not. On a LAN there is no jitter, so it
+   * never showed up there.
+   *
+   * A bucket fixes it because the budget accrued while a packet was delayed
+   * is exactly what pays for the burst when it finally lands. Sustained speed
+   * is still capped at maxHorizontalSpeed, so a speed hack is caught within
+   * about a second — it just cannot be fooled by packet timing.
+   */
+  moveBurstMetres: 14.24,
   /** Hard ceiling on any one damage application. */
   maxDamagePerHit: 400,
   /** Fire-rate allowance: 0.8 lets a client be 20% early, absorbing timer

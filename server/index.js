@@ -87,6 +87,8 @@ class Player {
 
     this.lastInputSeq = -1;
     this.lastInputAt = 0;
+    /** Movement token bucket, in metres. See LIMITS.moveBurstMetres. */
+    this.moveBudget = LIMITS.moveBurstMetres;
     this.lastShotAt = new Map();  // weaponId -> ms
     this.lastSeenAt = Date.now();
     this.lastPongAt = 0;
@@ -255,6 +257,11 @@ class Room {
     player.flags = 0;
     player.respawnAt = 0;
     player.history.length = 0;
+    // The jump to the spawn point is the server's own doing, so it must not be
+    // charged to the player. Clearing lastInputAt skips the check entirely on
+    // their next input, and refills the bucket for the run back into the map.
+    player.lastInputAt = 0;
+    player.moveBudget = LIMITS.moveBurstMetres;
     if (announce) {
       player.send(MSG.MATCH, { ...this.matchPayload(), sp: [at.x, at.y, at.z] });
     }
@@ -444,12 +451,30 @@ function handleInput(player, msg) {
   if (player.alive && player.lastInputAt) {
     const dt = Math.max(0.001, (now - player.lastInputAt) / 1000);
     const dxz = Math.hypot(x - player.x, z - player.z);
-    // Two independent checks: an instantaneous jump (teleport) and a sustained
-    // rate (speed hack). Either failing snaps the player back rather than
-    // disconnecting them — a lag spike should not eject a real player.
-    const tooFar = dxz > LIMITS.maxStepDistance;
-    const tooFast = dxz / dt > LIMITS.maxHorizontalSpeed;
-    if (tooFar || tooFast) { reject(); return; }
+
+    // Refill the movement bucket for the time that actually elapsed, then
+    // charge this step against it.
+    //
+    // This deliberately does NOT compute dxz/dt. Arrival times are not send
+    // times: the network bunches packets, so two perfectly legal steps can
+    // land microseconds apart and read as an impossible speed. Budgeting over
+    // real elapsed time is immune to that, because the time a delayed packet
+    // spent in flight is credited to the bucket it then spends. Sustained
+    // cheating still drains the bucket and gets caught.
+    player.moveBudget = Math.min(
+      LIMITS.moveBurstMetres,
+      player.moveBudget + LIMITS.maxHorizontalSpeed * dt,
+    );
+
+    // The teleport check stays per-step, but has to scale with the gap: after
+    // a one-second stall a sprinting player has legitimately covered 8.9 m,
+    // which a fixed 8 m ceiling would reject.
+    const allowedStep = Math.max(
+      LIMITS.maxStepDistance,
+      LIMITS.maxHorizontalSpeed * dt * 1.5,
+    );
+    if (dxz > allowedStep || dxz > player.moveBudget) { reject(); return; }
+    player.moveBudget -= dxz;
   }
 
   player.lastInputSeq = typeof msg.q === 'number' ? msg.q : player.lastInputSeq;
