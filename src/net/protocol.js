@@ -59,6 +59,18 @@ export const MSG = Object.freeze({
   INPUT: 'i',     // { q: seq, p: [x,y,z], y: yaw, a: pitch, f: flagBits, w: weaponId }
   SHOT: 's',      // { q: seq, o: [x,y,z], d: [x,y,z], w: weaponId, h: [hits] }
   RESPAWN: 'r',   // {}
+  /**
+   * "I picked up a health pack." { a: amount }
+   *
+   * Health is server-owned, so a pickup that only healed the client was
+   * cosmetic: the bar went up and the next authoritative update put it
+   * straight back. Health packs did nothing at all in a match.
+   *
+   * The server clamps the amount and rate-limits it rather than trusting the
+   * figure, which is the same bounded trust the rest of this protocol uses
+   * for position and hit claims.
+   */
+  HEAL: 'h',      // { a: amount, k: 'health' | 'armor' }
   PING: 'p',      // { c: clientClockMs }
   NAME: 'm',      // { n: name }
 
@@ -71,7 +83,20 @@ export const MSG = Object.freeze({
   SNAPSHOT: 'S',  // { ts: serverTimeMs, p: [[id, x,y,z, yaw, pitch, flags, weapon, hp]] }
   JOINED: 'J',    // { p: playerSummary }
   LEFT: 'L',      // { id }
-  HIT: 'H',       // { v: victimId, a: attackerId, d: damage, pt: part, hp }
+  HIT: 'H',       // { v: victimId, a: attackerId, d: damage, pt: part, hp, ar: armour }
+  /**
+   * Somebody else pulled a trigger — muzzle flash, tracer and the report.
+   *
+   * A shot used to be told to the server and to nobody else, so the only
+   * evidence that another player was firing at you was your own health going
+   * down. No flash, no tracer, and no gunshot: players reported not knowing
+   * they were being shot at, or even that anyone nearby was shooting.
+   *
+   * Deliberately thin. It carries where the round started and which way it
+   * went, and the receiving client draws the rest from its own weapon
+   * definitions — the same ones it uses for its own gun.
+   */
+  FIRE: 'F',      // { id: shooterId, o: [x,y,z], d: [x,y,z], w: weaponId }
   KILL: 'K',      // { v: victimId, a: attackerId, w: weaponId, hs: headshot }
   /**
    * Where the victim will come back, sent to THEM ONLY the moment they die.
@@ -122,6 +147,25 @@ export const MATCH_STATE = Object.freeze({
  * room to take cover and shoot back without dragging fights out.
  */
 export const PLAYER_MAX_HEALTH = 150;
+
+/**
+ * Armour, which soaks a share of incoming damage before health is touched.
+ *
+ * These live here rather than on the client because the server has to be the
+ * one applying them: it owns health, so armour that only existed on the client
+ * absorbed nothing at all — the plates were decorative, and picking one up did
+ * precisely nothing in a match.
+ */
+/*
+ * You spawn with half a bar and a plate grants the other half, so a plate is
+ * worth crossing the map for the moment you have taken any fire at all. Making
+ * the two equal would have been simpler and quietly useless: you would respawn
+ * capped, and every plate on the level would be scenery.
+ */
+export const PLAYER_MAX_ARMOR = 100;
+export const PLAYER_START_ARMOR = 50;
+/** Share of a hit that armour takes on the chin, while any of it remains. */
+export const ARMOR_ABSORB = 0.6;
 
 /** Free-for-all rules. */
 export const MATCH_RULES = Object.freeze({
@@ -244,6 +288,12 @@ export const LIMITS = Object.freeze({
    * the legitimate rate for as long as it keeps firing.
    */
   shotBurst: 5,
+  /** Largest heal a single pickup can grant — matches PickupManager. */
+  maxHealAmount: 35,
+  /** Largest armour top-up a single plate can grant — matches PickupManager. */
+  maxArmorAmount: 50,
+  /** Shortest gap between accepted heals, in seconds. */
+  minHealInterval: 1.5,
   /** Beyond a weapon's range * this, a hit claim is discarded. */
   rangeSlack: 1.25,
   /** Inputs per second above which a client is throttled. */

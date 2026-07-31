@@ -110,7 +110,8 @@ export class NetworkClient {
     this.onWelcome = null;       // ({ id, room, spawn, players, match })
     this.onJoined = null;        // (playerSummary)
     this.onLeft = null;          // (id)
-    this.onHit = null;           // ({ victim, attacker, damage, part, hp })
+    this.onHit = null;           // ({ victim, attacker, damage, part, hp, armor })
+    this.onFire = null;          // ({ shooter, origin, direction, weapon })
     this.onKill = null;          // ({ victim, attacker, weapon, headshot })
     this.onScore = null;         // (rosterArray)
     this.onMatch = null;         // (matchState)
@@ -343,6 +344,20 @@ export class NetworkClient {
 
   requestRespawn() { if (this.connected) this._send(MSG.RESPAWN, {}); }
 
+  /**
+   * Tell the server we picked up a health pack.
+   *
+   * Necessary because health is server-owned: healing only the local copy
+   * lasted until the next authoritative update and no longer, so packs did
+   * nothing in a match. The server clamps and rate-limits the amount.
+   */
+  /** @param kind 'health' | 'armor' — which pool the pickup tops up. */
+  claimHeal(amount, kind = 'health') {
+    if (this.connected && amount > 0) {
+      this._send(MSG.HEAL, { a: Math.round(amount), k: kind });
+    }
+  }
+
   setName(name) {
     this.name = sanitizeName(name, this.name);
     if (this.connected) this._send(MSG.NAME, { n: this.name });
@@ -394,10 +409,26 @@ export class NetworkClient {
         if (victim) victim.hp = msg.hp;
         this.onHit?.({
           victim: msg.v, attacker: msg.a, damage: msg.d, part: msg.pt, hp: msg.hp,
+          // Absent on older servers, hence the null rather than a default — the
+          // HUD leaves the bar alone rather than wiping it to zero.
+          armor: typeof msg.ar === 'number' ? msg.ar : null,
           isSelfVictim: msg.v === this.selfId, isSelfAttacker: msg.a === this.selfId,
         });
         break;
       }
+
+      /*
+       * Somebody else fired. The server does not send this back to the
+       * shooter, so anything arriving here belongs to another player.
+       */
+      case MSG.FIRE:
+        this.onFire?.({
+          shooter: msg.id,
+          origin: msg.o,
+          direction: msg.d,
+          weapon: msg.w,
+        });
+        break;
 
       case MSG.KILL: {
         const victim = this.players.get(msg.v);

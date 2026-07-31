@@ -32,11 +32,12 @@ import { WebSocketServer } from 'ws';
 
 import {
   MSG, FLAG, TICK_MS, MATCH_STATE, MATCH_RULES, LIMITS, PLAYER_MAX_HEALTH,
+  PLAYER_MAX_ARMOR, PLAYER_START_ARMOR, ARMOR_ABSORB,
   PROTOCOL_VERSION, ROOM_CODE_ALPHABET, ROOM_CODE_LENGTH,
   isValidRoomCode, sanitizeName, damageFor,
 } from '../src/net/protocol.js';
 import { pickSpawn, isInsideArena } from '../src/net/arena.js';
-import { WEAPON_DEFS } from '../src/weapons/WeaponDefinitions.js';
+import { WEAPON_DEFS, HAZARD_DEFS } from '../src/weapons/WeaponDefinitions.js';
 
 const PORT = Number(process.env.PORT || 8787);
 
@@ -45,7 +46,12 @@ const PORT = Number(process.env.PORT || 8787);
  * uses. A hand-maintained copy here would drift the moment a weapon was
  * rebalanced, and the failure mode is legitimate hits being silently rejected.
  */
-const WEAPON_BY_ID = new Map(WEAPON_DEFS.map((w) => [w.id, w]));
+const WEAPON_BY_ID = new Map(
+  [...WEAPON_DEFS, ...HAZARD_DEFS].map((w) => [w.id, w]),
+);
+
+/** The subset a player may actually be holding — hazards are not carryable. */
+const HELD_WEAPON_IDS = new Set(WEAPON_DEFS.map((w) => w.id));
 
 /** Shortest interval between shots this weapon could legitimately produce. */
 function minFireInterval(weapon) {
@@ -71,6 +77,7 @@ class Player {
     this.weapon = 'rifle';
 
     this.hp = PLAYER_MAX_HEALTH;
+    this.armor = PLAYER_START_ARMOR;
     this.alive = false;          // false until the first spawn
     this.respawnAt = 0;
     this.kills = 0;
@@ -85,6 +92,9 @@ class Player {
     this.shotBudget = new Map();
     /** Spawn point held from death until respawn. See Room.reserveSpawn. */
     this.reservedSpawn = null;
+    /** Pickup claim timestamps, one per pool. See handleHeal. */
+    this.lastHealAt = 0;
+    this.lastArmorAt = 0;
     this.lastSeenAt = Date.now();
     this.lastPongAt = 0;
 
@@ -269,6 +279,7 @@ class Room {
     player.reservedSpawn = null;
     player.x = at.x; player.y = at.y; player.z = at.z;
     player.hp = PLAYER_MAX_HEALTH;
+    player.armor = PLAYER_START_ARMOR;
     player.alive = true;
     player.flags = 0;
     player.respawnAt = 0;
@@ -289,25 +300,39 @@ class Room {
    */
   applyDamage(victim, attacker, weapon, part, distance = null) {
     if (!victim.alive || this.state === MATCH_STATE.OVER) return;
-    if (victim === attacker) return;
+    // Self-harm reaches here only for throwables — handleShot gates it. Blowing
+    // yourself up is a legitimate thing to do to yourself; being shot by
+    // yourself is not.
+    const selfInflicted = victim === attacker;
+    if (selfInflicted && weapon.selfHarm !== true) return;
 
     const raw = damageFor(weapon, part, distance);
     const dmg = Math.min(raw, LIMITS.maxDamagePerHit);
-    victim.hp -= dmg;
+
+    // Armour takes its share first, and only what it has left to give. The
+    // client used to do this itself, which meant it did nothing: the server
+    // owns health, so its next update overwrote whatever armour had "saved".
+    const absorbed = Math.min(victim.armor, dmg * ARMOR_ABSORB);
+    victim.armor -= absorbed;
+    victim.hp -= dmg - absorbed;
 
     const headshot = part === 'head';
     if (victim.hp > 0) {
       this.broadcast(MSG.HIT, {
         v: victim.id, a: attacker.id, d: Math.round(dmg), pt: part, hp: Math.round(victim.hp),
+        ar: Math.round(victim.armor),
       });
       return;
     }
 
     victim.hp = 0;
+    victim.armor = 0;
     victim.alive = false;
     victim.deaths++;
     victim.respawnAt = Date.now() + MATCH_RULES.respawnDelaySec * 1000;
-    if (this.state === MATCH_STATE.LIVE) attacker.kills++;
+    // Blowing yourself up costs a death and earns nothing. Without this guard
+    // the suicide would credit a kill to the person who committed it.
+    if (this.state === MATCH_STATE.LIVE && !selfInflicted) attacker.kills++;
 
     this.broadcast(MSG.KILL, {
       v: victim.id, a: attacker.id, w: weapon.id, hs: headshot,
@@ -543,7 +568,59 @@ function handleInput(player, msg) {
   if (Number.isFinite(msg.y)) player.yaw = msg.y;
   if (Number.isFinite(msg.a)) player.pitch = msg.a;
   if (Number.isFinite(msg.f)) player.flags = msg.f & 0x1ff;
-  if (typeof msg.w === 'string' && WEAPON_BY_ID.has(msg.w)) player.weapon = msg.w;
+  // HELD_WEAPON_IDS, not WEAPON_BY_ID: that map also carries hazards so the
+  // server can price a barrel blast, and nobody gets to walk around holding a
+  // barrel.
+  if (typeof msg.w === 'string' && HELD_WEAPON_IDS.has(msg.w)) player.weapon = msg.w;
+}
+
+/**
+ * A health pickup.
+ *
+ * Health is server-owned, so a pickup that only healed the client was purely
+ * cosmetic — the bar rose and the next authoritative update put it straight
+ * back. Health packs did nothing at all in a match.
+ *
+ * The amount is clamped and the rate limited rather than trusted, which is the
+ * same bounded trust this protocol already places in position and hit claims.
+ * The worst a tampered client gets is the healing an honest one could collect
+ * by running between the packs, and it cannot exceed the health cap.
+ */
+function handleHeal(player, msg) {
+  if (!player?.room || !player.alive) return;
+
+  // Armour plates and medkits come down the same path; they differ only in
+  // which pool they top up and how much of it a single pickup may grant.
+  const armorPack = msg.k === 'armor';
+  const cap = armorPack ? PLAYER_MAX_ARMOR : PLAYER_MAX_HEALTH;
+  const limit = armorPack ? LIMITS.maxArmorAmount : LIMITS.maxHealAmount;
+  const current = armorPack ? player.armor : player.hp;
+  if (current >= cap) return;
+
+  // Rate-limit the two pools separately. Sharing one timer meant that walking
+  // over a medkit and a plate together — or over two loot drops from the same
+  // firefight — silently threw the second one away.
+  const stamp = armorPack ? 'lastArmorAt' : 'lastHealAt';
+  const now = Date.now();
+  if (now - (player[stamp] ?? 0) < LIMITS.minHealInterval * 1000) return;
+  player[stamp] = now;
+
+  const asked = Number(msg.a);
+  if (!Number.isFinite(asked) || asked <= 0) return;
+  const amount = Math.min(asked, limit);
+
+  const after = Math.min(cap, current + amount);
+  const gained = after - current;
+  if (gained <= 0) return;
+  if (armorPack) player.armor = after; else player.hp = after;
+
+  // Reuses HIT so every client updates the same way it does for damage; a
+  // negative `d` is the signal that it went the other way.
+  player.room.broadcast(MSG.HIT, {
+    v: player.id, a: player.id, d: -Math.round(gained),
+    pt: armorPack ? 'armor' : 'heal',
+    hp: Math.round(player.hp), ar: Math.round(player.armor),
+  });
 }
 
 function handleShot(player, msg) {
@@ -573,6 +650,30 @@ function handleShot(player, msg) {
   rec.tokens -= 1;
   player.shotBudget.set(weapon.id, rec);
 
+  /*
+   * Tell everyone else the trigger was pulled.
+   *
+   * This sits ABOVE the "no hits, nothing to do" return on purpose: a missed
+   * shot is exactly the one you most need to see and hear, and returning early
+   * meant the only shots anyone witnessed were the ones that had already hurt
+   * somebody. Above the hit loop, too, so a flash never waits on validation.
+   *
+   * Rate limiting is already done by the token bucket above, so this cannot be
+   * used to flood the room with flashes.
+   */
+  const org = Array.isArray(msg.o) && msg.o.length === 3 && msg.o.every(Number.isFinite)
+    ? msg.o : null;
+  if (org) {
+    const dir = Array.isArray(msg.d) && msg.d.length === 3 && msg.d.every(Number.isFinite)
+      ? msg.d : [0, 0, -1];
+    room.broadcast(MSG.FIRE, {
+      id: player.id,
+      o: org.map((n) => Math.round(n * 100) / 100),
+      d: dir.map((n) => Math.round(n * 1000) / 1000),
+      w: weapon.id,
+    }, player);   // not back to the shooter — they drew their own already
+  }
+
   const hits = Array.isArray(msg.h) ? msg.h.slice(0, 12) : [];
   if (!hits.length) return;
 
@@ -581,11 +682,26 @@ function handleShot(player, msg) {
   const rewindTo = now - Math.min(400, player.ping + 110);
   const origin = Array.isArray(msg.o) && msg.o.length === 3 ? msg.o : null;
 
+  /*
+   * Your own explosives can hurt you, and nothing else can.
+   *
+   * Self-damage was refused outright, so a grenade dropped at your own feet
+   * did nothing: the client reduced its own health locally, the server never
+   * heard about it, and the next snapshot put the health straight back. You
+   * could not kill yourself with a grenade however hard you tried.
+   *
+   * Allowed only for throwables. A client claiming to have shot ITSELF with a
+   * rifle is meaningless, and letting that through would put a path into the
+   * damage code that no legitimate client ever uses.
+   */
+  const selfHarmAllowed = weapon.selfHarm === true;
+
   const claimed = new Set();
   for (const hit of hits) {
     const victimId = hit && hit.v;
     const victim = room.players.get(victimId);
-    if (!victim || victim === player || !victim.alive) continue;
+    if (!victim || !victim.alive) continue;
+    if (victim === player && !selfHarmAllowed) continue;
     // One shot may not damage the same victim twice (a pellet spread claims
     // several hits, but each is checked and capped by weapon damage anyway).
     if (weapon.pellets === undefined || weapon.pellets <= 1) {
@@ -693,6 +809,10 @@ wss.on('connection', (socket) => {
         if (player && player.room && !player.alive && Date.now() >= player.respawnAt) {
           player.room.spawn(player);
         }
+        break;
+
+      case MSG.HEAL:
+        handleHeal(player, msg);
         break;
 
       case MSG.NAME:

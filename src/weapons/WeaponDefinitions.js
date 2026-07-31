@@ -599,6 +599,10 @@ export const WEAPON_DEFS = [
     reloadTime: 0.9, reloadEmptyTime: 0.9, reloadType: 'magazine',
     switchTime: 0.3,
     throwable: true,
+    // Separate from `throwable`, which describes how it is used. This one
+    // states that a hit claimed against yourself is believable — true of your
+    // own frag and of a barrel, and false of every bullet in the game.
+    selfHarm: true,
 
     spreadBase: 0, spreadMoving: 0, spreadJumping: 0, spreadCrouch: 0,
     spreadPerShot: 0, spreadMax: 0, spreadRecovery: 1,
@@ -648,8 +652,42 @@ export function fovForMagnification(baseFovDeg, magnification) {
   return (Math.atan(halfZoom) * 360) / Math.PI;
 }
 
+/**
+ * Hazards that deal damage without being weapons.
+ *
+ * The server prices every hit from a definition, so a barrel blast had to
+ * claim to be something the server recognised — and it claimed to be a
+ * grenade. Barrels therefore hit for the grenade's 130 instead of their own
+ * 95 in a match, and the kill feed credited a frag nobody had thrown.
+ *
+ * Kept out of WEAPON_DEFS so a barrel can never turn up in the loadout
+ * browser, which is generated from that list.
+ */
+export const HAZARD_DEFS = [
+  {
+    id: 'barrel',
+    name: 'EXPLOSION',
+    short: 'BLAST',
+    category: 'hazard',
+
+    // Matches Level.js, which is where the barrels themselves are configured.
+    damage: 95, headMul: 1, limbMul: 1, armorPen: 0.8,
+    range: 60,
+    falloffStart: 0, falloffEnd: 7.5, falloffMinScale: 0,
+    blastRadius: 7.5,
+
+    // Standing next to one that goes off is very much your own problem.
+    selfHarm: true,
+    // Chains set off several within a second, and each is a separate claim.
+    // Too low a figure here and the rate limiter eats the back half of a chain.
+    rpm: 300, automatic: false, magSize: 1,
+  },
+];
+
 export function getWeaponDef(id) {
-  return WEAPON_DEFS.find((w) => w.id === id) ?? null;
+  return WEAPON_DEFS.find((w) => w.id === id)
+    ?? HAZARD_DEFS.find((h) => h.id === id)
+    ?? null;
 }
 
 /** Weapons the player can put in a loadout slot. */

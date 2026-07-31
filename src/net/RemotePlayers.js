@@ -44,6 +44,22 @@ const PLAYER_TINTS = [
 ];
 
 const NAME_SCALE = 0.55;
+/** Height of the chest joint above the feet. Also the fallback muzzle height. */
+const CHEST_Y = 1.05;
+
+/*
+ * How far a peek moves the body, split between a roll and a sideways shift.
+ *
+ * The local player's camera travels 0.48 m at full lean (LeanSystem's
+ * MAX_OFFSET). Matching that with roll alone would need about 60 degrees,
+ * which looks like a fall rather than a peek; the pair below put the head
+ * roughly where the peeker's own camera is while still reading as a lean.
+ */
+const PEEK_ROLL = 25 * (Math.PI / 180);
+// Measured, not guessed: with the roll above, 0.28 puts the head 0.48 m out —
+// the same distance the peeker's own camera travelled. Anything less and they
+// see round the corner further than their body admits to.
+const PEEK_SHIFT = 0.28;
 
 export class RemotePlayers {
   constructor({ scene, assets }) {
@@ -193,6 +209,35 @@ export class RemotePlayers {
     }
   }
 
+  /**
+   * Where this player's barrel is right now, for drawing their muzzle flash.
+   *
+   * The server reports the shot's origin as the shooter's CAMERA, which sits
+   * inside their head — a flash drawn there hangs in front of their face
+   * rather than at the end of the gun. This reads the muzzle empty out of the
+   * weapon model instead, so the flash tracks the animated arms.
+   *
+   * @returns {boolean} false when that player has no body to read, in which
+   *   case `out` is untouched and the caller should fall back to the origin
+   *   the server gave.
+   */
+  muzzleWorldPosition(id, out) {
+    const body = this.bodies.get(id);
+    if (!body) return false;
+    if (body.muzzle) {
+      // The matrix has to be current: the arms moved this frame, and the
+      // muzzle hangs off the end of them.
+      body.muzzle.updateWorldMatrix(true, false);
+      out.setFromMatrixPosition(body.muzzle.matrixWorld);
+      return true;
+    }
+    // No model (procedural weapon, or the glTF is still loading) — chest
+    // height in front of them is far closer than the camera position.
+    out.copy(body.group.position);
+    out.y += CHEST_Y;
+    return true;
+  }
+
   // ------------------------------------------------------------------ build
   _create(id, name) {
     if (!this._available) return null;
@@ -266,7 +311,6 @@ export class RemotePlayers {
      * could never reach and the left arm locked out straight. Turning the
      * chest brings that shoulder forward and puts the weapon in range.
      */
-    const CHEST_Y = 1.05;
     const chest = new THREE.Group();
     chest.position.set(0, CHEST_Y, 0);
     group.add(chest);
@@ -414,6 +458,8 @@ export class RemotePlayers {
     // Drop the previous one. Geometry and materials belong to the shared source
     // model, so nothing here may be disposed — only detached.
     for (const child of [...body.weaponGroup.children]) body.weaponGroup.remove(child);
+    // Belongs to the model being removed, so it must not outlive it.
+    body.muzzle = null;
 
     // The snapshot carries the WEAPON id ('rifle'), which is not the MODEL id
     // ('ar15') — most match, the carbine does not. Looking the model up by
@@ -439,6 +485,14 @@ export class RemotePlayers {
       const anchor = model.getObjectByName(name);
       if (anchor) anchor.visible = false;
     }
+    /*
+     * Keep the muzzle empty, which is where another player's shots visibly
+     * come from. Hidden like the rest — it is a reference point, not geometry —
+     * but kept in the tree so its world matrix stays up to date as the arms
+     * move, giving a flash that sits on the barrel through the whole animation.
+     */
+    const muzzle = model.getObjectByName('muzzle');
+    if (muzzle) { muzzle.visible = false; body.muzzle = muzzle; }
     body.weaponGroup.add(model);
   }
 
@@ -604,7 +658,38 @@ export class RemotePlayers {
       // negative pitch means looking down, so the two share a sign. Negating
       // it here pointed the weapon up whenever the player aimed down.
       body.chest.rotation.x = s.pitch * (0.35 + 0.45 * aim) - lean * 0.5;
-      body.chest.rotation.z = swing * 0.03 * g;
+
+      /*
+       * --- peeking ------------------------------------------------------
+       *
+       * LEAN_L and LEAN_R have always been on the wire and nothing had ever
+       * read them, so a player peeking round a corner looked exactly like a
+       * player standing squarely behind it. Their camera had cleared the
+       * corner and their body had not moved an inch, which is both a
+       * disorienting thing to be shot by and an unfair one — the peeker gained
+       * the angle and gave away nothing.
+       *
+       * Tilted from the CHEST rather than the feet: a peek is a body leaning
+       * out over planted feet, and rotating the whole figure would slide the
+       * boots sideways through the floor.
+       *
+       * Damped because the flags are binary and arrive at snapshot rate;
+       * applied raw they would snap between upright and full lean.
+       */
+      let peekTarget = 0;
+      if ((s.flags & FLAG.LEAN_R) !== 0) peekTarget = 1;
+      else if ((s.flags & FLAG.LEAN_L) !== 0) peekTarget = -1;
+      body.peek = damp(body.peek ?? 0, peekTarget, 9, dt);
+
+      // NEGATIVE rotation about z tips the top of the body towards +x, and +x
+      // is the character's right (armR sits at +0.25). Getting this backwards
+      // would show them peeking out of the opposite side of the wall, which is
+      // worse than not showing it at all.
+      body.chest.rotation.z = swing * 0.03 * g - body.peek * PEEK_ROLL;
+      // Some of the travel comes from shifting the whole upper body, which is
+      // what actually clears the corner. Roll alone needs a comical angle to
+      // move the head as far as the camera really goes.
+      body.chest.position.x = body.peek * PEEK_SHIFT;
     }
 
     /*

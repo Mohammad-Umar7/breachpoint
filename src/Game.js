@@ -36,6 +36,7 @@ import { PickupManager } from './world/PickupManager.js';
 import { Player } from './player/Player.js';
 import { LeanSystem } from './player/LeanSystem.js';
 import { WeaponSystem } from './weapons/WeaponSystem.js';
+import { getWeaponDef } from './weapons/WeaponDefinitions.js';
 import { WeaponViewModel } from './weapons/WeaponViewModel.js';
 import { ADSSystem } from './weapons/ADSSystem.js';
 import { EnemyManager } from './enemies/EnemyManager.js';
@@ -116,6 +117,9 @@ export class Game {
     this._menuTime = 0;
     this._tmpA = new THREE.Vector3();
     this._tmpB = new THREE.Vector3();
+    // Scratch for drawing other players' gunfire — see net.onFire.
+    this._tmpC = new THREE.Vector3();
+    this._tmpD = new THREE.Vector3();
     this._camForward = new THREE.Vector3();
     this._camUp = new THREE.Vector3();
     this._focusRayDir = new THREE.Vector3();
@@ -327,7 +331,6 @@ export class Game {
 
   // ============================================================== callbacks
   _bindUi() {
-    this.menus.onPlay = () => this.startGame();
     // Someone following an invite link lands straight on the join screen with
     // the code already filled in, so the link is one click rather than "now
     // type these five characters".
@@ -473,7 +476,16 @@ export class Game {
     this.enemies.onAllWavesCleared = () => this._victory();
 
     // --------------------------------------------------------- the pickups
-    this.pickups.onCollect = (type, label, cls) => this.ui.showToast(label, cls);
+    this.pickups.onCollect = (type, label, cls, amount) => {
+      this.ui.showToast(label, cls);
+      // Health and armour are both server-owned in a match, so a pack that
+      // only topped up the local copy was undone by the next authoritative
+      // update — pickups did nothing at all. Claim them so the server applies
+      // the real thing. Ammunition is not server-owned, so it needs no claim.
+      if (type === 'health' || type === 'armor') {
+        this.net?.claimHeal?.(amount, type);
+      }
+    };
   }
 
   /** Central scoring path for every kill, however it happened. */
@@ -505,7 +517,7 @@ export class Game {
     prop.mesh.visible = false;
     this.physics.setBodyEnabled(prop.body, false);
 
-    this._detonate(pos, prop.blastRadius, prop.blastDamage, prop.blastForce, false);
+    this._detonate(pos, prop.blastRadius, prop.blastDamage, prop.blastForce, false, 'barrel');
 
     // Chain reaction into every other explosive in range.
     for (const other of this.level.explosives) {
@@ -521,18 +533,41 @@ export class Game {
    * Shared blast: physics impulse, line-of-sight damage to the player and
    * every enemy, knockback, full FX and a scorch mark.
    */
-  _detonate(pos, radius, damage, force, fromPlayer) {
+  /**
+   * @param sourceId  weapon or hazard id the blast is reported to the server
+   *                  as. A barrel used to claim to be a grenade, so barrels hit
+   *                  for the frag's 130 rather than their own 95 in a match and
+   *                  the kill feed credited a grenade nobody had thrown.
+   */
+  _detonate(pos, radius, damage, force, fromPlayer, sourceId = 'grenade') {
     this.physics.applyExplosion(pos, radius, force);
     this.enemies.applyExplosionDamage(pos, radius, damage, fromPlayer ? 'player' : 'explosion');
 
     this._tmpB.copy(this.player.position);
     this._tmpB.y += 0.3;
     const pd = this._tmpB.distanceTo(pos);
-    if (pd < radius && this.physics.hasLineOfSight(pos, this._tmpB)) {
+    const caughtInBlast = pd < radius && this.physics.hasLineOfSight(pos, this._tmpB);
+    if (caughtInBlast) {
       const falloff = 1 - pd / radius;
-      // Your own grenades hurt, but less than a barrel going off in your face.
-      const selfScale = fromPlayer ? 0.5 : 0.75;
-      this.player.applyDamage(damage * falloff * falloff * selfScale, pos, 'explosion');
+      /*
+       * The HEALTH loss is applied locally only outside a match.
+       *
+       * In multiplayer the server owns health, and it uses its own falloff
+       * curve — so applying a different number here would disagree with the
+       * authoritative one, and could drop us to zero locally while the server
+       * still had us alive. That leaves a player dead on their own screen and
+       * walking around on everyone else's. The claim sent below is what
+       * actually hurts us; the server's reply sets the real figure.
+       *
+       * The kick and the shake stay local either way: they are feel, not
+       * state, and waiting a round-trip for them would make an explosion at
+       * your feet land late.
+       */
+      if (!this.net?.connected) {
+        // Your own grenades hurt, but less than a barrel going off in your face.
+        const selfScale = fromPlayer ? 0.5 : 0.75;
+        this.player.applyDamage(damage * falloff * falloff * selfScale, pos, 'explosion');
+      }
       const kick = this._tmpB.clone().sub(pos).normalize().multiplyScalar(10 * falloff);
       kick.y = Math.abs(kick.y) + 5 * falloff;
       this.player.applyImpulse(kick);
@@ -564,9 +599,23 @@ export class Game {
         if (!this.physics.hasLineOfSight(pos, this._tmpB)) continue;
         claims.push({ victimId: id, part: 'torso' });
       }
+
+      /*
+       * And OURSELVES, if we are inside our own blast.
+       *
+       * The local applyDamage above already reduced our health, but health is
+       * server-owned in a match: the server knew nothing about it, so the
+       * figure was cosmetic and the next authoritative update put it straight
+       * back. Dropping a grenade at your own feet did nothing at all, and you
+       * could not kill yourself with one however hard you tried.
+       */
+      if (caughtInBlast && this.player.alive) {
+        claims.push({ victimId: this.net.selfId, part: 'torso' });
+      }
+
       if (claims.length) {
         this.net.sendShot({
-          origin: pos, direction: this._camForward, weaponId: 'grenade', hits: claims,
+          origin: pos, direction: this._camForward, weaponId: sourceId, hits: claims,
         });
       }
     }
@@ -1094,9 +1143,30 @@ export class Game {
     };
 
     net.onHit = (h) => {
+      /*
+       * A HEAL arrives on the same message as damage, with a negative amount.
+       *
+       * Reusing HIT keeps health flowing through exactly one authoritative
+       * path, but everything below this point assumes damage — the red flash,
+       * the direction arc, the camera kick, the "damage taken" tally. Running
+       * any of that for a health pack would flash the screen red for picking
+       * one up.
+       */
+      if (h.damage < 0) {
+        if (h.isSelfVictim) {
+          this.player.health = h.hp;
+          if (h.armor !== null) this.player.armor = h.armor;
+          this.ui.showHeal?.();
+        }
+        return;
+      }
+
       if (h.isSelfVictim) {
-        // Health is server-owned; mirror it rather than subtracting locally.
+        // Health and armour are both server-owned; mirror them rather than
+        // subtracting locally. The client's own absorption maths would fight
+        // the server's and lose on the very next update.
         this.player.health = h.hp;
+        if (h.armor !== null) this.player.armor = h.armor;
         this.stats.damageTaken += h.damage;
 
         // Point the damage arc at whoever shot us. Without a direction you
@@ -1131,6 +1201,62 @@ export class Game {
         // The number floats off the body you hit, so you can read exactly what
         // landed mid-fight instead of guessing from a health bar.
         this._showDamageNumberAt(h.victim, h.damage, { headshot: h.part === 'head' });
+      }
+    };
+
+    /*
+     * Somebody else fired: muzzle flash, tracer and the report.
+     *
+     * None of this existed. A shot was reported to the server and to nobody
+     * else, so the only sign another player was shooting at you was your own
+     * health dropping — no flash, no tracer, and complete silence. Players
+     * could not tell they were under fire, or that anyone nearby was firing at
+     * all, which is most of the information an FPS conveys.
+     *
+     * The message is deliberately thin — who, from where, which way, with
+     * what — and everything below is drawn from the weapon definition this
+     * client already has. It is the same data the shooter used for their own
+     * flash, so both ends show the same thing.
+     */
+    net.onFire = (f) => {
+      const def = getWeaponDef(f.weapon);
+      if (!def || !Array.isArray(f.origin)) return;
+
+      // The server relays the shooter's CAMERA position, which is inside their
+      // head. Prefer the muzzle of the gun in their hands, so the flash is on
+      // the barrel rather than hanging in front of their face.
+      this._tmpA.set(f.origin[0], f.origin[1], f.origin[2]);
+      const hasBody = this.remotes?.muzzleWorldPosition(f.shooter, this._tmpB);
+      const from = hasBody ? this._tmpB : this._tmpA;
+
+      const dir = Array.isArray(f.direction)
+        ? this._tmpC.set(f.direction[0], f.direction[1], f.direction[2])
+        : this._tmpC.set(0, 0, -1);
+      if (dir.lengthSq() < 1e-6) dir.set(0, 0, -1);
+      dir.normalize();
+
+      // Throwables and hazards have no barrel to flash: a frag going off is an
+      // explosion, and drawing a muzzle flash at the blast centre would be
+      // nonsense. Their own FX are already driven by the damage they do.
+      const silentMuzzle = def.category === 'throwable' || def.category === 'hazard';
+      if (!silentMuzzle && def.category !== 'melee') {
+        this.fx.spawnMuzzleFlash(from, dir, def.muzzleScale ?? 1, true);
+
+        /*
+         * A tracer, so a shot that MISSES is still visible — which is the one
+         * you most need to see, because it tells you someone is shooting and
+         * roughly from where. Traced to the weapon's own range rather than to
+         * an impact point: the server does not say what was hit, and a round
+         * that hit nothing has no impact point to trace to.
+         */
+        this._tmpD.copy(dir).multiplyScalar(Math.min(def.range ?? 80, 90)).add(from);
+        this.fx.spawnTracer(from, this._tmpD, { width: 0.03 });
+      }
+
+      // Positional, so it carries a direction and a distance — the whole point
+      // is knowing WHERE the shooting is coming from.
+      if (def.fireSound) {
+        this.audio.play(def.fireSound, { position: from, volume: 0.85 });
       }
     };
 

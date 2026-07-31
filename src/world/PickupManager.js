@@ -182,17 +182,23 @@ export class PickupManager {
   _tryCollect(p) {
     const player = this.player;
     let label = p.def.label;
+    // How much was ACTUALLY gained, which is not the pack's nominal value when
+    // the player was nearly topped up. Passed to onCollect so a match can tell
+    // the server the real figure.
+    let gainedAmount = 0;
 
     switch (p.type) {
       case 'health': {
         if (player.health >= player.maxHealth) return false;
         const gained = player.heal(p.def.amount);
+        gainedAmount = gained;
         label = `+${Math.round(gained)} HEALTH`;
         break;
       }
       case 'armor': {
         if (player.armor >= player.maxArmor) return false;
         const gained = player.addArmor(p.def.amount);
+        gainedAmount = gained;
         label = `+${Math.round(gained)} ARMOUR`;
         break;
       }
@@ -200,6 +206,7 @@ export class PickupManager {
         if (!this.weapons.needsAmmo()) return false;
         const added = this.weapons.addAmmo(p.def.amount);
         if (added <= 0) return false;
+        gainedAmount = added;
         label = `+${added} ROUNDS`;
         break;
       }
@@ -208,7 +215,9 @@ export class PickupManager {
     }
 
     this.audio.play(p.def.sound);
-    this.onCollect?.(p.type, label, p.def.toastClass);
+    // `gained` is passed on so a match can tell the server what was actually
+    // collected rather than the pack's nominal value.
+    this.onCollect?.(p.type, label, p.def.toastClass, gainedAmount);
     return true;
   }
 

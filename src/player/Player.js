@@ -23,7 +23,9 @@
 
 import * as THREE from 'three';
 import { clamp, damp, lerp } from '../core/MathUtils.js';
-import { PLAYER_MAX_HEALTH } from '../net/protocol.js';
+import {
+  PLAYER_MAX_HEALTH, PLAYER_MAX_ARMOR, PLAYER_START_ARMOR, ARMOR_ABSORB,
+} from '../net/protocol.js';
 import { TAG_KIND } from '../physics/PhysicsWorld.js';
 import { SURFACE } from '../core/AssetManager.js';
 import { footstepSoundFor } from '../audio/AudioManager.js';
@@ -92,9 +94,15 @@ export class Player {
 
     // --- vitals ----------------------------------------------------------
     this.maxHealth = PLAYER_MAX_HEALTH;
-    this.health = 100;
-    this.maxArmor = 100;
-    this.armor = 50;
+    // Start topped up. This used to be a bare 100 against a max of 150, so the
+    // HUD opened at two thirds and a full medkit "overhealed" back to a number
+    // the player had never actually seen.
+    this.health = PLAYER_MAX_HEALTH;
+    // Both from the shared constants: the client capped armour at 100 while
+    // the server caps it at 50, so a second plate appeared to be collected and
+    // then quietly did nothing.
+    this.maxArmor = PLAYER_MAX_ARMOR;
+    this.armor = PLAYER_START_ARMOR;
     this.lastDamageTime = -99;
 
     // --- feel ------------------------------------------------------------
@@ -185,7 +193,7 @@ export class Player {
     this.yaw = yaw;
     this.pitch = 0;
     this.health = this.maxHealth;
-    this.armor = 50;
+    this.armor = PLAYER_START_ARMOR;
     this.alive = true;
     this.enabled = true;
     this.crouching = false;
@@ -648,10 +656,11 @@ export class Player {
   applyDamage(amount, sourcePosition = null, cause = 'bullet') {
     if (!this.alive || amount <= 0) return 0;
 
-    // Armour soaks 60% of incoming damage until it runs out.
+    // Armour soaks its share of incoming damage until it runs out. Same
+    // constant the server uses, so single-player and a match agree.
     let remaining = amount;
     if (this.armor > 0) {
-      const absorbed = Math.min(this.armor, amount * 0.6);
+      const absorbed = Math.min(this.armor, amount * ARMOR_ABSORB);
       this.armor -= absorbed;
       remaining -= absorbed;
     }
