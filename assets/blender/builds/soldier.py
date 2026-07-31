@@ -122,14 +122,31 @@ for sx in (-1, 1):
 #  ARMS  (matBody) — authored in world space; the engine offsets each mesh by
 #  its shoulder pivot (±0.30, 1.42, 0) so rotation happens at the joint.
 # =========================================================================
+# The forearm is a SEPARATE part from the upper arm, and that separation is
+# the whole reason the character can hold a weapon convincingly.
+#
+# With one rigid arm mesh there is no elbow, so the hand can only ever sit on
+# the surface of a sphere around the shoulder. A weapon needs both hands at
+# specific points at the same time, which that cannot do — the gun ends up
+# floating near a hand rather than held in it.
+#
+# Split here, the engine gets a real two-bone chain (shoulder -> elbow ->
+# wrist) and can solve IK: the right hand holds the grip, the left hand is
+# driven onto the handguard, and the elbows bend wherever they have to. That
+# is how shooters do it — the weapon is socketed to the right hand and the
+# left arm is IK'd to a socket on the weapon.
+#
+# The elbow ball stays with the UPPER arm so it sits at the pivot and the
+# forearm swings around it, rather than the joint itself flying about.
 for sx in (-1, 1):
     tag = "armL" if sx < 0 else "armR"
+    fore = "foreL" if sx < 0 else "foreR"
     tbox(f"{tag}__upper", 0.115, 0.125, 0.270, (sx * 0.298, 0, 1.288), mat=FAT,
          bev=0.026, bev_seg=2, sx2=0.098, sz2=0.105)
     box(f"{tag}__elbow", 0.105, 0.118, 0.075, (sx * 0.298, 0.006, 1.148), mat=FAT, bev=0.024, bev_seg=2)
-    tbox(f"{tag}__fore", 0.098, 0.108, 0.235, (sx * 0.298, 0, 1.020), mat=FAT,
+    tbox(f"{fore}__arm", 0.098, 0.108, 0.235, (sx * 0.298, 0, 1.020), mat=FAT,
          bev=0.022, bev_seg=2, sx2=0.082, sz2=0.090)
-    box(f"{tag}__pad", 0.086, 0.030, 0.090, (sx * 0.298, 0.062, 1.148), mat=FAT, bev=0.010)
+    box(f"{fore}__pad", 0.086, 0.030, 0.090, (sx * 0.298, 0.062, 1.148), mat=FAT, bev=0.010)
 
 for sx in (-1, 1):
     tag = "gloveL" if sx < 0 else "gloveR"
@@ -166,7 +183,7 @@ for sx in (-1, 1):
 PARTS = [
     "head", "helmet", "visor", "torso", "vest",
     "armorPlate", "shoulderL", "shoulderR",
-    "armL", "armR", "gloveL", "gloveR",
+    "armL", "armR", "foreL", "foreR", "gloveL", "gloveR",
     "legL", "legR", "bootL", "bootR",
 ]
 RESULT = finish_parts("soldier", order=PARTS)

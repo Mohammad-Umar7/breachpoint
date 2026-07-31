@@ -361,6 +361,16 @@ h3 { font-size: 12px; letter-spacing: 3px; color: var(--accent); margin: 0 0 10p
 }
 .nav-btn:hover::after, .nav-btn:focus-visible::after { opacity: 1; }
 .nav-btn:active { transform: translateX(3px) scale(0.995); }
+/* Status line on PLAY: which region was picked, or why it failed. Pushed to
+   the right so it never shifts the label as the text changes length. */
+.nav-btn em {
+  margin-left: auto;
+  font-family: var(--font-mono); font-size: 10px; font-style: normal;
+  letter-spacing: 1px; text-transform: uppercase;
+  color: var(--accent); opacity: 0.6;
+}
+.nav-btn:disabled { cursor: progress; opacity: 0.85; transform: none; }
+.nav-btn:disabled em { opacity: 0.95; }
 .nav-btn.primary {
   background: linear-gradient(90deg, rgba(28,90,115,0.9), rgba(14,44,58,0.4));
   border-left-color: var(--accent);

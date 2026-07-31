@@ -55,7 +55,7 @@ export const INPUT_HZ = 30;
 
 export const MSG = Object.freeze({
   // ---- client -> server ----
-  JOIN: 'j',      // { n: name, r: room|null, v: PROTOCOL_VERSION }
+  JOIN: 'j',      // { n: name, r: room|null, q: quickMatch?, v: PROTOCOL_VERSION }
   INPUT: 'i',     // { q: seq, p: [x,y,z], y: yaw, a: pitch, f: flagBits, w: weaponId }
   SHOT: 's',      // { q: seq, o: [x,y,z], d: [x,y,z], w: weaponId, h: [hits] }
   RESPAWN: 'r',   // {}

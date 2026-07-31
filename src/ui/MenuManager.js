@@ -229,6 +229,7 @@ export class MenuManager {
     // --- callbacks ---
     this.onCreateMatch = null;   // () -> Promise, resolves when connected
     this.onJoinMatch = null;     // (code) -> Promise
+    this.onQuickMatch = null;    // (name) -> Promise, joins a public game
     this.onContinue = null;
     this.onResume = null;
     this.onRestart = null;
@@ -329,6 +330,7 @@ export class MenuManager {
     click('btn-menu-win', () => this.onQuitToMenu?.());
     click('btn-error-reload', () => window.location.reload());
 
+    click('btn-play', () => this._quickMatch());
     click('btn-create', () => this.openLobby('create'));
     click('btn-join', () => this.openLobby('join'));
     click('btn-lobby-go', () => this._lobbyGo());
@@ -668,6 +670,37 @@ export class MenuManager {
     this.el.lobbyGoBtn.disabled = true;
     try { await this.onCreateMatch?.(name); }
     finally { this.el.lobbyGoBtn.disabled = false; }
+  }
+
+  /**
+   * PLAY — straight into a game with other people, no code to type.
+   *
+   * The button reports what it is doing while it works, because the two slow
+   * steps are genuinely slow: measuring the regions takes up to a couple of
+   * seconds, and a sleeping free-tier server can take a minute to wake. A
+   * button that just sits there during that reads as broken.
+   */
+  async _quickMatch() {
+    const btn = document.getElementById('btn-play');
+    const sub = document.getElementById('play-sub');
+    if (btn?.disabled) return;
+    const restore = () => {
+      if (btn) btn.disabled = false;
+      if (sub) sub.textContent = 'quick match';
+    };
+
+    const name = this.settings.get('playerName') || 'OPERATOR';
+    if (btn) btn.disabled = true;
+    if (sub) sub.textContent = 'finding a server…';
+
+    try {
+      await this.onQuickMatch?.(name, (text) => { if (sub) sub.textContent = text; });
+    } catch (err) {
+      if (sub) sub.textContent = err?.message ? String(err.message).slice(0, 60) : 'could not connect';
+      setTimeout(restore, 4000);
+      return;
+    }
+    restore();
   }
 
   async _copyInvite() {

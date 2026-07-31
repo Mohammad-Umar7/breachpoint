@@ -312,6 +312,14 @@ export class Game {
 
     this.menus.onCreateMatch = (name) => this._connect({ name, room: null });
     this.menus.onJoinMatch = (code, name) => this._connect({ name, room: code });
+    this.menus.onQuickMatch = async (name, status) => {
+      // Pick the closest region by measurement before connecting. Silent and
+      // optional — with a single server there is nothing to choose and this
+      // returns immediately.
+      const region = await this.net?.pickRegion?.();
+      status?.(region ? `joining ${region.name} · ${Math.round(region.ms)} ms` : 'joining…');
+      return this._connect({ name, room: null, quick: true });
+    };
     this.menus.onContinue = () => this.resume();
     this.menus.onResume = () => this.resume();
     this.menus.onRestart = () => this.restart();
@@ -888,7 +896,7 @@ export class Game {
    * thrown, because this is called from a button handler and an unhandled
    * rejection would leave the UI stuck on "Connecting...".
    */
-  async _connect({ name, room }) {
+  async _connect({ name, room, quick = false }) {
     if (name) this.settings.set('playerName', name);
     this._wireNet();
     // Free hosting sleeps, so a first connection can legitimately take up to a
@@ -899,17 +907,21 @@ export class Game {
       const welcome = await this.net.connect({
         name: name || this.settings.get('playerName') || 'OPERATOR',
         room,
+        quick,
       });
       this.menus.inviteLink = inviteUrl(welcome.r);
       this.menus.showInvite(welcome.r);
       this.menus.setLobbyStatus(
         room ? 'Joined. Dropping in...' : 'Match created. Dropping in...', 'ok',
       );
-      // Brief pause so the code and invite link are actually readable before
-      // the overlay disappears.
-      setTimeout(() => { if (this.net.connected) this.startGame(); }, room ? 350 : 1400);
+      // Quick match drops in immediately: there is no code to read, because
+      // the player never asked for one. Creating a match holds for a moment so
+      // the invite link is legible before the overlay goes.
+      const hold = quick ? 250 : room ? 350 : 1400;
+      setTimeout(() => { if (this.net.connected) this.startGame(); }, hold);
     } catch (err) {
       this.menus.setLobbyStatus(err.message || 'Could not connect.', 'error');
+      if (quick) throw err;      // the PLAY button reports its own failures
     }
   }
 

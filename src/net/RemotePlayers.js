@@ -25,7 +25,8 @@ import { FLAG } from './protocol.js';
 const BODY_PARTS = [
   ['torso', 'body'], ['vest', 'gear'],
   ['legL', 'body'], ['legR', 'body'], ['bootL', 'gear'], ['bootR', 'gear'],
-  ['armL', 'body'], ['armR', 'body'], ['gloveL', 'gear'], ['gloveR', 'gear'],
+  ['armL', 'body'], ['armR', 'body'], ['foreL', 'body'], ['foreR', 'body'],
+  ['gloveL', 'gear'], ['gloveR', 'gear'],
   ['head', 'skin'], ['helmet', 'helmet'], ['visor', 'visor'],
 ];
 
@@ -52,6 +53,22 @@ export class RemotePlayers {
     this.bodies = new Map();
     this._available = assets.getModel?.('soldier') != null;
     this._tmp = new THREE.Vector3();
+    // Scratch for the IK solver — allocating these per arm per player per
+    // frame would churn the heap for no reason.
+    this._ikGoal = new THREE.Vector3();
+    this._ikTmp = new THREE.Vector3();
+    this._ikPole = new THREE.Vector3();
+    this._ikX = new THREE.Vector3();
+    this._ikY = new THREE.Vector3();
+    this._ikZ = new THREE.Vector3();
+    this._ikArm = new THREE.Vector3();
+    this._ikMat = new THREE.Matrix4();
+    this._handL = new THREE.Vector3();
+    this._handR = new THREE.Vector3();
+    this._aimQ = new THREE.Quaternion();
+    this._aimM = new THREE.Matrix4();
+    this._ikZero = new THREE.Vector3(0, 0, 0);
+    this._up = new THREE.Vector3(0, 1, 0);
     /** @type {Map<number, object>|null} last interpolated sample, for raycast */
     this._lastSample = null;
 
@@ -226,22 +243,74 @@ export class RemotePlayers {
       const part = this.assets.getCharacterPart('soldier', partName);
       if (!part) return null;
       const mesh = new THREE.Mesh(part.geometry, mats[role]);
+      // Named so limbs can be found by name rather than by position in the
+      // child list, which changes as the rig grows.
+      mesh.name = partName;
       mesh.castShadow = true;
       mesh.receiveShadow = true;
       return mesh;
     };
 
+    /**
+     * A chest joint, carrying everything above the waist.
+     *
+     * Shooters layer the aim pose onto the locomotion "per bone, from the
+     * spine up": the legs keep running level while the upper body turns and
+     * pitches to point the weapon. Without a spine there is nowhere to put
+     * that, so aiming had to be faked by rotating individual limbs, and the
+     * torso could never blade toward the target.
+     *
+     * Blading matters mechanically here, not just cosmetically. Squared up,
+     * the support hand has to cross the whole chest to reach the handguard —
+     * measured at 67 cm from a shoulder with only 56 cm of arm, so the IK
+     * could never reach and the left arm locked out straight. Turning the
+     * chest brings that shoulder forward and puts the weapon in range.
+     */
+    const CHEST_Y = 1.05;
+    const chest = new THREE.Group();
+    chest.position.set(0, CHEST_Y, 0);
+    group.add(chest);
+    record.chest = chest;
+
     // Joint groups, matching Enemy's pivots so the same animation maths works.
+    // Legs stay on the body so they are unaffected by aiming; arms hang off
+    // the chest so they inherit the aim pose.
     const joints = {};
     for (const key of ['legL', 'legR', 'armL', 'armR']) {
       const part = this.assets.getCharacterPart('soldier', key);
       if (!part) continue;
       const j = new THREE.Group();
-      j.position.fromArray(part.pivot);
-      group.add(j);
+      const onChest = key === 'armL' || key === 'armR';
+      j.position.set(part.pivot[0], part.pivot[1] - (onChest ? CHEST_Y : 0), part.pivot[2]);
+      (onChest ? chest : group).add(j);
       joints[key] = j;
       record[key] = j;
     }
+
+    // Forearms hang off the upper arms, so the chain is shoulder -> elbow ->
+    // wrist and the elbow can actually bend. Positioned by the DIFFERENCE
+    // between the two pivots, because a child's position is relative to its
+    // parent, not to the body.
+    for (const [foreKey, armKey] of [['foreL', 'armL'], ['foreR', 'armR']]) {
+      const fore = this.assets.getCharacterPart('soldier', foreKey);
+      const arm = this.assets.getCharacterPart('soldier', armKey);
+      if (!fore || !arm || !joints[armKey]) continue;
+      const j = new THREE.Group();
+      j.position.set(
+        fore.pivot[0] - arm.pivot[0],
+        fore.pivot[1] - arm.pivot[1],
+        fore.pivot[2] - arm.pivot[2],
+      );
+      joints[armKey].add(j);
+      joints[foreKey] = j;
+      record[foreKey] = j;
+      // Bone lengths, measured from the model rather than hard-coded, because
+      // the IK solver needs them and they must not drift from the mesh.
+      record.upperLen = Math.abs(arm.pivot[1] - fore.pivot[1]);
+    }
+    // Elbow to the centre of the palm — the glove sits at z 0.858 in the
+    // authored model, the elbow at 1.148.
+    record.foreLen = 0.29;
 
     for (const [partName, role] of BODY_PARTS) {
       const mesh = limb(partName, role);
@@ -249,33 +318,55 @@ export class RemotePlayers {
       const part = this.assets.getCharacterPart('soldier', partName);
 
       if (partName === 'head') {
+        // On the chest, so it turns with the upper body when aiming.
         const headGroup = new THREE.Group();
-        headGroup.position.fromArray(part.pivot);
+        headGroup.position.set(part.pivot[0], part.pivot[1] - CHEST_Y, part.pivot[2]);
         headGroup.add(mesh);
-        group.add(headGroup);
+        chest.add(headGroup);
         record.head = headGroup;
       } else if (partName === 'helmet' || partName === 'visor') {
         record.head?.add(mesh);          // nods with the head
       } else if (joints[partName]) {
         joints[partName].add(mesh);      // limb mesh sits at its joint origin
-      } else if (partName === 'bootL' || partName === 'gloveL') {
-        joints[partName === 'bootL' ? 'legL' : 'armL']?.add(mesh);
-      } else if (partName === 'bootR' || partName === 'gloveR') {
-        joints[partName === 'bootR' ? 'legR' : 'armR']?.add(mesh);
+      } else if (partName === 'bootL') {
+        joints.legL?.add(mesh);
+      } else if (partName === 'bootR') {
+        joints.legR?.add(mesh);
+      } else if (partName === 'gloveL' || partName === 'gloveR') {
+        // Hands ride the FOREARM, not the shoulder — that is the whole point
+        // of the split. Falls back to the upper arm if an older soldier.glb
+        // without forearms is loaded, so nothing detaches.
+        const fore = partName === 'gloveL' ? 'foreL' : 'foreR';
+        const arm = partName === 'gloveL' ? 'armL' : 'armR';
+        (joints[fore] ?? joints[arm])?.add(mesh);
       } else {
-        mesh.position.fromArray(part.pivot);
-        group.add(mesh);
+        // Torso and vest belong to the upper body, so they turn with the
+        // chest — otherwise the arms would swing away from a body that stayed
+        // squared up. Their geometry is authored in world space and carries no
+        // pivot, so cancel the chest offset to leave them where they were.
+        mesh.position.set(part.pivot[0], part.pivot[1] - CHEST_Y, part.pivot[2]);
+        chest.add(mesh);
       }
     }
 
-    // Weapon holder, animated in _animate. Parented to the body rather than to
-    // the arm on purpose: the arm swings through a wide aim blend, and a child
-    // of it would need its rotation counter-cancelled at every angle. Carrying
-    // it on the body and moving it between a hip pose and a shouldered pose is
-    // what Enemy does, and it reads correctly from every angle.
+    /**
+     * The weapon is placed FROM the hands, every frame.
+     *
+     * It used to be parented to the body and moved between a hip pose and a
+     * shouldered pose by hand-tuned constants, with the arms posed separately.
+     * That can be made to look right from one angle and is wrong from all the
+     * others, because nothing connects the gun to the hands — they are two
+     * independent animations kept in agreement by eye.
+     *
+     * Now both hands are driven to targets by IK and the grip is put exactly
+     * where the right hand ended up, with the barrel running along the line to
+     * the left hand. The weapon is held in both hands by construction.
+     *
+     * It lives on the CHEST rather than on the hand so it shares one space
+     * with the hand targets, and so it inherits the aim pitch directly.
+     */
     record.weaponGroup = new THREE.Group();
-    record.weaponGroup.position.set(0.22, 1.28, -0.26);
-    group.add(record.weaponGroup);
+    chest.add(record.weaponGroup);
     record.weaponId = null;
 
     this._buildTag(record);
@@ -429,54 +520,97 @@ export class RemotePlayers {
     body.group.rotation.z = swing * 0.035 * g;
 
     // ----------------------------------------------------------------- arms
-    // The rifle is held in BOTH hands at all times. Rather than letting the
-    // arms swing freely — which looks like a jogger, not someone carrying a
-    // weapon — they hold a fixed grip pose and only the whole upper body
-    // rotates to aim. The small residual swing keeps it from looking rigid.
+    // The right arm holds the weapon and the left arm is SOLVED to reach it.
     //
-    // SIGN NOTE, because it is counter-intuitive and it was wrong before:
-    // POSITIVE rotation.x swings an arm FORWARD (towards -z). The previous
-    // values here were negative, which swung both arms behind the back — the
-    // hands measured out at z = +0.4 while the weapon floated at z = -0.3, so
-    // the gun hung in mid-air roughly 70 cm in front of nobody. Every angle
-    // below was then solved numerically against the actual glove positions,
-    // targeting the pistol grip with the right hand and the handguard with
-    // the left.
+    // This is the arrangement shooters use, and it is the only one that holds
+    // up from every angle: the gun is socketed to the right hand, so the grip
+    // is correct by construction, and the support hand is then driven onto a
+    // socket on the weapon by inverse kinematics. Nothing has to be kept in
+    // agreement by eye, because there is only one thing being posed.
+    //
+    // What it replaces was two independent poses — an arm pose and a weapon
+    // pose — tuned against each other by hand. That can be made to look right
+    // in one screenshot and is wrong everywhere else, which is exactly how it
+    // looked.
+    //
+    // POSITIVE rotation.x swings an arm FORWARD (towards -z). Counter-
+    // intuitive, and it was wrong here once already.
     const aiming = (s.flags & FLAG.ADS) !== 0 || (s.flags & FLAG.FIRING) !== 0;
     body.aim = damp(body.aim ?? 0, aiming ? 1 : 0, 10, dt);
     const aim = body.aim;
-    const jog = swing * 0.10 * g * (1 - aim);   // suppressed while aiming
+    const jog = swing * 0.09 * g * (1 - aim);   // suppressed while aiming
 
-    if (body.armR) {
-      // Trigger hand: low ready at the hip, up to the shoulder to aim.
-      body.armR.rotation.x = THREE.MathUtils.lerp(0.45, 1.30, aim) + jog;
-      body.armR.rotation.y = THREE.MathUtils.lerp(-0.50, 0.00, aim);
-      body.armR.rotation.z = THREE.MathUtils.lerp(-0.35, -0.65, aim);
-    }
-    if (body.armL) {
-      // Support hand: crosses the body onto the handguard, further forward.
-      body.armL.rotation.x = THREE.MathUtils.lerp(0.90, 1.30, aim) - jog;
-      body.armL.rotation.y = THREE.MathUtils.lerp(0.30, 0.30, aim);
-      body.armL.rotation.z = THREE.MathUtils.lerp(0.50, 0.45, aim);
+    // --- chest: the aim layer ---------------------------------------------
+    // Pitches to the player's real aim while the legs below keep running
+    // level. This is the "blend from the spine up" that lets someone sprint
+    // and aim at once without the two poses fighting.
+    if (body.chest) {
+      // Bladed when carrying, squared up when aiming. Shouldered, the blade
+      // has to come off: it adds directly to the barrel's cant, and a player
+      // aiming at you whose muzzle points 20 degrees past your shoulder reads
+      // as not aiming at you at all.
+      body.chest.rotation.y = THREE.MathUtils.lerp(0.26, 0.06, aim);
+      // POSITIVE rotation.x tips the chest's -Z (its forward) UPWARD, and
+      // negative pitch means looking down, so the two share a sign. Negating
+      // it here pointed the weapon up whenever the player aimed down.
+      body.chest.rotation.x = s.pitch * (0.35 + 0.45 * aim) - lean * 0.5;
+      body.chest.rotation.z = swing * 0.03 * g;
     }
 
-    // --------------------------------------------------------------- weapon
-    // The grip sits IN the right hand — these are the measured glove positions
-    // for the poses above, not guesses — and the barrel runs out towards the
-    // left hand. Measured residual: 4 cm from handguard to support hand at the
-    // hip, 19 cm shouldered.
-    if (body.weaponGroup) {
-      body.weaponGroup.position.set(
-        THREE.MathUtils.lerp(0.14, 0.00, aim),
-        THREE.MathUtils.lerp(0.99, 1.33, aim) + bob,
-        THREE.MathUtils.lerp(-0.33, -0.38, aim),
-      );
-      // Shouldered, the muzzle tracks the player's real pitch, so from across
-      // the map you can read where someone is actually pointing. At the hip it
-      // lies across the body in a low ready instead.
-      body.weaponGroup.rotation.x = THREE.MathUtils.lerp(0.70, -s.pitch, aim) - lean;
-      body.weaponGroup.rotation.y = THREE.MathUtils.lerp(0.60, 0.00, aim);
-      body.weaponGroup.rotation.z = THREE.MathUtils.lerp(-0.50, 0.00, aim);
+    /*
+     * --- hands, then weapon ---------------------------------------------
+     *
+     * Both hands are driven to explicit targets and the weapon is then placed
+     * FROM the hands: the grip goes exactly where the right hand is, and the
+     * barrel runs along the line to the left hand. So the gun is held in both
+     * hands by construction, at every angle, with nothing to keep in sync by
+     * eye.
+     *
+     * Targets are in CHEST space, so they inherit the aim pitch for free —
+     * pitch the chest and the whole hold follows, weapon included.
+     *
+     * They are also chosen to be REACHABLE. This figure has 0.60 m between its
+     * shoulders and 0.56 m of arm, so a rifle held square to the chest simply
+     * cannot be gripped by both hands — an earlier attempt put the support
+     * target 0.67 m from a 0.56 m arm and the elbow locked out straight,
+     * pointing at nothing. Held across the body, both hands reach.
+     */
+    const carry = (readyX, readyY, readyZ, adsX, adsY, adsZ, out) => out.set(
+      THREE.MathUtils.lerp(readyX, adsX, aim),
+      THREE.MathUtils.lerp(readyY, adsY, aim) + jog * 0.25,
+      THREE.MathUtils.lerp(readyZ, adsZ, aim),
+    );
+
+    if (body.armR && body.foreR && body.armL && body.foreL) {
+      /*
+       * Ready is a cross-body carry, shouldered brings the weapon centre and
+       * levels the barrel. Both sets are constrained by reach: shoulders here
+       * are 0.60 m apart with 0.56 m of arm, which is a stockier build than a
+       * person, so the support hand cannot cross as far as a real shooter's.
+       * Shouldered therefore keeps the grip near the centreline rather than at
+       * the right shoulder, which is what lets the barrel come round to only
+       * about 17 degrees of cant instead of 30.
+       */
+      //                      ready                    shouldered
+      const tR = carry(0.165, 0.010, -0.215,   0.020, 0.195, -0.215, this._handR);
+      const tL = carry(-0.055, 0.075, -0.405, -0.016, 0.210, -0.450, this._handL);
+
+      // Pole hints push each elbow outward, away from the chest.
+      body.outOfReachR = this._solveArmIK(body, body.armR, body.foreR, tR, 0.8);
+      body.outOfReachL = this._solveArmIK(body, body.armL, body.foreL, tL, -0.8);
+
+      // Weapon: grip at the right hand, barrel toward the left hand. -Z is
+      // the weapon's forward axis, so the basis is built to look that way.
+      if (body.weaponGroup) {
+        body.weaponGroup.position.copy(tR);
+        this._ikTmp.copy(tL).sub(tR).normalize();          // grip -> handguard
+        // Matrix4.lookAt(eye, target, up) builds +Z pointing from target back
+        // to eye, so with the eye at the origin its -Z lands along the target
+        // direction — which is already the axis weapons are authored down. No
+        // flip is needed, and adding one points the barrel at the shooter.
+        this._aimM.lookAt(this._ikZero, this._ikTmp, this._up);
+        body.weaponGroup.quaternion.setFromRotationMatrix(this._aimM);
+      }
     }
 
     // --------------------------------------------------------------- crouch
@@ -492,6 +626,93 @@ export class RemotePlayers {
       // would dereference `.emissive` on the visor's MeshBasicMaterial.
       for (const m of body.flashMats) m.emissive.setRGB(0.9 * k, 0.15 * k, 0.12 * k);
     }
+  }
+
+  /**
+   * Two-bone IK: point an arm so its hand lands on a target.
+   *
+   * The standard law-of-cosines solve, the same one an engine's Two Bone IK
+   * node performs. Given the shoulder position, a target, and the two bone
+   * lengths, there is exactly one elbow angle that puts the hand on the
+   * target:
+   *
+   *     cos(elbow) = (upper^2 + fore^2 - distance^2) / (2 * upper * fore)
+   *
+   * The shoulder is then aimed down the line to the target and tilted back by
+   * the other interior angle of the same triangle, so the hand lands on it.
+   *
+   * Targets out of reach clamp to a straight arm rather than failing, so the
+   * hand stretches toward the weapon instead of snapping or inverting.
+   *
+   * @param {object} body
+   * @param {THREE.Object3D} upper   shoulder joint
+   * @param {THREE.Object3D} fore    elbow joint, a child of upper
+   * @param {THREE.Object3D} target  the point to reach
+   * @param {number} jog             residual walk sway
+   */
+  _solveArmIK(body, upper, fore, targetLocal, poleX) {
+    const L1 = body.upperLen || 0.272;
+    const L2 = body.foreLen || 0.29;
+
+    // Solve in the shoulder's PARENT space (the chest), so the result does not
+    // depend on whatever rotation the arm is already carrying.
+    const goal = this._ikGoal.copy(targetLocal).sub(upper.position);
+    const reach = (L1 + L2) * 0.999;
+    const raw = goal.length();
+    if (raw < 1e-4) return 0;
+    const dist = Math.min(raw, reach);
+
+    // How far the forearm folds back from straight.
+    const cosElbow = THREE.MathUtils.clamp(
+      (L1 * L1 + L2 * L2 - dist * dist) / (2 * L1 * L2), -1, 1,
+    );
+    const bend = Math.PI - Math.acos(cosElbow);
+
+    // Angle between the upper arm and the straight line to the target.
+    const cosShoulder = THREE.MathUtils.clamp(
+      (L1 * L1 + dist * dist - L2 * L2) / (2 * L1 * dist), -1, 1,
+    );
+    const tilt = Math.acos(cosShoulder);
+
+    const dir = goal.divideScalar(raw);
+
+    /*
+     * Build the shoulder's orientation as a full basis rather than as Euler
+     * terms.
+     *
+     * The previous version decomposed the direction into an independent x and
+     * z rotation and set them together. That is not how rotations compose —
+     * applying two Euler terms does not aim a bone at a point except for small
+     * angles — so the arm pointed somewhere near the target and the hand
+     * missed it by tens of centimetres.
+     *
+     * The bend axis is chosen from a pole hint so the elbow ends up behind and
+     * outside the arm, the way a human elbow does, instead of inverting
+     * through the chest.
+     */
+    const pole = this._ikPole.set(poleX, 0.15, 1).normalize();
+    const xAxis = this._ikX.crossVectors(dir, pole);
+    if (xAxis.lengthSq() < 1e-6) xAxis.set(1, 0, 0);
+    xAxis.normalize();
+
+    // Upper arm direction: the line to the target, tilted off it by the
+    // triangle's shoulder angle, rotating in the bend plane.
+    const armDir = this._ikArm.copy(dir).applyAxisAngle(xAxis, tilt);
+
+    // The bone hangs down its own -Y, so local +Y is the opposite of armDir.
+    const yAxis = this._ikY.copy(armDir).negate();
+    // Re-orthogonalise: the tilt moved armDir, so xAxis is no longer exactly
+    // perpendicular to it.
+    xAxis.addScaledVector(yAxis, -xAxis.dot(yAxis)).normalize();
+    const zAxis = this._ikZ.crossVectors(xAxis, yAxis);
+
+    this._ikMat.makeBasis(xAxis, yAxis, zAxis);
+    upper.quaternion.setFromRotationMatrix(this._ikMat);
+    // The forearm inherits that basis, so bending about its local X folds it
+    // in the same plane, back onto the target.
+    fore.rotation.set(-bend, 0, 0);
+
+    return Math.max(0, raw - reach);   // how far out of reach, for diagnostics
   }
 
   // ----------------------------------------------------------------- teardown

@@ -72,6 +72,9 @@ export class NetworkClient {
       || (env.VITE_SERVER_HOST && `${secure ? 'wss' : 'ws'}://${env.VITE_SERVER_HOST}`)
       || `${secure ? 'wss' : 'ws'}://${location.hostname}:8787`;
 
+    /** Region actually chosen by pickRegion(), for the menu to display. */
+    this.region = null;
+
     this.state = NET_STATE.OFFLINE;
     this.socket = null;
     this.selfId = null;
@@ -127,7 +130,58 @@ export class NetworkClient {
    * @param {{name?:string, room?:string|null}} opts
    * @returns {Promise<object>} resolves with the WELCOME payload
    */
-  connect({ name, room = null } = {}) {
+  /**
+   * Choose the server to play on by measuring, not by guessing.
+   *
+   * This is how matchmakers pick a region: race a tiny request against every
+   * candidate and keep the one that answers first. Round-trip time is the
+   * thing that actually matters to a shooter, and it already accounts for
+   * geography, routing and whether a server is awake — none of which can be
+   * inferred from the player's timezone or IP with any reliability.
+   *
+   * Regions come from `public/regions.json`. If that file is absent — which is
+   * the normal single-server case — this does nothing at all and the default
+   * URL stands. Nothing depends on it succeeding.
+   *
+   * @returns {Promise<{name: string, url: string, ms: number}|null>}
+   */
+  async pickRegion(timeoutMs = 2500) {
+    let regions;
+    try {
+      const res = await fetch('regions.json', { cache: 'no-store' });
+      if (!res.ok) return null;
+      regions = await res.json();
+    } catch { return null; }
+    if (!Array.isArray(regions) || regions.length === 0) return null;
+
+    const probe = async (r) => {
+      // /health is plain HTTP, so it can be timed before committing to a
+      // WebSocket. wss:// maps to https:// on the same host.
+      const http = String(r.url).replace(/^ws/, 'http');
+      const started = performance.now();
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), timeoutMs);
+      try {
+        const res = await fetch(`${http}/health`, { signal: ctrl.signal, cache: 'no-store' });
+        if (!res.ok) throw new Error('unhealthy');
+        return { name: r.name, url: r.url, ms: performance.now() - started };
+      } finally {
+        clearTimeout(t);
+      }
+    };
+
+    const results = await Promise.allSettled(regions.map(probe));
+    const alive = results.filter((r) => r.status === 'fulfilled').map((r) => r.value);
+    if (!alive.length) return null;
+
+    alive.sort((a, b) => a.ms - b.ms);
+    const best = alive[0];
+    this.url = best.url;
+    this.region = best;
+    return best;
+  }
+
+  connect({ name, room = null, quick = false } = {}) {
     this.disconnect();
     this.name = sanitizeName(name, 'OPERATOR');
     this._setState(NET_STATE.CONNECTING);
@@ -177,7 +231,14 @@ export class NetworkClient {
       const clearTimers = () => { clearTimeout(slowAt); clearTimeout(timeout); };
 
       socket.onopen = () => {
-        this._send(MSG.JOIN, { n: this.name, r: room || undefined, v: PROTOCOL_VERSION });
+        this._send(MSG.JOIN, {
+          n: this.name,
+          r: room || undefined,
+          // Quick match: let the server pick a public game with people in it,
+          // rather than opening yet another empty private one.
+          q: quick || undefined,
+          v: PROTOCOL_VERSION,
+        });
       };
 
       socket.onmessage = (ev) => {

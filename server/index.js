@@ -161,6 +161,12 @@ class Player {
 class Room {
   constructor(code) {
     this.code = code;
+    /**
+     * Public rooms are the pool Quick Match draws from. Rooms made by CREATE
+     * MATCH stay private, so sharing a code still means only the people you
+     * gave it to can turn up.
+     */
+    this.isPublic = false;
     this.players = new Map();
     this.state = MATCH_STATE.WARMUP;
     this.endsAt = 0;
@@ -389,7 +395,30 @@ function makeRoomCode() {
   return `R${Date.now().toString(36).toUpperCase().slice(-4)}`;
 }
 
-function getOrCreateRoom(requested) {
+/**
+ * Quick match: drop the player into a public game with other people in it.
+ *
+ * Deliberately fills the FULLEST room that still has room, rather than
+ * spreading players evenly. Even distribution is the intuitive choice and it
+ * is wrong — it produces several half-empty matches where everyone is alone,
+ * which is the failure mode that kills a small game's population. Packing them
+ * together means the first two people to click Play end up in the same match.
+ *
+ * A room is only a candidate while it is worth joining: not full, not over,
+ * and not already deep into its round.
+ */
+function findPublicRoom() {
+  let best = null;
+  for (const room of rooms.values()) {
+    if (!room.isPublic) continue;
+    if (room.size >= MATCH_RULES.maxPlayers) continue;
+    if (room.state === MATCH_STATE.OVER) continue;
+    if (!best || room.size > best.size) best = room;
+  }
+  return best;
+}
+
+function getOrCreateRoom(requested, quick = false) {
   if (requested) {
     const code = requested.toUpperCase();
     if (!isValidRoomCode(code)) return { error: 'that room code is not valid' };
@@ -404,6 +433,20 @@ function getOrCreateRoom(requested) {
     rooms.set(code, room);
     return { room };
   }
+
+  if (quick) {
+    const open = findPublicRoom();
+    if (open) return { room: open };
+    // Nobody to join — open a public one so the next person to press Play
+    // lands here rather than starting yet another empty match.
+    const room = new Room(makeRoomCode());
+    room.isPublic = true;
+    rooms.set(room.code, room);
+    return { room };
+  }
+
+  // CREATE MATCH: private by definition — you get a code to share, and quick
+  // match will never drop a stranger into it.
   const room = new Room(makeRoomCode());
   rooms.set(room.code, room);
   return { room };
@@ -605,6 +648,7 @@ wss.on('connection', (socket) => {
         }
         const { room, error } = getOrCreateRoom(
           typeof msg.r === 'string' && msg.r ? msg.r : null,
+          msg.q === true,          // quick match
         );
         if (error) {
           socket.send(JSON.stringify({ t: MSG.DENIED, why: error }));

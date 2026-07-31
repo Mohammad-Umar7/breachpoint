@@ -1,0 +1,17 @@
+// Optional. Rename to `regions.json` to turn on automatic region selection.
+//
+// With this file present, pressing PLAY races a /health request against every
+// server listed and connects to whichever answers fastest, showing the chosen
+// region and its ping on the button. That is how matchmakers pick a region:
+// measured round-trip time already accounts for distance, routing and whether
+// a server is even awake, none of which can be guessed reliably from an IP.
+//
+// Without this file nothing happens and the default server is used, which is
+// the right behaviour when there is only one.
+//
+// JSON does not allow comments — delete these lines when you rename the file.
+[
+  { "name": "EU",  "url": "wss://breachpoint-server.onrender.com" },
+  { "name": "US",  "url": "wss://breachpoint-us.onrender.com" },
+  { "name": "IN",  "url": "wss://breachpoint-in.onrender.com" }
+]
