@@ -845,9 +845,12 @@ export class AssetManager {
       },
     });
 
+    // Generic dark matte: a soldier's vest, a gun's furniture, a grenade body.
+    // Named for what it IS rather than the first thing that used it — the
+    // reverse is how `enemyFatigues` came to be quietly holding up multiplayer.
     this.materials.set(
-      'soldierVest',
-      new THREE.MeshStandardMaterial({ color: 0x23262a, roughness: 0.75, metalness: 0.15, name: 'soldierVest' })
+      'darkGear',
+      new THREE.MeshStandardMaterial({ color: 0x23262a, roughness: 0.75, metalness: 0.15, name: 'darkGear' })
     );
     this.materials.set(
       'soldierSkin',

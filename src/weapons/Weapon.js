@@ -583,7 +583,7 @@ function buildViewModel(group, def, assets) {
   const metal = assets.getMaterial('gunMetal');
   const poly = assets.getMaterial('gunPolymer');
   const wood = assets.getMaterial('wood');
-  const dark = assets.getMaterial('soldierVest');
+  const dark = assets.getMaterial('darkGear');
 
   const add = (geo, mat, x, y, z, rx = 0, ry = 0, rz = 0) => {
     const mesh = new THREE.Mesh(geo, mat);

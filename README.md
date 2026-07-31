@@ -240,60 +240,6 @@ inside geometry.*
 
 ---
 
-## Enemy AI
-
-Twelve states: `IDLE → PATROL → SUSPICIOUS → INVESTIGATE → ALERT → ATTACK ⇄ COVER ⇄ FLANK →
-RELOAD / SEARCH / RETREAT → DEAD`.
-
-- **Spotting is not instant.** An `awareness` value accumulates while you are visible — faster when
-  you are close, moving fast or firing; slower when you are crouched or in their peripheral vision.
-  Soldiers go SUSPICIOUS and investigate long before they go ALERT.
-- **They cannot see or shoot through walls.** Vision is a real line-of-sight raycast filtered to
-  world geometry and props. *Verified: zero LOS violations across a full engagement.*
-- **They cannot shoot through each other** — a friendly-in-line check makes them hold fire.
-- **Cover is reserved.** `NavigationSystem` hands out cover points with claims, so two soldiers
-  never pile into the same doorway. They peek out to shoot, duck back, and reload behind it.
-- **Squad discipline.** An *attacker budget* (2–5 by difficulty) caps how many may engage head-on;
-  the rest flank or hold. This kills the "conga line into the crosshair" failure mode.
-- **They spread out**, path with **A\*** (smoothed so they cut corners), investigate gunshots and
-  footsteps, retreat when badly hurt, scatter from grenades, and predict your movement on higher
-  difficulties.
-- **Spawning** prefers points far away, out of sight and behind you.
-
-### Archetypes
-
-| Type | HP | Armour | Speed | Behaviour |
-| --- | --- | --- | --- | --- |
-| Rifleman | 100 | 25 | 3.4 | Balanced baseline |
-| Skirmisher | 70 | 0 | 4.6 | Rushes to 6 m, flanks hard |
-| Breacher | 130 | 90 | 2.9 | Heavy stagger resistance |
-| Enforcer | 95 | 20 | 3.8 | 7-pellet shotgun, pushes close |
-| Marksman | 80 | 0 | 2.8 | Holds position at 42 m, telegraphs its shot |
-| Gunner | 200 | 120 | 2.3 | Suppressing fire, near-immune to stagger |
-| Operator | 140 | 60 | 4.2 | Fast, accurate, constant repositioning |
-
-### Hitboxes and armour
-
-A single capsule handles both movement and bullet collision; the *zone* is derived from where on
-the capsule the round landed (height plus lateral offset). Stacking overlapping colliders would
-make headshots unhittable, because the torso capsule always wins the raycast.
-
-*Verified damage with the AR-15: head 48, torso 24, arm/leg 19.2.* A wide hit at head height
-correctly registers as a shoulder, not a headshot.
-
-Armour sits in front of health; a weapon's `armorPen` decides how much bypasses the plate. The rest
-degrades it until it breaks, with a visible and audible tell. *Verified: a Gunner's 134 armour
-absorbs half of each 30-damage hit for eight hits, then breaks and takes full damage.*
-
-### Difficulty
-
-Four tiers — **Recruit / Soldier / Veteran / Black Ops** — that scale reaction time, accuracy, fire
-rate, cover skill, flanking, prediction lead, concurrent attackers and resource drops. Health
-scaling is deliberately mild (0.85× – 1.25×): the brief was explicit that enemies should be harder
-because they play better, not because they soak more bullets.
-
----
-
 ## Menus and settings
 
 A dark tactical theme over a **live 3D background** — the game camera flies a slow crane shot
@@ -472,12 +418,11 @@ src/
 │   ├── AssetManager.js         Procedural textures, materials, sprite atlas
 │   ├── Settings.js             Persistent settings + quality presets
 │   ├── SensitivityManager.js   Mouse delta -> camera rotation, zoom compensation
-│   ├── Difficulty.js           The four threat tiers
-│   ├── MathUtils.js            clamp / lerp / damp / RNG helpers
-│   └── ObjectPool.js           Generic fixed-capacity free list
+│   ├── HardwareProfile.js      Quality auto-detection + the frame-rate governor
+│   └── MathUtils.js            clamp / lerp / damp / RNG helpers
 ├── physics/PhysicsWorld.js     Rapier wrapper: fixed step, raycasts, explosions
 ├── world/
-│   ├── Level.js                Arena geometry, colliders, nav graph, glazing
+│   ├── Level.js                Arena geometry, colliders, glazing
 │   └── PickupManager.js        Health / armour / ammo pickups and drops
 ├── player/
 │   ├── Player.js               Character controller, camera, vitals
@@ -489,11 +434,11 @@ src/
 │   ├── WeaponViewModel.js      View-model camera, layers, pose composition
 │   ├── ADSSystem.js            Aim blend, zoom, scope engagement, breath hold
 │   └── RecoilSystem.js         Pattern-driven camera and view-model kick
-├── enemies/
-│   ├── Enemy.js                Senses, tactical state machine, hitboxes, armour
-│   ├── EnemyTypes.js           Seven archetypes + wave composition
-│   ├── EnemyManager.js         Pooling, waves, squad coordination
-│   └── NavigationSystem.js     A*, cover reservation, flanking, crowding
+├── net/
+│   ├── protocol.js             Wire format — SHARED with the server
+│   ├── NetworkClient.js        Socket, interpolation, prediction
+│   ├── RemotePlayers.js        Other players' bodies, IK, lean, name tags
+│   └── arena.js                Bounds and spawn points
 ├── fx/
 │   ├── ParticleManager.js      Sparks, smoke, debris, tracers, shells, decals
 │   ├── ScopeRenderer.js        Scope camera, RTT, circular mask, reticles
@@ -502,7 +447,18 @@ src/
 └── ui/
     ├── UIManager.js            HUD and screen effects
     └── MenuManager.js          Every menu, schema-driven settings
+server/
+├── index.js                    Authoritative server: damage, kills, score, spawns
+└── *-test.js                   Suites that need a live server
+test/*.mjs                      Suites that do not
+scripts/
+├── test.mjs                    `npm test` — runs every suite, starts the server
+└── deps.mjs                    `npm run deps` — blast radius before you cut
 ```
+
+See **[ARCHITECTURE.md](ARCHITECTURE.md)** for what each module owns, which
+things are shared between areas, and step-by-step recipes for adding a weapon,
+a network message, a sound or a HUD element.
 
 ---
 

@@ -620,7 +620,7 @@ export class Game {
     this.audio.loadSamples?.([
       'shootRifle', 'shootPistol', 'shootShotgun', 'shootMagnum', 'shootBurst',
       'shootSmg', 'shootLmg', 'shootSniper', 'shootMarksman',
-      'reload', 'reloadEmpty', 'explosion', 'hitmarker', 'killConfirm',
+      'explosion', 'hitmarker', 'killConfirm',
     ]).catch(() => { /* optional by design */ });
   }
 

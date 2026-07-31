@@ -293,7 +293,7 @@ export class RemotePlayers {
     const tint = PLAYER_TINTS[(id - 1) % PLAYER_TINTS.length];
     const mats = {
       body: this.assets.getMaterial('soldierFatigues').clone(),
-      gear: this.assets.getMaterial('soldierVest').clone(),
+      gear: this.assets.getMaterial('darkGear').clone(),
       skin: this.assets.getMaterial('soldierSkin').clone(),
       helmet: this.assets.getMaterial('soldierHelmet').clone(),
       visor: this.assets.getMaterial('soldierVisor').clone(),

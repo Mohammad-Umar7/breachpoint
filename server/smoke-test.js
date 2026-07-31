@@ -241,8 +241,19 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
    * the missing HIT as a broken multiplier. Watching the snapshot removes the
    * guesswork whatever the damage numbers become.
    */
+  /*
+   * Both clients KEEP SENDING while waiting. A real one does — this is the
+   * position stream — and the server drops anyone silent for LIMITS.timeoutSec.
+   * The first version of this loop sat mute for up to twelve seconds against a
+   * fifteen second timeout, so on a slow run both players were disconnected
+   * before the next check and three unrelated assertions failed together,
+   * pointing at a headshot multiplier that was never broken.
+   */
   const DEAD_FLAG = 1 << 4;
-  for (let i = 0; i < 120; i++) {
+  const respawnBy = Date.now() + MATCH_RULES.respawnDelaySec * 1000 + 4000;
+  while (Date.now() < respawnBy) {
+    a.input(a.pos);
+    b.input(b.pos);
     await sleep(100);
     const row = a.drain(MSG.SNAPSHOT).at(-1)?.p?.find((r) => r[0] === b.id);
     if (row && (row[6] & DEAD_FLAG) === 0 && row[8] >= PLAYER_MAX_HEALTH) break;

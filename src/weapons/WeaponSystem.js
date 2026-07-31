@@ -808,7 +808,7 @@ export class WeaponSystem {
 
     const mesh = new THREE.Mesh(
       new THREE.SphereGeometry(0.075, 12, 8),
-      this.assets.getMaterial('soldierVest')
+      this.assets.getMaterial('darkGear')
     );
     mesh.castShadow = true;
     this.fx.scene.add(mesh);
