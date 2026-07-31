@@ -494,6 +494,11 @@ export class WeaponSystem {
     if (def.projectile) {
       this._spawnProjectile(this._origin, this._dir, spread, w);
     } else {
+      // One claim per trigger pull, however many pellets it throws — see the
+      // note in _resolveRemoteHit.
+      const multiPellet = (def.pellets ?? 1) > 1;
+      this._pelletBatch = multiPellet ? [] : null;
+
       for (let p = 0; p < (def.pellets ?? 1); p++) {
         const r = this._castBullet(this._origin, this._dir, spread, w, p === 0);
         if (r?.hitEnemy) {
@@ -504,6 +509,12 @@ export class WeaponSystem {
           lastPoint = r.point;
         }
       }
+
+      // Send the whole spread as one claim, then stop batching.
+      const batch = this._pelletBatch;
+      this._pelletBatch = null;
+      if (batch?.length) this.onRemoteHit?.(batch.length === 1 ? batch[0] : batch);
+
       if (anyHit) this._registerHit(totalDamage, anyHeadshot, killed, lastPoint);
     }
 
@@ -588,14 +599,30 @@ export class WeaponSystem {
     this.fx.spawnBloodBurst(remote.point, direction, headshot ? 1.5 : 1);
     this.audio.play(impactSoundFor(SURFACE.FLESH), { position: remote.point, volume: 0.8 });
 
-    this.onRemoteHit?.({
+    const claim = {
       victimId: remote.id,
       part: remote.part,
       point: remote.point,
       distance: remote.distance,
       weaponId: def.id,
       headshot,
-    });
+    };
+    /*
+     * Pellets are BATCHED, not reported one at a time.
+     *
+     * Each report is a separate message to the server, and the server's
+     * fire-rate limiter charges one token per message. A nine-pellet shotgun
+     * blast therefore spent nine tokens against a five-token budget: most of
+     * the pellets were discarded, and the ones that were not drained the
+     * bucket so the NEXT shot was thrown away too. The gun read as doing
+     * roughly half its damage and then misfiring.
+     *
+     * Collected here and sent as one claim per trigger pull, which is also
+     * what the server already expects — it accepts several hits in a message
+     * for pellet weapons specifically.
+     */
+    if (this._pelletBatch) this._pelletBatch.push(claim);
+    else this.onRemoteHit?.(claim);
 
     // `killed` stays false: only the server can confirm a kill and it announces
     // one over the wire. Guessing here would flash a phantom kill on screen.
@@ -865,6 +892,29 @@ export class WeaponSystem {
         excludeCollider: this.player.collider,
         filter: (tag) => !!tag && tag.kind !== TAG_KIND.PLAYER,
       });
+
+      /*
+       * Other players are tested separately, because they are drawn by
+       * RemotePlayers and are NOT in the physics world — a physics raycast can
+       * never return one.
+       *
+       * Without this the knife could not touch another player at all: every
+       * ray in the fan found either level geometry or nothing, so a melee
+       * swing in multiplayer was guaranteed to do nothing. Same omission that
+       * made projectile weapons pass straight through people.
+       */
+      const reach = hit ? hit.distance : def.range;
+      const remote = this.remoteHitTest
+        ? this.remoteHitTest(this._origin, this._spreadDir, reach)
+        : null;
+
+      if (remote) {
+        const r = this._resolveRemoteHit(remote, this._spreadDir, weapon);
+        this.audio.play('knifeHit', { position: remote.point });
+        if (r?.hitEnemy) this._registerHit(r.damage, r.headshot, r.killed, r.point);
+        return;
+      }
+
       if (!hit) continue;
 
       if (hit.tag?.kind === TAG_KIND.ENEMY && hit.tag.enemy?.alive) {

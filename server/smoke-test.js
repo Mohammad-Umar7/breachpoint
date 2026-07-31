@@ -15,6 +15,7 @@ import { WebSocket } from 'ws';
 import {
   MSG, PROTOCOL_VERSION, MATCH_STATE, MATCH_RULES, LIMITS, PLAYER_MAX_HEALTH,
 } from '../src/net/protocol.js';
+import { WEAPON_DEFS } from '../src/weapons/WeaponDefinitions.js';
 
 const URL = process.env.URL || 'ws://localhost:8787';
 // Must be spellable in ROOM_CODE_ALPHABET, which excludes 0/1/O/I so codes
@@ -137,7 +138,25 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   a.pos = [...before];
   a.input(a.pos);
   b.clear(); a.clear();
-  const rifleShotsToKill = Math.ceil(PLAYER_MAX_HEALTH / 24);   // rifle damage is 24
+
+  /*
+   * Damage now falls off with range, so the expectation has to account for how
+   * far apart these two actually are — about 64 m at their spawns, past the
+   * rifle's 40 m falloff start.
+   *
+   * Simply standing the shooter next to the victim does not work: that move is
+   * itself a 60 m teleport and the server correctly rejects it, which is what
+   * the check immediately above this one exists to prove.
+   */
+  const RIFLE = WEAPON_DEFS.find((w) => w.id === 'rifle');
+  const range = Math.hypot(a.pos[0] - b.pos[0], a.pos[1] - b.pos[1], a.pos[2] - b.pos[2]);
+  const falloff = range >= RIFLE.falloffEnd ? RIFLE.falloffMinScale
+    : range <= RIFLE.falloffStart ? 1
+      : 1 + (RIFLE.falloffMinScale - 1)
+        * ((range - RIFLE.falloffStart) / (RIFLE.falloffEnd - RIFLE.falloffStart));
+  const expectBody = RIFLE.damage * falloff;
+  const expectHead = RIFLE.damage * RIFLE.headMul * falloff;
+  const rifleShotsToKill = Math.ceil(PLAYER_MAX_HEALTH / expectBody);
   for (let i = 0; i < rifleShotsToKill + 2; i++) {
     a.shootAt(b.id, 'torso');
     await sleep(130);        // rifle rpm allows ~8.3/s; stay under it
@@ -146,8 +165,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const hits = a.drain(MSG.HIT);
   const kills = a.drain(MSG.KILL);
   check('hits are registered and broadcast', hits.length > 0, `${hits.length} hits`);
-  check('hit damage matches the weapon definition',
-    hits.length > 0 && Math.abs(hits[0].d - 24) <= 1, `first hit dealt ${hits[0]?.d}`);
+  check('hit damage matches the weapon definition at this range',
+    hits.length > 0 && Math.abs(hits[0].d - expectBody) <= 1.5,
+    `dealt ${hits[0]?.d}, expected ${expectBody.toFixed(0)} at ${range.toFixed(0)} m`);
   check('victim dies after enough damage', kills.length === 1, `${kills.length} kills`);
   check('kill is attributed to the shooter',
     kills[0]?.a === a.id && kills[0]?.v === b.id);
@@ -199,7 +219,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await sleep(250);
   const hs = a.drain(MSG.HIT)[0];
   check('headshot applies the weapon multiplier',
-    hs && Math.abs(hs.d - 48) <= 2, `head hit dealt ${hs?.d} (rifle 24 x2)`);
+    hs && Math.abs(hs.d - expectHead) <= 2,
+    `head hit dealt ${hs?.d}, expected ${expectHead.toFixed(0)} (${RIFLE.damage} x${RIFLE.headMul} at ${range.toFixed(0)} m)`);
 
   // --- protocol version gate ---------------------------------------------
   const stale = new WebSocket(URL);

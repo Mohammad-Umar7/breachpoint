@@ -48,11 +48,43 @@ const PORT = Number(process.env.PORT || 8787);
 const WEAPON_BY_ID = new Map(WEAPON_DEFS.map((w) => [w.id, w]));
 
 /** Headshots and limb hits scale damage; mirrors the client's multipliers. */
-function damageFor(weapon, part) {
+/**
+ * Damage for one hit, accounting for where it was hit and how far away.
+ *
+ * The distance term is the whole reason a shotgun feels like a shotgun. The
+ * client has always modelled falloff — every weapon carries falloffStart,
+ * falloffEnd and falloffMinScale — but the SERVER owns damage and was ignoring
+ * all three, applying flat damage at every range. So a shotgun hit as hard
+ * across the map as it did point blank, and a rifle lost nothing at distance:
+ * the ranges the weapons were balanced around did not exist in a real match.
+ *
+ * Damage is full out to falloffStart, then falls linearly to falloffMinScale
+ * by falloffEnd. For the shotgun that is 135 across nine pellets inside 9 m,
+ * decaying to 27 past 30 m.
+ *
+ * @param {object} weapon  a definition from WeaponDefinitions.js
+ * @param {string} part    'head' | 'limb' | 'torso'
+ * @param {number} [distance]  metres; omitted means no falloff applied
+ */
+function damageFor(weapon, part, distance = null) {
   const base = weapon.damage ?? 20;
-  if (part === 'head') return base * (weapon.headMul ?? 2);
-  if (part === 'limb') return base * (weapon.limbMul ?? 0.85);
-  return base;
+
+  let scale = 1;
+  if (distance !== null && Number.isFinite(distance)) {
+    const start = weapon.falloffStart ?? Infinity;
+    const end = weapon.falloffEnd ?? Infinity;
+    const min = weapon.falloffMinScale ?? 1;
+    if (distance >= end) scale = min;
+    else if (distance > start && end > start) {
+      const t = (distance - start) / (end - start);
+      scale = 1 + (min - 1) * t;
+    }
+  }
+
+  const partMul = part === 'head' ? (weapon.headMul ?? 2)
+    : part === 'limb' ? (weapon.limbMul ?? 0.85)
+      : 1;
+  return base * partMul * scale;
 }
 
 /** Shortest interval between shots this weapon could legitimately produce. */
@@ -91,6 +123,8 @@ class Player {
     this.moveBudget = LIMITS.moveBurstMetres;
     /** weaponId -> { tokens, at } fire-rate bucket. See LIMITS.shotBurst. */
     this.shotBudget = new Map();
+    /** Spawn point held from death until respawn. See Room.reserveSpawn. */
+    this.reservedSpawn = null;
     this.lastSeenAt = Date.now();
     this.lastPongAt = 0;
 
@@ -252,12 +286,27 @@ class Room {
     }
   }
 
-  spawn(player, { announce = true } = {}) {
+  /**
+   * Pick where a player will come back, without moving them yet.
+   *
+   * Reserved at the moment of death so the victim can be told immediately and
+   * stand at their spawn during the countdown, rather than at the corpse.
+   */
+  reserveSpawn(player) {
     const at = pickSpawn(
       [...this.players.values()]
         .filter((p) => p !== player)
         .map((p) => ({ x: p.x, z: p.z, alive: p.alive })),
     );
+    player.reservedSpawn = at;
+    return at;
+  }
+
+  spawn(player, { announce = true } = {}) {
+    // Honour the point reserved at death, so the player comes back exactly
+    // where they have been waiting rather than being moved a second time.
+    const at = player.reservedSpawn ?? this.reserveSpawn(player);
+    player.reservedSpawn = null;
     player.x = at.x; player.y = at.y; player.z = at.z;
     player.hp = PLAYER_MAX_HEALTH;
     player.alive = true;
@@ -278,11 +327,11 @@ class Room {
    * Apply damage. The server decides everything here — the client only ever
    * claims "I hit player N in the head with weapon W", never how much it hurt.
    */
-  applyDamage(victim, attacker, weapon, part) {
+  applyDamage(victim, attacker, weapon, part, distance = null) {
     if (!victim.alive || this.state === MATCH_STATE.OVER) return;
     if (victim === attacker) return;
 
-    const raw = damageFor(weapon, part);
+    const raw = damageFor(weapon, part, distance);
     const dmg = Math.min(raw, LIMITS.maxDamagePerHit);
     victim.hp -= dmg;
 
@@ -303,6 +352,13 @@ class Room {
     this.broadcast(MSG.KILL, {
       v: victim.id, a: attacker.id, w: weapon.id, hs: headshot,
     });
+
+    // Tell the victim — and only the victim — where they will come back, so
+    // they can wait out the countdown standing at their spawn instead of at
+    // the place they were shot. See MSG.SPAWNPOINT.
+    const at = this.reserveSpawn(victim);
+    victim.send(MSG.SPAWNPOINT, { sp: [at.x, at.y, at.z] });
+
     this.broadcastScore();
 
     if (this.state === MATCH_STATE.LIVE && attacker.kills >= MATCH_RULES.killTarget) {
@@ -579,15 +635,18 @@ function handleShot(player, msg) {
 
     const part = hit.pt === 'head' || hit.pt === 'limb' ? hit.pt : 'torso';
 
-    // Range check against where the victim actually was.
+    // How far away the victim actually was. Used twice: to reject impossible
+    // claims, and to scale the damage — the distance was already being
+    // measured here and then thrown away, which is why nothing had falloff.
+    let dist = null;
     if (origin) {
       const was = victim.positionAt(rewindTo);
-      const dist = Math.hypot(origin[0] - was.x, origin[1] - was.y, origin[2] - was.z);
+      dist = Math.hypot(origin[0] - was.x, origin[1] - was.y, origin[2] - was.z);
       const maxRange = (weapon.range ?? 150) * LIMITS.rangeSlack;
       if (dist > maxRange) continue;
     }
 
-    room.applyDamage(victim, player, weapon, part);
+    room.applyDamage(victim, player, weapon, part, dist);
   }
 }
 

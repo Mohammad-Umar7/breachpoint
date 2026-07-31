@@ -73,6 +73,18 @@ export const MSG = Object.freeze({
   LEFT: 'L',      // { id }
   HIT: 'H',       // { v: victimId, a: attackerId, d: damage, pt: part, hp }
   KILL: 'K',      // { v: victimId, a: attackerId, w: weaponId, hs: headshot }
+  /**
+   * Where the victim will come back, sent to THEM ONLY the moment they die.
+   *
+   * Without it a dead player stands at the spot they were killed for the whole
+   * countdown and is teleported at the end, which reads as respawning where
+   * you died. Knowing the point up front lets the client move them there
+   * immediately and run the counter at the spawn.
+   *
+   * Private on purpose: broadcasting it would hand everyone else the location
+   * of a player who cannot yet defend it.
+   */
+  SPAWNPOINT: 'sx', // { sp: [x, y, z] }
   SCORE: 'C',     // { ps: [[id, kills, deaths, ping]] }
   MATCH: 'M',     // { st: state, tl: timeLeftSec, kt: killTarget, w: winnerId|null }
   PONG: 'P',      // { c: echoedClientClock, s: serverTimeMs }

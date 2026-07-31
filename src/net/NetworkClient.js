@@ -116,6 +116,7 @@ export class NetworkClient {
     this.onMatch = null;         // (matchState)
     this.onCorrection = null;    // ([x,y,z])  server rejected our position
     this.onRespawn = null;       // ([x,y,z])
+    this.onSpawnPoint = null;    // ([x,y,z])  where we will come back, sent at death
     this.onDenied = null;        // (reason)
     this.onProgress = null;      // (message) slow-connect progress, for the lobby
   }
@@ -437,6 +438,12 @@ export class NetworkClient {
           else { this.corrections++; this.onCorrection?.(msg.sp); }
         }
         this.onMatch?.(this.match);
+        break;
+
+      case MSG.SPAWNPOINT:
+        // Where we will come back, sent the moment we died so the countdown
+        // can be spent at the spawn rather than over our own corpse.
+        if (Array.isArray(msg.sp)) this.onSpawnPoint?.(msg.sp);
         break;
 
       case MSG.PONG: {

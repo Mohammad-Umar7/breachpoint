@@ -1027,9 +1027,29 @@ export class Game {
       this._placePlayer(pos);
     };
 
+    /*
+     * Dying moves you to your spawn straight away.
+     *
+     * The server reserves the point at the moment of death and tells only us,
+     * so the whole countdown is spent standing where we will come back rather
+     * than over our own corpse. Previously you stayed at the place you were
+     * killed for the full three seconds and were teleported at the end, which
+     * reads exactly like respawning where you died.
+     *
+     * Movement and weapons are already inert while `player.alive` is false, so
+     * being placed early costs nothing — it just puts the camera somewhere
+     * that makes sense.
+     */
+    net.onSpawnPoint = (pos) => {
+      this._pendingSpawn = pos;
+      this._placePlayer(pos);
+      this.player.velocity.set(0, 0, 0);
+    };
+
     net.onRespawn = (pos) => {
       this._pendingSpawn = pos;
       this._placePlayer(pos);
+      this.player.velocity.set(0, 0, 0);
       this.player.health = this.player.maxHealth;
       this.player.alive = true;
       this.ui.hideRespawn?.();
@@ -1098,6 +1118,8 @@ export class Game {
         this.player.health = 0;
         this._respawnAt = performance.now() + 2500;
         this.ui.showRespawn?.(k.attackerName);
+        // Anything still in flight belongs to the life that just ended.
+        this.weapons?.clearGrenades?.();
         // Deliberately does NOT release pointer lock. Doing so fires
         // onPointerLockChange(false), which pauses the game — so every death
         // threw up the PAUSE menu with a RESUME button, in the middle of a
@@ -1135,10 +1157,30 @@ export class Game {
     this.weapons.remoteHitTest = (origin, dir, maxDist) =>
       (net.connected ? this.remotes.raycast(origin, dir, maxDist) : null);
     this.weapons.onRemoteHit = (hit) => {
+      // A shotgun reports its whole spread as one claim, so this may be an
+      // array. Sending it as a single message matters: the server charges one
+      // fire-rate token per MESSAGE, so nine pellets sent separately spend
+      // nine tokens and most of the blast is discarded.
+      const claims = Array.isArray(hit) ? hit : [hit];
+      if (!claims.length) return;
+      /*
+       * The origin has to be where the shot came FROM.
+       *
+       * It used to send the impact point, which sits on the victim — so the
+       * distance the server measured was always about zero. That was harmless
+       * while the server only used it to reject impossible ranges, but damage
+       * falloff is computed from the same number, and a shot that always looks
+       * point-blank never falls off at all.
+       *
+       * getWorldPosition, not `.position`: the camera is parented, so its
+       * local position is not where it is in the world.
+       */
+      this.camera.getWorldPosition(this._tmpA);
       net.sendShot({
-        origin: hit.point, direction: this._camForward,
-        weaponId: hit.weaponId,
-        hits: [{ victimId: hit.victimId, part: hit.part }],
+        origin: this._tmpA,
+        direction: this._camForward,
+        weaponId: claims[0].weaponId,
+        hits: claims.map((c) => ({ victimId: c.victimId, part: c.part })),
       });
     };
   }
