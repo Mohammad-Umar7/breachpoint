@@ -104,6 +104,19 @@ export class Player {
     this.landDipVel = 0;
     this.trauma = 0;
     this.shakeTime = 0;
+
+    /**
+     * Directional kick from being shot.
+     *
+     * Separate from `trauma`, which is undirected noise. Noise tells you
+     * something happened; a kick tells you where it came from, because the
+     * view snaps away from the shooter. Sprung back to centre so it reads as
+     * a jolt and a recovery rather than a teleport.
+     */
+    this.hitKickPitch = 0;
+    this.hitKickYaw = 0;
+    this.hitKickPitchVel = 0;
+    this.hitKickYawVel = 0;
     this.extraFov = 0;         // set by WeaponSystem (ADS)
     this.adsProgress = 0;      // set by WeaponSystem
     this.scopeProgress = 0;    // set by WeaponSystem
@@ -485,6 +498,7 @@ export class Player {
   _updateShake(dt) {
     this.trauma = Math.max(0, this.trauma - dt * 1.6);
     this.shakeTime += dt;
+    this._updateHitKick(dt);
   }
 
   _updateBob(dt) {
@@ -552,13 +566,19 @@ export class Player {
 
     this.camera.position.set(x, y, z);
 
-    // --- rotation: aim + recoil + optic sway + lean roll + shake ---
+    // --- rotation: aim + recoil + hit kick + optic sway + lean roll + shake ---
+    // The hit kick is view-only: it never touches `this.pitch`/`this.yaw`, so
+    // being shot jolts what you see without stealing your aim, and it springs
+    // back to exactly where you were pointing.
     const rPitch = this.recoil?.currentPitch ?? 0;
     const rYaw = this.recoil?.currentYaw ?? 0;
     this._euler.set(
-      clamp(this.pitch + rPitch + this.opticSway.y + shakeY + (this.lean?.pitchDip ?? 0), -MAX_PITCH, MAX_PITCH),
-      this.yaw + rYaw + this.opticSway.x + shakeX,
-      rollBob + shakeRoll + (this.lean?.roll ?? 0),
+      clamp(
+        this.pitch + rPitch + this.hitKickPitch + this.opticSway.y + shakeY + (this.lean?.pitchDip ?? 0),
+        -MAX_PITCH, MAX_PITCH,
+      ),
+      this.yaw + rYaw + this.hitKickYaw + this.opticSway.x + shakeX,
+      rollBob + shakeRoll + (this.lean?.roll ?? 0) + this.hitKickYaw * 0.35,
       'YXZ'
     );
     this.camera.quaternion.setFromEuler(this._euler);
@@ -577,6 +597,47 @@ export class Player {
   /** 0..~1 screen shake trauma; accumulates and decays. */
   addShake(amount) {
     this.trauma = clamp(this.trauma + amount, 0, 1);
+  }
+
+  /**
+   * Jolt the view away from whoever just shot us.
+   *
+   * Directional, unlike `addShake`. Being hit from the right throws the view
+   * left and the muzzle up, which both tells you where the fire came from and
+   * makes the hit felt rather than merely displayed.
+   *
+   * Kept small on purpose: this fights the player for control of their aim, so
+   * it has to be readable without being something they have to correct for.
+   *
+   * @param {number} bearingRad  where the shooter is, 0 = straight ahead
+   * @param {number} strength    0..1
+   */
+  kickFromHit(bearingRad, strength = 0.5) {
+    const s = clamp(strength, 0, 1) * (this.settings.get('screenShake') ?? 1);
+    // Pushed away from the shooter, so the impulse is opposite the bearing.
+    this.hitKickYawVel += -Math.sin(bearingRad) * s * 2.6;
+    // Always upward: a round in the chest lifts the muzzle regardless of side.
+    this.hitKickPitchVel += (0.9 + Math.abs(Math.cos(bearingRad)) * 0.6) * s * 2.2;
+  }
+
+  /**
+   * Spring the hit kick back to centre.
+   *
+   * Sub-stepped for the same reason RecoilSystem is: explicit Euler on a
+   * spring diverges once `damping * dt` passes 2, and a diverging spring
+   * attached to the camera spins the view. See the note in RecoilSystem.
+   */
+  _updateHitKick(dt) {
+    const MAX_STEP = 1 / 120;
+    let remaining = Math.min(dt, 0.25);
+    while (remaining > 1e-6) {
+      const h = remaining > MAX_STEP ? MAX_STEP : remaining;
+      remaining -= h;
+      this.hitKickYawVel += (-this.hitKickYaw * 210 - this.hitKickYawVel * 21) * h;
+      this.hitKickYaw += this.hitKickYawVel * h;
+      this.hitKickPitchVel += (-this.hitKickPitch * 210 - this.hitKickPitchVel * 21) * h;
+      this.hitKickPitch += this.hitKickPitchVel * h;
+    }
   }
 
   /**
@@ -599,6 +660,14 @@ export class Player {
 
     this.addShake(clamp(amount / 55, 0.06, 0.5));
     this.audio.play('playerHurt', { volume: clamp(amount / 30, 0.3, 1) });
+    if (sourcePosition) {
+      // Bearing to whoever shot us, in our own frame: 0 is straight ahead.
+      const bearing = Math.atan2(
+        sourcePosition.x - this.position.x,
+        sourcePosition.z - this.position.z,
+      ) - (this.yaw + Math.PI);
+      this.kickFromHit(bearing, clamp(amount / 40, 0.15, 1));
+    }
     this.onDamage?.(amount, sourcePosition, cause);
 
     if (this.health <= 0) this._die();

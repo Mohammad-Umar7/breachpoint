@@ -78,7 +78,9 @@ export class UIManager {
       reloadRingFg: document.querySelector('#reload-ring .ring-fg'),
       pickupToast: id('pickup-toast'),
       damageDirs: id('damage-dirs'),
+      damageNumbers: id('damage-numbers'),
       damageVignette: id('damage-vignette'),
+      hitFlash: id('hit-flash'),
       healFlash: id('heal-flash'),
       lowHealth: id('low-health-pulse'),
       breathVignette: id('breath-vignette'),
@@ -253,10 +255,15 @@ export class UIManager {
   showHitmarker(kill = false, headshot = false) {
     const hm = this.el.hitmarker;
     hm.classList.remove('show');
+    // Three states, three colours — a body hit, a headshot and a kill mean
+    // different things and you react to them differently. `head` is a class
+    // now rather than an inline drop-shadow so the marker can also change
+    // size and stroke, not just glow.
     hm.classList.toggle('kill', kill);
+    hm.classList.toggle('head', headshot && !kill);
     void hm.offsetWidth; // force a reflow so rapid hits re-trigger the anim
     hm.classList.add('show');
-    hm.style.filter = headshot ? 'drop-shadow(0 0 4px #ffb43a)' : '';
+    hm.style.filter = '';
   }
 
   addKill(text, points, headshot) {
@@ -305,8 +312,33 @@ export class UIManager {
 
   /** Red screen edge + a directional arc pointing at the attacker. */
   showDamage(intensity, angleRad = null) {
+    /*
+     * Snap ON, fade OUT.
+     *
+     * The vignette's opacity transition runs in both directions, so setting it
+     * on a hit used to RAMP UP over a quarter second — and at any real rate of
+     * fire the next hit arrived first, so it never got near full strength.
+     * Being shot looked like a faint blush and players could not tell it was
+     * happening. Disabling the transition for one frame makes the hit land
+     * immediately; re-enabling it lets the recovery stay smooth.
+     */
     this._damageFlash = clamp(this._damageFlash + intensity, 0, 0.85);
-    this.el.damageVignette.style.opacity = String(this._damageFlash);
+    const v = this.el.damageVignette;
+    v.classList.add('instant');
+    v.style.opacity = String(this._damageFlash);
+    // Next frame, hand it back to CSS so the decay animates.
+    requestAnimationFrame(() => v.classList.remove('instant'));
+
+    // The sharp part: a hard flash proportional to the round that landed.
+    const flash = this.el.hitFlash;
+    if (flash) {
+      flash.classList.add('instant');
+      flash.style.opacity = String(clamp(0.34 + intensity * 0.8, 0.34, 0.95));
+      requestAnimationFrame(() => {
+        flash.classList.remove('instant');
+        flash.style.opacity = '0';
+      });
+    }
 
     if (angleRad !== null && this.settings.get('showHitDirection')) {
       const div = document.createElement('div');
@@ -315,6 +347,34 @@ export class UIManager {
       this.el.damageDirs.appendChild(div);
       setTimeout(() => div.remove(), 1150);
     }
+  }
+
+  /**
+   * A damage number floating off the point you hit.
+   *
+   * Screen coordinates, spawned once and animated by CSS rather than tracked
+   * to the world each frame — the target has usually moved or died by the time
+   * it fades, and a number that chases them is harder to read, not easier.
+   *
+   * @param {number} amount
+   * @param {{x: number, y: number}} screen  projected pixel position
+   * @param {{headshot?: boolean, kill?: boolean}} [kind]
+   */
+  showDamageNumber(amount, screen, kind = {}) {
+    const host = this.el.damageNumbers;
+    if (!host || !Number.isFinite(amount) || amount <= 0) return;
+    // A firefight can produce these faster than they expire; cap the DOM.
+    if (host.childElementCount > 24) host.firstElementChild?.remove();
+
+    const el = document.createElement('div');
+    el.className = `dmg-num${kind.kill ? ' kill' : kind.headshot ? ' head' : ''}`;
+    el.textContent = kind.kill ? `${Math.round(amount)} ✕` : String(Math.round(amount));
+    // Jitter sideways so a burst does not stack into one illegible column.
+    const jitter = (Math.random() - 0.5) * 26;
+    el.style.left = `${screen.x + jitter}px`;
+    el.style.top = `${screen.y}px`;
+    host.appendChild(el);
+    setTimeout(() => el.remove(), 900);
   }
 
   showHeal() {

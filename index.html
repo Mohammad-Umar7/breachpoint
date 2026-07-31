@@ -50,6 +50,9 @@
 
     <!-- ===================== SCREEN EFFECTS ===================== -->
     <div id="damage-vignette" class="fullscreen-fx"></div>
+    <!-- Snaps on the instant a round lands, then fades. Separate from the
+         vignette above, which is a slower "how hurt am I" state. -->
+    <div id="hit-flash" class="fullscreen-fx"></div>
     <div id="heal-flash" class="fullscreen-fx"></div>
     <div id="low-health-pulse" class="fullscreen-fx"></div>
     <div id="breath-vignette" class="fullscreen-fx"></div>
@@ -175,6 +178,8 @@
 
       <div id="pickup-toast"></div>
       <div id="damage-dirs"></div>
+      <!-- Floating damage numbers, spawned at the projected hit point. -->
+      <div id="damage-numbers"></div>
     </div>
 
     <!-- ===================== MENUS ===================== -->
@@ -261,7 +266,9 @@
         <div class="screen-footer">
           <div class="chip"><span>PRIMARY</span><b id="loadout-primary-tag">AR-15</b></div>
           <div class="chip"><span>SECONDARY</span><b id="loadout-secondary-tag">M9</b></div>
-          <button class="back-btn" data-back="screen-menu">BACK</button>
+          <!-- Returns to wherever the loadout was opened from, so reaching it
+               mid-match takes you back to the pause menu, not out of the game. -->
+          <button class="back-btn" id="btn-loadout-back">BACK</button>
         </div>
       </section>
 
@@ -338,6 +345,7 @@
         <h2>PAUSED</h2>
         <nav class="menu-nav compact">
           <button class="nav-btn primary" id="btn-resume">RESUME</button>
+          <button class="nav-btn" id="btn-loadout-pause">LOADOUT</button>
           <button class="nav-btn" id="btn-settings-pause">SETTINGS</button>
           <button class="nav-btn" id="btn-controls-pause">CONTROLS</button>
           <button class="nav-btn danger" id="btn-quit">LEAVE MATCH</button>

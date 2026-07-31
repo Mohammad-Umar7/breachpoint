@@ -359,13 +359,25 @@ export class Game {
     this.menus.onRestart = () => this.restart();
     this.menus.onQuitToMenu = () => this.quitToMenu();
     this.menus.onLoadoutChanged = () => {
-      // Applies immediately so the change is visible next time you deploy.
-      if (this.weapons && this.state !== GAME_STATE.PLAYING) {
-        this.weapons.applyLoadout(
-          this.settings.get('loadoutPrimary'),
-          this.settings.get('loadoutSecondary')
-        );
-      }
+      if (!this.weapons) return;
+      /*
+       * Applies straight away, including from the pause menu mid-match — you
+       * should never have to leave a game to change weapons.
+       *
+       * `preserveAmmo` matters here: without it, re-picking the gun already in
+       * your hands would refill the magazine, making the pause menu a free
+       * instant reload. Weapons you did not have arrive loaded, as they should.
+       *
+       * Nothing extra is needed to tell anyone else: the weapon id rides on
+       * every input packet, so other players see the new gun on their next
+       * snapshot.
+       */
+      const inMatch = this.hasActiveRun;
+      this.weapons.applyLoadout(
+        this.settings.get('loadoutPrimary'),
+        this.settings.get('loadoutSecondary'),
+        { preserveAmmo: inMatch },
+      );
     };
   }
 
@@ -960,6 +972,38 @@ export class Game {
     }
   }
 
+  /**
+   * Float a damage number off a remote player's body.
+   *
+   * Projects their drawn position to the screen. Anchored at chest height
+   * rather than at their origin, which is between their feet, so the number
+   * rises off the body rather than out of the floor.
+   *
+   * Silently does nothing if they are behind the camera or off screen — a
+   * number clamped to the edge would point at a target that is not there.
+   *
+   * @param {number} victimId
+   * @param {number} damage
+   * @param {{headshot?: boolean, kill?: boolean}} [kind]
+   */
+  _showDamageNumberAt(victimId, damage, kind = {}) {
+    const body = this.remotes?.bodies?.get(victimId);
+    if (!body || !this.ui?.showDamageNumber) return;
+
+    this._tmpA.copy(body.group.position);
+    this._tmpA.y += 1.35;
+    this._tmpA.project(this.camera);
+    // z > 1 is behind the near plane — i.e. behind us.
+    if (this._tmpA.z > 1) return;
+    if (Math.abs(this._tmpA.x) > 1.05 || Math.abs(this._tmpA.y) > 1.05) return;
+
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    this.ui.showDamageNumber(damage, {
+      x: (this._tmpA.x * 0.5 + 0.5) * rect.width,
+      y: (-this._tmpA.y * 0.5 + 0.5) * rect.height,
+    }, kind);
+  }
+
   /** Attach handlers once; connect() may be called repeatedly. */
   _wireNet() {
     if (this._netWired) return;
@@ -1015,13 +1059,23 @@ export class Game {
         }
         this.ui.showDamage(clamp(h.damage / 45, 0.12, 0.6), angle);
         this.audio.play('playerHurt', { volume: 0.8 });
+        // Jolt the view away from the shooter, so the round is felt as well as
+        // seen. View-only — it never moves where the player is actually aiming.
+        if (angle !== null) {
+          this.player.kickFromHit(angle, clamp(h.damage / 40, 0.2, 1));
+        }
       } else {
         this.remotes.flash(h.victim);
       }
       // showHitmarker(kill, headshot) — the headshot flag has to go in the
       // SECOND slot. Passing it first drew every headshot as a kill marker and
       // meant the headshot marker never appeared at all.
-      if (h.isSelfAttacker) this.ui.showHitmarker(false, h.part === 'head');
+      if (h.isSelfAttacker) {
+        this.ui.showHitmarker(false, h.part === 'head');
+        // The number floats off the body you hit, so you can read exactly what
+        // landed mid-fight instead of guessing from a health bar.
+        this._showDamageNumberAt(h.victim, h.damage, { headshot: h.part === 'head' });
+      }
     };
 
     net.onKill = (k) => {
@@ -1035,6 +1089,9 @@ export class Game {
         // 'killConfirm' — there is no synth called 'hitConfirm', so this was
         // silently warning to the console and playing nothing on every kill.
         this.audio.play('killConfirm', { volume: 0.9 });
+        // The kill marker is a distinct shape and colour from a hit, because
+        // "they are dead" is the one piece of information you must not miss.
+        this.ui.showHitmarker(true, k.headshot);
       }
       if (k.isSelfVictim) {
         this.player.alive = false;

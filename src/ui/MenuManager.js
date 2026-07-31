@@ -336,7 +336,9 @@ export class MenuManager {
     click('btn-lobby-go', () => this._lobbyGo());
     click('btn-copy-invite', () => this._copyInvite());
     click('btn-credits', () => this.showScreen('screen-credits'));
-    click('btn-loadout', () => this.openLoadout());
+    click('btn-loadout', () => this.openLoadout('screen-menu'));
+    click('btn-loadout-pause', () => this.openLoadout('screen-pause'));
+    click('btn-loadout-back', () => this.showScreen(this.loadoutReturnScreen || 'screen-menu'));
     click('btn-controls', () => { this.controlsReturnScreen = 'screen-menu'; this.showScreen('screen-controls'); });
     click('btn-controls-pause', () => { this.controlsReturnScreen = 'screen-pause'; this.showScreen('screen-controls'); });
 
@@ -393,7 +395,12 @@ export class MenuManager {
   }
 
   // --------------------------------------------------------------- loadout
-  openLoadout() {
+  /**
+   * @param {string} [returnScreen] where BACK goes — the pause menu when this
+   *   was opened mid-match, so changing weapons never means leaving the game.
+   */
+  openLoadout(returnScreen = 'screen-menu') {
+    this.loadoutReturnScreen = returnScreen;
     this.loadoutSlot = 'primary';
     for (const t of document.querySelectorAll('[data-loadout-slot]')) {
       t.classList.toggle('active', t.dataset.loadoutSlot === 'primary');

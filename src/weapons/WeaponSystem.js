@@ -132,7 +132,24 @@ export class WeaponSystem {
    * Build the carried set. Unknown ids fall back to sensible defaults so a
    * stale saved loadout can never leave the player unarmed.
    */
-  applyLoadout(primaryId, secondaryId) {
+  /**
+   * @param {string} primaryId
+   * @param {string} secondaryId
+   * @param {{preserveAmmo?: boolean}} [opts]
+   *   `preserveAmmo` skips the ammo reset entirely. Used when the loadout is
+   *   changed DURING a match, where a reset would make the pause menu a free
+   *   instant reload — swap the gun in your hands out and back and it returns
+   *   with a full magazine.
+   *
+   *   It has to skip ALL of them, not just the ones still carried. The pool
+   *   holds one instance per weapon, so a gun that leaves the loadout and
+   *   comes back is the same object with its magazine intact; resetting
+   *   "newly added" weapons therefore refilled exactly the ones being abused.
+   *
+   *   A weapon genuinely brought in for the first time still arrives loaded,
+   *   because its ammo has sat untouched since the last spawn.
+   */
+  applyLoadout(primaryId, secondaryId, { preserveAmmo = false } = {}) {
     const primary = this.pool.get(primaryId) ?? this.pool.get('rifle');
     const secondary = this.pool.get(secondaryId) ?? this.pool.get('pistol');
     const knife = this.pool.get('knife');
@@ -141,7 +158,9 @@ export class WeaponSystem {
     for (const w of this.pool.values()) w.onHolster();
 
     this.slots = [primary, secondary, knife, grenade];
-    for (const w of this.slots) w.resetAmmo();
+    if (!preserveAmmo) {
+      for (const w of this.slots) w.resetAmmo();
+    }
 
     this.currentIndex = 0;
     this.previousIndex = 1;

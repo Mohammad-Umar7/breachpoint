@@ -640,11 +640,20 @@ export class RemotePlayers {
 
     // ---------------------------------------------------------------- flash
     if (body.flash > 0) {
-      body.flash = Math.max(0, body.flash - dt * 5);
+      // Faster decay than before (5 -> 7.5) with a brighter peak. A long, dim
+      // fade reads as lighting; a short, hot one reads as an impact, which is
+      // the whole point of the effect.
+      body.flash = Math.max(0, body.flash - dt * 7.5);
       const k = body.flash;
+      // Sharpened so the first instant is by far the brightest part.
+      const e = k * k;
       // flashMats only — see the note in _create. Iterating every material here
       // would dereference `.emissive` on the visor's MeshBasicMaterial.
-      for (const m of body.flashMats) m.emissive.setRGB(0.9 * k, 0.15 * k, 0.12 * k);
+      for (const m of body.flashMats) m.emissive.setRGB(1.5 * e, 0.22 * e, 0.16 * e);
+
+      // A hit also rocks the body slightly, so a target you are landing rounds
+      // on visibly reacts rather than walking on unmoved.
+      if (body.chest) body.chest.rotation.x -= e * 0.16;
     }
   }
 

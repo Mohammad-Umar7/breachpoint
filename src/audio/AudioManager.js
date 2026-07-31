@@ -1037,22 +1037,55 @@ const SYNTHS = {
 
   // ---------------------------------------------------------------- player
   playerHurt(a, { volume = 1 } = {}) {
-    a._burst(a.sfxBus, null, { duration: 0.2, gain: 0.34 * volume, type: 'lowpass', freq: 700, freqEnd: 130 });
-    a._tone(a.sfxBus, null, { type: 'sine', freq: 96, freqEnd: 52, duration: 0.24, gain: 0.3 * volume });
+    // Taking a round: a hard slap on the plate, then the thud underneath it.
+    // The slap is what makes it register instantly; the low end is what makes
+    // it feel like it landed on you rather than near you.
+    a._transient(a.sfxBus, null, { gain: 0.62 * volume, freq: 900, refDistance: 1 });
+    a._burst(a.sfxBus, null, { duration: 0.09, gain: 0.55 * volume, type: 'bandpass', freq: 1100, freqEnd: 320, q: 1.1 });
+    a._burst(a.sfxBus, null, { duration: 0.26, gain: 0.30 * volume, type: 'lowpass', freq: 620, freqEnd: 120, attack: 0.012 });
+    a._tone(a.sfxBus, null, { type: 'sine', freq: 128, freqEnd: 46, duration: 0.28, gain: 0.5 * volume, attack: 0.002 });
   },
   playerDeath(a, { volume = 1 } = {}) {
     a._tone(a.sfxBus, null, { type: 'sine', freq: 160, freqEnd: 32, duration: 1.6, gain: 0.5 * volume, attack: 0.02 });
     a._burst(a.sfxBus, null, { duration: 1.8, gain: 0.2 * volume, type: 'lowpass', freq: 900, freqEnd: 70, attack: 0.05 });
   },
+  /*
+   * Hit confirmation sounds.
+   *
+   * These have to be heard THROUGH the weapon that caused them, which is the
+   * constraint that decides their whole design. The previous versions were a
+   * single thin square tone each and measured about a tenth the level of a
+   * gunshot — during a burst they simply were not audible, so landing hits
+   * gave no feedback at all.
+   *
+   * Each is now a transient plus a short band-limited body: the transient
+   * survives being masked by the shot because it occupies the first few
+   * milliseconds after it, and the narrow band keeps it distinct from the
+   * broadband report rather than fighting it for the same frequencies.
+   *
+   * Kept under 100 ms so a fast weapon does not turn them into a drone.
+   */
   hitmarker(a, { volume = 1 } = {}) {
-    a._tone(a.sfxBus, null, { type: 'square', freq: 1500, freqEnd: 1200, duration: 0.045, gain: 0.11 * volume });
+    // Body hit: a dry, percussive tick.
+    a._transient(a.sfxBus, null, { gain: 0.5 * volume, freq: 2600, refDistance: 1 });
+    a._burst(a.sfxBus, null, { duration: 0.05, gain: 0.36 * volume, type: 'bandpass', freq: 2400, freqEnd: 1500, q: 2.4 });
+    a._tone(a.sfxBus, null, { type: 'triangle', freq: 1650, freqEnd: 1150, duration: 0.055, gain: 0.30 * volume, attack: 0.001 });
   },
   hitmarkerHead(a, { volume = 1 } = {}) {
-    a._tone(a.sfxBus, null, { type: 'square', freq: 2100, freqEnd: 1500, duration: 0.06, gain: 0.14 * volume });
-    a._tone(a.sfxBus, null, { type: 'sine', freq: 3000, freqEnd: 2200, duration: 0.05, gain: 0.08 * volume });
+    // Headshot: brighter, with a ringing overtone that reads as "better".
+    a._transient(a.sfxBus, null, { gain: 0.6 * volume, freq: 3600, refDistance: 1 });
+    a._burst(a.sfxBus, null, { duration: 0.045, gain: 0.34 * volume, type: 'bandpass', freq: 3600, freqEnd: 2400, q: 3 });
+    a._tone(a.sfxBus, null, { type: 'triangle', freq: 2450, freqEnd: 1800, duration: 0.07, gain: 0.34 * volume, attack: 0.001 });
+    a._tone(a.sfxBus, null, { type: 'sine', freq: 3700, freqEnd: 3100, duration: 0.09, gain: 0.20 * volume, attack: 0.002 });
   },
   killConfirm(a, { volume = 1 } = {}) {
-    a._tone(a.sfxBus, null, { type: 'square', freq: 880, freqEnd: 1320, duration: 0.12, gain: 0.12 * volume });
+    // A kill is the one thing you must never miss, so it is the longest of the
+    // three and the only one that rises — two notes a fifth apart, which reads
+    // as a resolution rather than as another hit.
+    a._transient(a.sfxBus, null, { gain: 0.55 * volume, freq: 2200, refDistance: 1 });
+    a._tone(a.sfxBus, null, { type: 'triangle', freq: 780, freqEnd: 940, duration: 0.07, gain: 0.34 * volume, attack: 0.001 });
+    a._tone(a.sfxBus, null, { type: 'triangle', freq: 1180, freqEnd: 1420, duration: 0.16, gain: 0.30 * volume, attack: 0.055 });
+    a._tone(a.sfxBus, null, { type: 'sine', freq: 2360, freqEnd: 2840, duration: 0.18, gain: 0.14 * volume, attack: 0.06 });
   },
   pickupHealth(a, { volume = 1 } = {}) {
     a._tone(a.sfxBus, null, { type: 'sine', freq: 660, duration: 0.09, gain: 0.16 * volume });
