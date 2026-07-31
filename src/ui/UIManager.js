@@ -311,6 +311,26 @@ export class UIManager {
   }
 
   /** Red screen edge + a directional arc pointing at the attacker. */
+  /**
+   * Run once the browser has painted, with a timer as a backstop.
+   *
+   * The flash effects work by disabling their CSS transition for a single
+   * frame so they snap on, then re-enabling it so they fade. If the
+   * re-enabling never runs, the flash stays at full opacity — a solid red
+   * screen.
+   *
+   * requestAnimationFrame alone is not safe for that: it stops entirely while
+   * a tab is in the background, so being shot and then switching away left the
+   * screen stuck red until the next hit. The timer guarantees the cleanup
+   * happens either way.
+   */
+  _afterPaint(fn) {
+    let done = false;
+    const once = () => { if (done) return; done = true; fn(); };
+    requestAnimationFrame(once);
+    setTimeout(once, 60);
+  }
+
   showDamage(intensity, angleRad = null) {
     /*
      * Snap ON, fade OUT.
@@ -327,14 +347,14 @@ export class UIManager {
     v.classList.add('instant');
     v.style.opacity = String(this._damageFlash);
     // Next frame, hand it back to CSS so the decay animates.
-    requestAnimationFrame(() => v.classList.remove('instant'));
+    this._afterPaint(() => v.classList.remove('instant'));
 
     // The sharp part: a hard flash proportional to the round that landed.
     const flash = this.el.hitFlash;
     if (flash) {
       flash.classList.add('instant');
       flash.style.opacity = String(clamp(0.34 + intensity * 0.8, 0.34, 0.95));
-      requestAnimationFrame(() => {
+      this._afterPaint(() => {
         flash.classList.remove('instant');
         flash.style.opacity = '0';
       });
@@ -343,7 +363,17 @@ export class UIManager {
     if (angleRad !== null && this.settings.get('showHitDirection')) {
       const div = document.createElement('div');
       div.className = 'dmg-dir';
-      div.style.transform = `rotate(${angleRad}rad)`;
+      /*
+       * NEGATED, and it matters: CSS rotate() is clockwise while the world
+       * bearing here runs anticlockwise, so passing it straight through
+       * MIRRORED the indicator. Measured: a shooter on the right painted the
+       * arc on the left and vice versa, while ahead and behind — the two
+       * directions where a mirror is invisible — looked fine.
+       *
+       * An indicator pointing the wrong way is worse than none at all, because
+       * players turn the wrong way and act on it.
+       */
+      div.style.transform = `rotate(${-angleRad}rad)`;
       this.el.damageDirs.appendChild(div);
       setTimeout(() => div.remove(), 1150);
     }

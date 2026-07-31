@@ -296,24 +296,26 @@ html, body {
   position: absolute; left: 50%; top: 50%; width: 0; height: 0;
   transform-origin: 0 0;
 }
-/* Soft bloom behind the chevron. */
+/* Soft bloom behind the chevron. Pushed well out toward the screen edge and
+   made wide, because peripheral vision is what actually notices this — a mark
+   near the crosshair competes with whatever you are aiming at. */
 .dmg-dir::before {
-  content: ''; position: absolute; left: -130px; top: -228px; width: 260px; height: 96px;
-  background: radial-gradient(ellipse at 50% 100%, rgba(255,64,52,0.55), rgba(255,64,52,0) 72%);
-  animation: dirGlow 1.05s cubic-bezier(0.15, 0.7, 0.3, 1) forwards;
+  content: ''; position: absolute; left: -230px; top: -330px; width: 460px; height: 190px;
+  background: radial-gradient(ellipse at 50% 100%, rgba(255,58,44,0.62), rgba(255,58,44,0) 70%);
+  animation: dirGlow 1.15s cubic-bezier(0.15, 0.7, 0.3, 1) forwards;
 }
-/* The chevron itself — an arc segment pointing away from the shooter. */
+/* The chevron itself — a broad arc on the side the fire came from. */
 .dmg-dir::after {
-  content: ''; position: absolute; left: -78px; top: -218px; width: 156px; height: 56px;
-  background: conic-gradient(from 180deg at 50% 130%,
+  content: ''; position: absolute; left: -132px; top: -312px; width: 264px; height: 96px;
+  background: conic-gradient(from 180deg at 50% 128%,
     rgba(255,255,255,0) 0deg,
-    rgba(255,238,232,0.98) 26deg,
-    rgba(255,74,58,0.98) 50deg,
-    rgba(255,255,255,0) 76deg);
-  -webkit-mask: radial-gradient(ellipse 78px 56px at 50% 130%, transparent 58%, #000 62%, #000 96%, transparent 100%);
-  mask: radial-gradient(ellipse 78px 56px at 50% 130%, transparent 58%, #000 62%, #000 96%, transparent 100%);
-  filter: drop-shadow(0 0 10px rgba(255,60,44,0.85));
-  animation: dirPunch 0.95s cubic-bezier(0.12, 0.8, 0.25, 1) forwards;
+    rgba(255,244,238,1) 28deg,
+    rgba(255,66,48,1) 52deg,
+    rgba(255,255,255,0) 80deg);
+  -webkit-mask: radial-gradient(ellipse 132px 96px at 50% 128%, transparent 56%, #000 61%, #000 96%, transparent 100%);
+  mask: radial-gradient(ellipse 132px 96px at 50% 128%, transparent 56%, #000 61%, #000 96%, transparent 100%);
+  filter: drop-shadow(0 0 16px rgba(255,60,44,0.95));
+  animation: dirPunch 1.05s cubic-bezier(0.12, 0.8, 0.25, 1) forwards;
 }
 @keyframes dirPunch {
   0%   { opacity: 0; transform: translateY(26px) scale(0.72); }
