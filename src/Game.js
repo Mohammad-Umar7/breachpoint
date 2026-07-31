@@ -29,6 +29,7 @@ import { Settings } from './core/Settings.js';
 import { InputManager } from './core/InputManager.js';
 import { AssetManager } from './core/AssetManager.js';
 import { SensitivityManager } from './core/SensitivityManager.js';
+import { detectQuality, PerformanceGovernor } from './core/HardwareProfile.js';
 import { getDifficulty } from './core/Difficulty.js';
 import { PhysicsWorld, initRapier, TAG_KIND } from './physics/PhysicsWorld.js';
 import { Level } from './world/Level.js';
@@ -71,6 +72,39 @@ export class Game {
     this.hasActiveRun = false;
 
     this.settings = new Settings();
+
+    /*
+     * Pick a starting quality for THIS machine, on a first run only.
+     *
+     * Shipping everyone High is wrong: most people play browser games on a
+     * laptop with integrated graphics, and High there means shadows, bloom,
+     * antialiasing and full render scale on a GPU sharing memory with the CPU.
+     * Someone who has already chosen a setting keeps it — isFirstRun is false
+     * the moment anything has been saved.
+     */
+    if (this.settings.isFirstRun) {
+      const detected = detectQuality();
+      if (detected.quality !== this.settings.get('quality')) {
+        this.settings.set('quality', detected.quality);
+        console.info(
+          `[Quality] Starting on "${detected.quality}" — ${detected.reason}`
+          + `${detected.renderer ? ` (${detected.renderer})` : ''}. `
+          + 'Change it any time in Settings.',
+        );
+      }
+    }
+
+    /*
+     * And keep watching, because the guess above is only a guess: the browser
+     * often masks the renderer string, and a machine that benchmarks fine can
+     * still be thermally throttled or busy. If the frame rate stays low the
+     * governor steps the preset down and says so.
+     */
+    this.governor = new PerformanceGovernor(this.settings, (quality, fps) => {
+      console.info(`[Quality] ${Math.round(fps)} fps — dropping to "${quality}".`);
+      this.ui?.showBanner?.(`GRAPHICS SET TO ${quality.toUpperCase()}`, 3);
+    });
+
     this.audio = new AudioManager(this.settings);
     this.ui = new UIManager(this.settings);
     this.menus = new MenuManager(this.settings, this.audio);
@@ -716,6 +750,7 @@ export class Game {
     dt = Math.min(dt, 0.1);
 
     this._updateFps(dt);
+    this.governor?.update(dt);
 
     // endFrame() clears the one-frame press edges, and it MUST run even if
     // something above it throws.

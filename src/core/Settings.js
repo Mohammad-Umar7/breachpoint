@@ -143,6 +143,9 @@ export class Settings {
     this.values = { ...DEFAULT_SETTINGS };
     this._listeners = new Map(); // key -> Set<cb>
     this._anyListeners = new Set();
+    // Cleared by load() if anything was saved. Auto-detected quality is only
+    // applied on a first run, so it can never overrule a deliberate choice.
+    this._firstRun = true;
     this.load();
   }
 
@@ -221,10 +224,14 @@ export class Settings {
     for (const cb of this._anyListeners) safeCall(cb, value, key);
   }
 
+  /** True until the player has settings saved — i.e. this is their first run. */
+  get isFirstRun() { return this._firstRun; }
+
   load() {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) return;
+      this._firstRun = false;
       const parsed = JSON.parse(raw);
       for (const key of Object.keys(DEFAULT_SETTINGS)) {
         if (parsed[key] !== undefined && typeof parsed[key] === typeof DEFAULT_SETTINGS[key]) {

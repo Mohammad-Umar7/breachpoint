@@ -114,22 +114,50 @@ export class RecoilSystem {
       if (Math.abs(this.targetYaw) < 1e-5) this.targetYaw = 0;
     }
 
-    // --- spring the visible recoil toward the target --------------------
-    // Stiff enough to read as a snap, damped enough not to oscillate.
-    const stiffness = 320;
-    const damping = 26;
-    this.velPitch += ((this.targetPitch - this.currentPitch) * stiffness - this.velPitch * damping) * dt;
-    this.velYaw += ((this.targetYaw - this.currentYaw) * stiffness - this.velYaw * damping) * dt;
-    this.currentPitch += this.velPitch * dt;
-    this.currentYaw += this.velYaw * dt;
+    /*
+     * The springs are SUB-STEPPED, and that is not a refinement — without it
+     * they explode on a slow machine and the view spins.
+     *
+     * Explicit Euler on a spring is only stable while `damping * dt < 2`. Past
+     * that the damping term overshoots zero and flips the velocity's sign with
+     * a LARGER magnitude than it had, so every frame amplifies the last. With
+     * damping 26 the limit is dt = 77 ms, about 13 fps, and the stiffness term
+     * pulls the practical limit up to roughly 18 fps.
+     *
+     * Camera recoil is added directly to the player's aim, so a diverging
+     * spring is a spinning screen. Measured firing a rifle: at 20 fps the peak
+     * was 0.14 rad, at 15 fps it reached 3.2e7 rad — five million rotations.
+     *
+     * It showed up on shooting because that is when the springs are excited,
+     * and it showed up on a weak laptop because that is where a frame takes
+     * long enough — muzzle flash, particles and audio all landing at once.
+     *
+     * Chopping a long frame into steps of at most 1/120 s keeps the same
+     * tuning and the same feel at every frame rate, and simply cannot diverge.
+     */
+    const MAX_STEP = 1 / 120;
+    let remaining = Math.min(dt, 0.25);   // a tab-switch gap is not a frame
+    while (remaining > 1e-6) {
+      const h = remaining > MAX_STEP ? MAX_STEP : remaining;
+      remaining -= h;
 
-    // --- view-model kick springs ----------------------------------------
-    this.kickZVel += (-this.kickZ * 250 - this.kickZVel * 23) * dt;
-    this.kickZ += this.kickZVel * dt;
-    this.kickPitchVel += (-this.kickPitch * 230 - this.kickPitchVel * 22) * dt;
-    this.kickPitch += this.kickPitchVel * dt;
-    this.kickRollVel += (-this.kickRoll * 200 - this.kickRollVel * 20) * dt;
-    this.kickRoll += this.kickRollVel * dt;
+      // --- spring the visible recoil toward the target ------------------
+      // Stiff enough to read as a snap, damped enough not to oscillate.
+      const stiffness = 320;
+      const damping = 26;
+      this.velPitch += ((this.targetPitch - this.currentPitch) * stiffness - this.velPitch * damping) * h;
+      this.velYaw += ((this.targetYaw - this.currentYaw) * stiffness - this.velYaw * damping) * h;
+      this.currentPitch += this.velPitch * h;
+      this.currentYaw += this.velYaw * h;
+
+      // --- view-model kick springs --------------------------------------
+      this.kickZVel += (-this.kickZ * 250 - this.kickZVel * 23) * h;
+      this.kickZ += this.kickZVel * h;
+      this.kickPitchVel += (-this.kickPitch * 230 - this.kickPitchVel * 22) * h;
+      this.kickPitch += this.kickPitchVel * h;
+      this.kickRollVel += (-this.kickRoll * 200 - this.kickRollVel * 20) * h;
+      this.kickRoll += this.kickRollVel * h;
+    }
   }
 
   /** How far into the current pattern we are, 0..1 (for the HUD). */
