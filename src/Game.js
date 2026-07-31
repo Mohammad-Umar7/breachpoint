@@ -30,7 +30,6 @@ import { InputManager } from './core/InputManager.js';
 import { AssetManager } from './core/AssetManager.js';
 import { SensitivityManager } from './core/SensitivityManager.js';
 import { detectQuality, PerformanceGovernor } from './core/HardwareProfile.js';
-import { getDifficulty } from './core/Difficulty.js';
 import { PhysicsWorld, initRapier, TAG_KIND } from './physics/PhysicsWorld.js';
 import { Level } from './world/Level.js';
 import { PickupManager } from './world/PickupManager.js';
@@ -127,7 +126,7 @@ export class Game {
 
   _blankStats() {
     return {
-      score: 0, kills: 0, headshots: 0, waveReached: 1,
+      score: 0, kills: 0, deaths: 0, headshots: 0, waveReached: 1,
       startTime: 0, elapsed: 0, damageTaken: 0,
     };
   }
@@ -542,6 +541,36 @@ export class Game {
       this.player.addShake(0.35 * (1 - pd / (radius * 2.2)));
     }
 
+    /*
+     * Other players, which nothing here used to touch.
+     *
+     * Explosions only ever damaged AI enemies and the local player, so in a
+     * deathmatch a grenade landing at someone's feet did nothing at all — the
+     * one weapon in the loadout that could not hurt anybody.
+     *
+     * Reported as ordinary hit claims so the server stays the authority on
+     * damage. The origin sent is the BLAST CENTRE rather than the camera,
+     * which is what makes the server's falloff measure the right distance: a
+     * grenade's curve is a blast radius, reaching zero at 7.5 m, so measuring
+     * from the thrower would have it do full damage to someone standing next
+     * to them and nothing to the person it landed on.
+     */
+    if (this.net?.connected && this.remotes) {
+      const claims = [];
+      for (const [id, body] of this.remotes.bodies) {
+        this._tmpB.copy(body.group.position);
+        this._tmpB.y += 0.9;
+        if (this._tmpB.distanceTo(pos) >= radius) continue;
+        if (!this.physics.hasLineOfSight(pos, this._tmpB)) continue;
+        claims.push({ victimId: id, part: 'torso' });
+      }
+      if (claims.length) {
+        this.net.sendShot({
+          origin: pos, direction: this._camForward, weaponId: 'grenade', hits: claims,
+        });
+      }
+    }
+
     this.fx.spawnExplosion(pos, radius * 0.75);
     this.audio.play('explosion', { position: pos, volume: 1 });
     this._tmpB.set(0, 1, 0);
@@ -706,11 +735,22 @@ export class Game {
     const acc = this.weapons.shotsFired > 0
       ? Math.round((this.weapons.shotsHit / this.weapons.shotsFired) * 100)
       : 0;
+    /*
+     * Leftovers from the wave mode that this game no longer has: THREAT LEVEL
+     * read a `difficulty` setting that was deleted (so it silently showed the
+     * default, "VETERAN", to everyone) and WAVE REACHED counted waves that are
+     * never started in a deathmatch — it read "0 / 12" every time.
+     *
+     * Replaced with the numbers a free-for-all actually produces.
+     */
+    const kd = this.stats.deaths > 0
+      ? (this.stats.kills / this.stats.deaths).toFixed(2)
+      : String(this.stats.kills);
+
     return [
-      ['SCORE', this.stats.score.toLocaleString()],
-      ['THREAT LEVEL', getDifficulty(this.settings.get('difficulty')).label],
-      ['WAVE REACHED', `${this.stats.waveReached} / ${this.enemies.totalWaves}`],
       ['ELIMINATIONS', this.stats.kills],
+      ['DEATHS', this.stats.deaths ?? 0],
+      ['K/D', kd],
       ['HEADSHOTS', this.stats.headshots],
       ['ACCURACY', `${acc}%`],
       ['DAMAGE TAKEN', Math.round(this.stats.damageTaken)],
@@ -975,12 +1015,14 @@ export class Game {
   /**
    * Float a damage number off a remote player's body.
    *
-   * Projects their drawn position to the screen. Anchored at chest height
-   * rather than at their origin, which is between their feet, so the number
-   * rises off the body rather than out of the floor.
+   * Uses the same `addDamageNumber` the single-player path does rather than a
+   * parallel implementation. That one tracks the world position every frame,
+   * so the number stays on the target as they move, and it honours the
+   * `damageNumbers` setting — a second implementation ignored the setting, so
+   * turning them off did nothing in multiplayer.
    *
-   * Silently does nothing if they are behind the camera or off screen — a
-   * number clamped to the edge would point at a target that is not there.
+   * Anchored at chest height, because a body's origin is between its feet and
+   * the number would otherwise rise out of the floor.
    *
    * @param {number} victimId
    * @param {number} damage
@@ -988,20 +1030,14 @@ export class Game {
    */
   _showDamageNumberAt(victimId, damage, kind = {}) {
     const body = this.remotes?.bodies?.get(victimId);
-    if (!body || !this.ui?.showDamageNumber) return;
-
+    if (!body || !this.ui?.addDamageNumber) return;
     this._tmpA.copy(body.group.position);
     this._tmpA.y += 1.35;
-    this._tmpA.project(this.camera);
-    // z > 1 is behind the near plane — i.e. behind us.
-    if (this._tmpA.z > 1) return;
-    if (Math.abs(this._tmpA.x) > 1.05 || Math.abs(this._tmpA.y) > 1.05) return;
-
-    const rect = this.renderer.domElement.getBoundingClientRect();
-    this.ui.showDamageNumber(damage, {
-      x: (this._tmpA.x * 0.5 + 0.5) * rect.width,
-      y: (-this._tmpA.y * 0.5 + 0.5) * rect.height,
-    }, kind);
+    this.ui.addDamageNumber(
+      this._tmpA,
+      damage,
+      kind.kill ? 'kill' : kind.headshot ? 'head' : '',
+    );
   }
 
   /** Attach handlers once; connect() may be called repeatedly. */
@@ -1114,6 +1150,7 @@ export class Game {
         this.ui.showHitmarker(true, k.headshot);
       }
       if (k.isSelfVictim) {
+        this.stats.deaths++;
         this.player.alive = false;
         this.player.health = 0;
         this._respawnAt = performance.now() + 2500;

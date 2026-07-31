@@ -78,7 +78,6 @@ export class UIManager {
       reloadRingFg: document.querySelector('#reload-ring .ring-fg'),
       pickupToast: id('pickup-toast'),
       damageDirs: id('damage-dirs'),
-      damageNumbers: id('damage-numbers'),
       damageVignette: id('damage-vignette'),
       hitFlash: id('hit-flash'),
       healFlash: id('heal-flash'),
@@ -379,33 +378,6 @@ export class UIManager {
     }
   }
 
-  /**
-   * A damage number floating off the point you hit.
-   *
-   * Screen coordinates, spawned once and animated by CSS rather than tracked
-   * to the world each frame — the target has usually moved or died by the time
-   * it fades, and a number that chases them is harder to read, not easier.
-   *
-   * @param {number} amount
-   * @param {{x: number, y: number}} screen  projected pixel position
-   * @param {{headshot?: boolean, kill?: boolean}} [kind]
-   */
-  showDamageNumber(amount, screen, kind = {}) {
-    const host = this.el.damageNumbers;
-    if (!host || !Number.isFinite(amount) || amount <= 0) return;
-    // A firefight can produce these faster than they expire; cap the DOM.
-    if (host.childElementCount > 24) host.firstElementChild?.remove();
-
-    const el = document.createElement('div');
-    el.className = `dmg-num${kind.kill ? ' kill' : kind.headshot ? ' head' : ''}`;
-    el.textContent = kind.kill ? `${Math.round(amount)} ✕` : String(Math.round(amount));
-    // Jitter sideways so a burst does not stack into one illegible column.
-    const jitter = (Math.random() - 0.5) * 26;
-    el.style.left = `${screen.x + jitter}px`;
-    el.style.top = `${screen.y}px`;
-    host.appendChild(el);
-    setTimeout(() => el.remove(), 900);
-  }
 
   showHeal() {
     this.el.healFlash.style.opacity = '0.75';

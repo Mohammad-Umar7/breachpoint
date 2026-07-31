@@ -68,6 +68,10 @@ export class InputManager {
     this.pointerLocked = false;
     /** True once navigator.keyboard.lock() has been granted — see _lockKeyboard. */
     this._keyboardLocked = false;
+    /** Set by Escape/P so a deliberate exit is not treated as a browser hiccup. */
+    this._pauseRequested = false;
+    /** Pending "the lock really is gone" report. See _onPointerLockChange. */
+    this._lockLossTimer = 0;
     this.enabled = true;
 
     /** Consumers can hook this to react to lock loss (e.g. auto-pause). */
@@ -93,6 +97,9 @@ export class InputManager {
       this.keysPressed.add(e.code);
 
       if (KEY_BINDINGS.pause.includes(e.code)) {
+        // Marks the pointer-lock loss that follows as deliberate, so it is
+        // reported at once instead of going through the recovery delay.
+        this._pauseRequested = true;
         this.onPauseRequested?.(e.code);
       }
     };
@@ -128,25 +135,70 @@ export class InputManager {
       this.wheelDelta += Math.sign(e.deltaY);
     };
 
+    /*
+     * Kill the browser context menu everywhere, not just over the canvas.
+     *
+     * Right mouse is aim-down-sights, so the menu must never appear — and when
+     * it does it takes pointer lock with it, which drops the player into the
+     * pause screen. Bound to the canvas alone it was easy to miss: any
+     * right-click that landed while the lock was not held, or on any element
+     * other than the canvas, opened the menu as normal.
+     */
     this._onContextMenu = (e) => e.preventDefault();
 
     this._onPointerLockChange = () => {
       this.pointerLocked = document.pointerLockElement === this.canvas;
       if (this.pointerLocked) {
+        clearTimeout(this._lockLossTimer);
+        this._lockLossTimer = 0;
         this._lockKeyboard();
-      } else {
-        this._unlockKeyboard();
-        // Never leave a button "stuck down" when focus is lost.
-        this.mouseButtons.clear();
-        this.keys.clear();
+        this.onPointerLockChange?.(true);
+        return;
       }
-      this.onPointerLockChange?.(this.pointerLocked);
+
+      this._unlockKeyboard();
+      // Never leave a button "stuck down" when focus is lost.
+      this.mouseButtons.clear();
+      this.keys.clear();
+
+      /*
+       * Losing the lock does not always mean the player wants to stop.
+       *
+       * Pressing Escape does, and that is reported at once so the pause menu
+       * feels instant. Everything else — a context menu that slipped through,
+       * a re-lock racing an exit, a browser hiccup — is transient, and
+       * reporting it immediately is what made the pause screen "randomly open"
+       * while right-clicking or holding Ctrl.
+       *
+       * So an unrequested loss gets one silent attempt to recover, and is only
+       * reported if the lock is really gone a moment later.
+       */
+      if (this._pauseRequested) {
+        this._pauseRequested = false;
+        this.onPointerLockChange?.(false);
+        return;
+      }
+
+      clearTimeout(this._lockLossTimer);
+      this._lockLossTimer = setTimeout(() => {
+        this._lockLossTimer = 0;
+        if (document.pointerLockElement === this.canvas) return;   // it came back
+        this.onPointerLockChange?.(false);
+      }, 220);
     };
 
     this._onPointerLockError = () => {
+      /*
+       * A failed REQUEST is not a lost lock.
+       *
+       * Chrome refuses a request that arrives too soon after an exit, or while
+       * another is in flight — both routine. Treating that as "the player left
+       * the game" pauses a match that never stopped, which is the other half
+       * of the menu opening on its own.
+       */
       console.warn('[Input] Pointer lock request failed.');
+      if (document.pointerLockElement === this.canvas) return;
       this.pointerLocked = false;
-      this.onPointerLockChange?.(false);
     };
 
     this._onBlur = () => {
@@ -161,7 +213,7 @@ export class InputManager {
     window.addEventListener('mouseup', this._onMouseUp);
     window.addEventListener('mousemove', this._onMouseMove);
     window.addEventListener('wheel', this._onWheel, { passive: false });
-    this.canvas.addEventListener('contextmenu', this._onContextMenu);
+    window.addEventListener('contextmenu', this._onContextMenu, { capture: true });
     document.addEventListener('pointerlockchange', this._onPointerLockChange);
     document.addEventListener('pointerlockerror', this._onPointerLockError);
   }
@@ -197,6 +249,9 @@ export class InputManager {
       return;
     }
     if (p && typeof p.catch === 'function') {
+      // Must not be left unhandled: a refusal here is routine (the document
+      // not focused, a request too soon after an exit) and an unhandled
+      // rejection is noise that hides real errors.
       p.catch(() => this._plainPointerLock());
     }
   }
@@ -232,7 +287,14 @@ export class InputManager {
 
   _plainPointerLock() {
     try {
-      this.canvas.requestPointerLock();
+      // Newer Chrome returns a PROMISE from the no-argument form too, so the
+      // try/catch alone is not enough — a refusal rejects asynchronously and
+      // surfaces as an unhandled rejection in the console rather than being
+      // caught here. Swallow it explicitly.
+      const p = this.canvas.requestPointerLock();
+      if (p && typeof p.catch === 'function') {
+        p.catch((err) => console.warn('[Input] Pointer lock refused.', err?.message ?? err));
+      }
     } catch (err) {
       console.warn('[Input] Pointer lock unavailable.', err);
     }
@@ -313,6 +375,7 @@ export class InputManager {
   }
 
   dispose() {
+    clearTimeout(this._lockLossTimer);
     this._unlockKeyboard();
     window.removeEventListener('keydown', this._onKeyDown);
     window.removeEventListener('keyup', this._onKeyUp);
@@ -321,7 +384,7 @@ export class InputManager {
     window.removeEventListener('mouseup', this._onMouseUp);
     window.removeEventListener('mousemove', this._onMouseMove);
     window.removeEventListener('wheel', this._onWheel);
-    this.canvas.removeEventListener('contextmenu', this._onContextMenu);
+    window.removeEventListener('contextmenu', this._onContextMenu, { capture: true });
     document.removeEventListener('pointerlockchange', this._onPointerLockChange);
     document.removeEventListener('pointerlockerror', this._onPointerLockError);
   }

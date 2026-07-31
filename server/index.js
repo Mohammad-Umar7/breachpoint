@@ -33,7 +33,7 @@ import { WebSocketServer } from 'ws';
 import {
   MSG, FLAG, TICK_MS, MATCH_STATE, MATCH_RULES, LIMITS, PLAYER_MAX_HEALTH,
   PROTOCOL_VERSION, ROOM_CODE_ALPHABET, ROOM_CODE_LENGTH,
-  isValidRoomCode, sanitizeName,
+  isValidRoomCode, sanitizeName, damageFor,
 } from '../src/net/protocol.js';
 import { pickSpawn, isInsideArena } from '../src/net/arena.js';
 import { WEAPON_DEFS } from '../src/weapons/WeaponDefinitions.js';
@@ -46,46 +46,6 @@ const PORT = Number(process.env.PORT || 8787);
  * rebalanced, and the failure mode is legitimate hits being silently rejected.
  */
 const WEAPON_BY_ID = new Map(WEAPON_DEFS.map((w) => [w.id, w]));
-
-/** Headshots and limb hits scale damage; mirrors the client's multipliers. */
-/**
- * Damage for one hit, accounting for where it was hit and how far away.
- *
- * The distance term is the whole reason a shotgun feels like a shotgun. The
- * client has always modelled falloff — every weapon carries falloffStart,
- * falloffEnd and falloffMinScale — but the SERVER owns damage and was ignoring
- * all three, applying flat damage at every range. So a shotgun hit as hard
- * across the map as it did point blank, and a rifle lost nothing at distance:
- * the ranges the weapons were balanced around did not exist in a real match.
- *
- * Damage is full out to falloffStart, then falls linearly to falloffMinScale
- * by falloffEnd. For the shotgun that is 135 across nine pellets inside 9 m,
- * decaying to 27 past 30 m.
- *
- * @param {object} weapon  a definition from WeaponDefinitions.js
- * @param {string} part    'head' | 'limb' | 'torso'
- * @param {number} [distance]  metres; omitted means no falloff applied
- */
-function damageFor(weapon, part, distance = null) {
-  const base = weapon.damage ?? 20;
-
-  let scale = 1;
-  if (distance !== null && Number.isFinite(distance)) {
-    const start = weapon.falloffStart ?? Infinity;
-    const end = weapon.falloffEnd ?? Infinity;
-    const min = weapon.falloffMinScale ?? 1;
-    if (distance >= end) scale = min;
-    else if (distance > start && end > start) {
-      const t = (distance - start) / (end - start);
-      scale = 1 + (min - 1) * t;
-    }
-  }
-
-  const partMul = part === 'head' ? (weapon.headMul ?? 2)
-    : part === 'limb' ? (weapon.limbMul ?? 0.85)
-      : 1;
-  return base * partMul * scale;
-}
 
 /** Shortest interval between shots this weapon could legitimately produce. */
 function minFireInterval(weapon) {

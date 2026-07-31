@@ -150,6 +150,48 @@ export const MATCH_RULES = Object.freeze({
  * Real anti-cheat arrives with the authoritative-server upgrade, where the
  * client simply cannot assert its own position at all.
  */
+/**
+ * Damage for one hit, accounting for where it landed and how far away it was.
+ *
+ * Lives here rather than in the server so it can be imported without starting
+ * one — server/index.js opens a listening socket the moment it is loaded, so a
+ * test that wanted this one pure function was booting a whole game server to
+ * get it.
+ *
+ * The distance term is the whole reason a shotgun feels like a shotgun. Every
+ * weapon carries falloffStart, falloffEnd and falloffMinScale and the client
+ * had always modelled them, but the server — which owns damage — ignored all
+ * three and applied it flat, so the ranges the weapons were balanced around
+ * did not exist in a real match.
+ *
+ * Damage is full out to falloffStart, then falls linearly to falloffMinScale
+ * by falloffEnd. For the shotgun that is 135 across nine pellets inside 9 m,
+ * decaying to 27 past 30 m.
+ *
+ * @param {object} weapon  a definition from WeaponDefinitions.js
+ * @param {string} part    'head' | 'limb' | 'torso'
+ * @param {number} [distance]  metres; omit to apply no falloff
+ */
+export function damageFor(weapon, part, distance = null) {
+  const base = weapon.damage ?? 20;
+
+  let scale = 1;
+  if (distance !== null && Number.isFinite(distance)) {
+    const start = weapon.falloffStart ?? Infinity;
+    const end = weapon.falloffEnd ?? Infinity;
+    const min = weapon.falloffMinScale ?? 1;
+    if (distance >= end) scale = min;
+    else if (distance > start && end > start) {
+      scale = 1 + (min - 1) * ((distance - start) / (end - start));
+    }
+  }
+
+  const partMul = part === 'head' ? (weapon.headMul ?? 2)
+    : part === 'limb' ? (weapon.limbMul ?? 0.85)
+      : 1;
+  return base * partMul * scale;
+}
+
 export const LIMITS = Object.freeze({
   /** SPEED_SPRINT is 8.9 m/s in Player.js. Slack covers slopes, explosion
    *  knockback, falling, and a frame or two of accumulated jitter. */
