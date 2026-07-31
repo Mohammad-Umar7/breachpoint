@@ -287,27 +287,47 @@ export class RemotePlayers {
       record[key] = j;
     }
 
-    // Forearms hang off the upper arms, so the chain is shoulder -> elbow ->
-    // wrist and the elbow can actually bend. Positioned by the DIFFERENCE
-    // between the two pivots, because a child's position is relative to its
-    // parent, not to the body.
+    /*
+     * Forearms hang off the upper arms, so the chain is shoulder -> elbow ->
+     * wrist and the elbow can actually bend. Positioned by the DIFFERENCE
+     * between the two pivots, because a child's position is relative to its
+     * parent, not to the body.
+     *
+     * The joints are created WHETHER OR NOT the model supplies forearm meshes,
+     * and that matters more than it looks. When the soldier gained forearms,
+     * anyone still holding a cached copy of the older model had none — and the
+     * posing code, which required them, did nothing at all. The result was a
+     * character standing with its arms straight down and a rifle floating at
+     * its waist.
+     *
+     * Missing geometry must never take the animation with it. With the joints
+     * always present the rig still poses; `record.hasForearms` just tells the
+     * solver to treat the arm as one bone so it does not bend a limb whose
+     * mesh cannot follow.
+     */
+    const ELBOW_DROP = 0.272;      // shoulder to elbow, from the authored model
+    record.hasForearms = true;
     for (const [foreKey, armKey] of [['foreL', 'armL'], ['foreR', 'armR']]) {
+      if (!joints[armKey]) continue;
       const fore = this.assets.getCharacterPart('soldier', foreKey);
       const arm = this.assets.getCharacterPart('soldier', armKey);
-      if (!fore || !arm || !joints[armKey]) continue;
       const j = new THREE.Group();
-      j.position.set(
-        fore.pivot[0] - arm.pivot[0],
-        fore.pivot[1] - arm.pivot[1],
-        fore.pivot[2] - arm.pivot[2],
-      );
+      if (fore && arm) {
+        j.position.set(
+          fore.pivot[0] - arm.pivot[0],
+          fore.pivot[1] - arm.pivot[1],
+          fore.pivot[2] - arm.pivot[2],
+        );
+        record.upperLen = Math.abs(arm.pivot[1] - fore.pivot[1]);
+      } else {
+        j.position.set(0, -ELBOW_DROP, 0);
+        record.hasForearms = false;
+      }
       joints[armKey].add(j);
       joints[foreKey] = j;
       record[foreKey] = j;
-      // Bone lengths, measured from the model rather than hard-coded, because
-      // the IK solver needs them and they must not drift from the mesh.
-      record.upperLen = Math.abs(arm.pivot[1] - fore.pivot[1]);
     }
+    record.upperLen = record.upperLen || ELBOW_DROP;
     // Elbow to the centre of the palm — the glove sits at z 0.858 in the
     // authored model, the elbow at 1.148.
     record.foreLen = 0.29;
@@ -651,8 +671,13 @@ export class RemotePlayers {
    * @param {number} jog             residual walk sway
    */
   _solveArmIK(body, upper, fore, targetLocal, poleX) {
-    const L1 = body.upperLen || 0.272;
-    const L2 = body.foreLen || 0.29;
+    // With no forearm mesh the arm is one rigid piece, so it must not bend at
+    // a joint its geometry knows nothing about. Solving it as a single bone of
+    // the full length still points the hand at the target — the hold is
+    // stiffer, but the weapon is in it.
+    const twoBone = body.hasForearms !== false;
+    const L1 = twoBone ? (body.upperLen || 0.272) : (body.upperLen || 0.272) + (body.foreLen || 0.29);
+    const L2 = twoBone ? (body.foreLen || 0.29) : 0;
 
     // Solve in the shoulder's PARENT space (the chest), so the result does not
     // depend on whatever rotation the arm is already carrying.
@@ -662,17 +687,25 @@ export class RemotePlayers {
     if (raw < 1e-4) return 0;
     const dist = Math.min(raw, reach);
 
-    // How far the forearm folds back from straight.
-    const cosElbow = THREE.MathUtils.clamp(
-      (L1 * L1 + L2 * L2 - dist * dist) / (2 * L1 * L2), -1, 1,
-    );
-    const bend = Math.PI - Math.acos(cosElbow);
+    // A single bone has no triangle to solve: it just points at the target,
+    // with no elbow and no tilt off the line. Running the two-bone maths with
+    // L2 = 0 divides by zero, and the clamp turns that into a 180-degree
+    // elbow — the arm folded back on itself.
+    let bend = 0;
+    let tilt = 0;
+    if (L2 > 1e-4) {
+      // How far the forearm folds back from straight.
+      const cosElbow = THREE.MathUtils.clamp(
+        (L1 * L1 + L2 * L2 - dist * dist) / (2 * L1 * L2), -1, 1,
+      );
+      bend = Math.PI - Math.acos(cosElbow);
 
-    // Angle between the upper arm and the straight line to the target.
-    const cosShoulder = THREE.MathUtils.clamp(
-      (L1 * L1 + dist * dist - L2 * L2) / (2 * L1 * dist), -1, 1,
-    );
-    const tilt = Math.acos(cosShoulder);
+      // Angle between the upper arm and the straight line to the target.
+      const cosShoulder = THREE.MathUtils.clamp(
+        (L1 * L1 + dist * dist - L2 * L2) / (2 * L1 * dist), -1, 1,
+      );
+      tilt = Math.acos(cosShoulder);
+    }
 
     const dir = goal.divideScalar(raw);
 

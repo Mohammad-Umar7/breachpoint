@@ -49,9 +49,27 @@ function htmlSiteUrl() {
   };
 }
 
+/**
+ * Build stamp, used to cache-bust files in `public/`.
+ *
+ * Everything Vite bundles gets a content hash in its filename, so its URL
+ * changes whenever its bytes do. Files in `public/` are copied verbatim and
+ * keep their names, which means a rebuilt model sits behind exactly the URL
+ * the browser already has cached — and it will keep the stale copy for as long
+ * as the cache headers allow.
+ *
+ * AssetManager appends this to every model URL so each build fetches fresh
+ * ones. See the note there for what a stale character model actually does.
+ */
+const ASSET_VERSION = process.env.ASSET_VERSION
+  || String(Math.floor(Date.now() / 1000));
+
 export default defineConfig({
   base: './',
   plugins: [htmlSiteUrl()],
+  define: {
+    __ASSET_VERSION__: JSON.stringify(ASSET_VERSION),
+  },
   server: {
     port: 5173,
     // Listen on every interface, not just localhost, so someone else on the

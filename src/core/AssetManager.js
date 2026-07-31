@@ -142,8 +142,27 @@ export class AssetManager {
     const loader = new GLTFLoader();
     const base = (typeof import.meta !== 'undefined' && import.meta.env?.BASE_URL) || '/';
 
+    /**
+     * Cache buster, stamped at build time.
+     *
+     * Models live in `public/`, so unlike the bundle their filenames are not
+     * fingerprinted — `models/soldier.glb` today and `models/soldier.glb` after
+     * a rebuild are the same URL with different bytes behind it. Browsers hold
+     * them for a day (see public/_headers), so a player who had already loaded
+     * the game kept the OLD model.
+     *
+     * That is not a cosmetic problem. When the soldier gained forearm bones,
+     * anyone still on the cached version had a rig with pieces missing, and the
+     * animation code that expects them silently did nothing — leaving a
+     * character with its arms hanging down and a rifle floating at its waist.
+     *
+     * A version in the query string makes each build a distinct URL, so a
+     * rebuilt model always reaches everyone on their next load.
+     */
+    const version = (typeof __ASSET_VERSION__ !== 'undefined' && __ASSET_VERSION__) || 'dev';
+
     for (const entry of MODEL_MANIFEST) {
-      const url = base.replace(/\/?$/, '/') + entry.url;
+      const url = `${base.replace(/\/?$/, '/')}${entry.url}?v=${version}`;
       try {
         const gltf = await loader.loadAsync(url);
         const scene = gltf.scene;
