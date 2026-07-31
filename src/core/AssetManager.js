@@ -58,15 +58,19 @@ export const MODEL_MANIFEST = [
 export const SOLDIER_PIVOTS = Object.freeze({
   legL: [-0.13, 0.86, 0], bootL: [-0.13, 0.86, 0],
   legR: [0.13, 0.86, 0], bootR: [0.13, 0.86, 0],
-  armL: [-0.3, 1.42, 0],
-  armR: [0.3, 1.42, 0],
+  // Shoulders are 0.25 out, not 0.30. Narrowed with the model redesign: with
+  // 0.562 m of arm, shoulders 0.60 m apart left the support hand unable to
+  // reach across to a weapon held on the other side. Must match SHOULDER_X in
+  // builds/soldier.py — a mismatch detaches the arms from the body.
+  armL: [-0.25, 1.42, 0],
+  armR: [0.25, 1.42, 0],
   // Forearms pivot at the ELBOW and hang off the upper arm, giving a real
   // two-bone chain (shoulder -> elbow -> wrist). Without that the hand can
   // only ever lie on a sphere around the shoulder, which is not enough to put
   // both hands on a weapon at once — see the note in builds/soldier.py.
   // The gloves ride the forearm, so they share its pivot.
-  foreL: [-0.3, 1.148, 0], gloveL: [-0.3, 1.148, 0],
-  foreR: [0.3, 1.148, 0], gloveR: [0.3, 1.148, 0],
+  foreL: [-0.25, 1.148, 0], gloveL: [-0.25, 1.148, 0],
+  foreR: [0.25, 1.148, 0], gloveR: [0.25, 1.148, 0],
   // Head, helmet and visor share one pivot so the helmet can parent to the
   // head and nod with it instead of the head rotating inside a static shell.
   head: [0, 1.535, 0], helmet: [0, 1.535, 0], visor: [0, 1.535, 0],

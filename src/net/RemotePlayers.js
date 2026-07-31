@@ -503,14 +503,44 @@ export class RemotePlayers {
 
   // -------------------------------------------------------------- animation
   _animate(body, s, dt) {
-    // ---------------------------------------------------------------- gait
-    // Stride frequency is derived from GROUND SPEED and stride length, not
-    // from an arbitrary constant. That is what stops the feet sliding: at
-    // 5.6 m/s with a 1.75 m stride the legs cycle 3.2 times a second, so the
-    // foot that is planted stays roughly under the hip instead of skating
-    // along beneath a body that is moving faster than the legs suggest.
-    const speed = Math.min(s.moving ?? 0, 12);
-    const moving = Math.min(1, speed / 5.6);
+    /* ------------------------------------------------------------- gait
+     * Speed is measured from the body's OWN drawn motion, not from the
+     * `moving` figure on the snapshot.
+     *
+     * The snapshot value is a delta between two server frames divided by the
+     * gap between them, and it aliases badly: the client's send rate and the
+     * server's tick rate are both 30 Hz and drift against each other, so a
+     * given interval contains one step or two more or less at random.
+     * Measured while running at 5.6 m/s it reported about 2.4 — 43% of the
+     * truth — so the gait blend never rose above half and the legs only ever
+     * half-swung. The character shuffled instead of running.
+     *
+     * Differentiating the interpolated position is both more accurate and
+     * self-consistent: it is the speed the body is ACTUALLY being drawn
+     * moving at, which is exactly the number the stride has to match if the
+     * feet are not to slide.
+     */
+    if (body.lastPos) {
+      // HORIZONTAL only. The vertical bob is added to this same position at
+      // the end of this function, so including y would feed the walk's own
+      // bounce back in as speed.
+      const dx = body.group.position.x - body.lastPos.x;
+      const dz = body.group.position.z - body.lastPos.z;
+      const raw = dt > 1e-5 ? Math.hypot(dx, dz) / dt : 0;
+      // Smoothed, because interpolation makes the per-frame delta jittery;
+      // fast enough to react inside a single step.
+      body.speed = damp(body.speed ?? 0, Math.min(raw, 14), 12, dt);
+    } else {
+      body.lastPos = body.group.position.clone();
+      body.speed = 0;
+    }
+    body.lastPos.copy(body.group.position);
+
+    // Stride frequency comes from ground speed and stride length: at 5.6 m/s
+    // with a 1.75 m stride the legs cycle 3.2 times a second, so the planted
+    // foot stays under the hip instead of skating.
+    const speed = Math.min(body.speed ?? 0, 12);
+    const moving = Math.min(1, speed / 5.0);
     const STRIDE = 1.75;
     body.phase += (speed / STRIDE) * Math.PI * 2 * dt;
     // Idle sway so a standing player is never perfectly frozen.

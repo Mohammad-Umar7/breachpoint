@@ -277,11 +277,20 @@ export class Enemy {
       'armL', 'armR', 'gloveL', 'gloveR',
       'legL', 'legR', 'bootL', 'bootR',
     ];
+    // Forearms are OPTIONAL here, deliberately. They are required for the
+    // two-bone arm, but a cached older model without them must still produce a
+    // whole enemy rather than falling back to the procedural boxes — see the
+    // fallback in `arm()` below.
+    const OPTIONAL = ['foreL', 'foreR'];
     const part = {};
     for (const name of NEEDED) {
       const p = this.assets.getCharacterPart?.('soldier', name);
       if (!p) return false;
       part[name] = p;
+    }
+    for (const name of OPTIONAL) {
+      const p = this.assets.getCharacterPart?.('soldier', name);
+      if (p) part[name] = p;
     }
 
     // Geometry is shared across every enemy; only the material is per-enemy,
@@ -323,14 +332,52 @@ export class Enemy {
       mesh(gear, this.matVest, group, false);
       this.visual.add(group);
     };
+
+    /**
+     * Arms, which need a second joint the legs do not.
+     *
+     * The soldier model was split into upper arm and forearm so that remote
+     * players could bend an elbow and hold a weapon in both hands. This path
+     * did not know about that: it added `armL` and `gloveL` only, so AI
+     * enemies lost their forearms entirely — and because the glove is now
+     * pivoted at the ELBOW rather than the shoulder, their hands also floated
+     * 27 cm too high.
+     *
+     * These enemies do not use IK; they swing the whole arm. So the forearm
+     * and glove hang off a fixed sub-group at the elbow, which reproduces the
+     * single rigid arm this used to have while matching the new geometry.
+     */
+    const arm = (group, name, foreName, gloveName) => {
+      const armPivot = part[name].pivot;
+      const forePivot = part[foreName]?.pivot;
+      group.position.fromArray(armPivot);
+      mesh(name, this.matBody, group, false);
+
+      if (forePivot) {
+        const elbow = new THREE.Group();
+        elbow.position.set(
+          forePivot[0] - armPivot[0],
+          forePivot[1] - armPivot[1],
+          forePivot[2] - armPivot[2],
+        );
+        mesh(foreName, this.matBody, elbow, false);
+        mesh(gloveName, this.matVest, elbow, false);
+        group.add(elbow);
+      } else {
+        // Older model without forearms — keep the hand on the shoulder joint.
+        mesh(gloveName, this.matVest, group, false);
+      }
+      this.visual.add(group);
+    };
+
     this.legL = new THREE.Group();
     this.legR = new THREE.Group();
     this.armL = new THREE.Group();
     this.armR = new THREE.Group();
     limb(this.legL, 'legL', 'bootL');
     limb(this.legR, 'legR', 'bootR');
-    limb(this.armL, 'armL', 'gloveL');
-    limb(this.armR, 'armR', 'gloveR');
+    arm(this.armL, 'armL', 'foreL', 'gloveL');
+    arm(this.armR, 'armR', 'foreR', 'gloveR');
     return true;
   }
 
