@@ -327,7 +327,10 @@ export class NetworkClient {
    * client cannot inflate it.
    */
   sendShot({ origin, direction, weaponId, hits }) {
-    if (!this.connected || !hits?.length) return;
+    // A shot that hit NOTHING is still sent. The server relays gunfire to the
+    // room from this message, so refusing to send a miss meant a missed shot
+    // produced no muzzle flash, no tracer and no report for anyone else.
+    if (!this.connected || !hits) return;
     // Counted so the F3 panel can separate "my client never claimed a hit"
     // (a local aiming / raycast problem) from "I claimed it and the server
     // refused" (a validation problem). Without that split, "my shots do

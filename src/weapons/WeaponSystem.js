@@ -100,11 +100,17 @@ export class WeaponSystem {
      * (see RemotePlayers.raycast), so they are tested separately and take
      * precedence whenever they are nearer than whatever the physics ray struck.
      *
-     * onRemoteHit(hit) reports the claim to the server, which decides the
-     * damage. Nothing here applies damage locally.
+     * onShotResolved(claims, weaponId) reports ONE trigger pull to the server,
+     * which decides the damage. Nothing here applies damage locally.
+     *
+     * It fires for every shot, including one that hit nothing — `claims` is
+     * simply empty. That matters because the server relays gunfire to the rest
+     * of the room off the back of this message: when it was only sent on a
+     * hit, a missed shot produced no muzzle flash, no tracer and no report for
+     * anyone else, so being shot at and missed was completely silent.
      */
     this.remoteHitTest = null;
-    this.onRemoteHit = null;
+    this.onShotResolved = null;
     this.onKill = null;
     this.onShotFired = null;
     this.onPropHit = null;
@@ -493,11 +499,24 @@ export class WeaponSystem {
 
     if (def.projectile) {
       this._spawnProjectile(this._origin, this._dir, spread, w);
+      /*
+       * Report the shot NOW, with no hits.
+       *
+       * A projectile's hit is resolved frames later, in flight, and reports
+       * itself separately. Leaving the trigger pull unreported meant the
+       * sniper produced no muzzle flash, no tracer and no report for anyone
+       * else until the round landed — and nothing at all if it missed. It is
+       * the loudest weapon in the game and the one whose position most needs
+       * giving away, and it was the only silent one.
+       */
+      this.onShotResolved?.([], def.id);
     } else {
       // One claim per trigger pull, however many pellets it throws — see the
-      // note in _resolveRemoteHit.
-      const multiPellet = (def.pellets ?? 1) > 1;
-      this._pelletBatch = multiPellet ? [] : null;
+      // note in _resolveRemoteHit. Always an array, even for a single-bullet
+      // weapon: the batch is what gets reported at the end of the shot, and a
+      // shot that hit nobody still has to be reported so the rest of the room
+      // sees the muzzle flash.
+      this._pelletBatch = [];
 
       for (let p = 0; p < (def.pellets ?? 1); p++) {
         const r = this._castBullet(this._origin, this._dir, spread, w, p === 0);
@@ -510,10 +529,11 @@ export class WeaponSystem {
         }
       }
 
-      // Send the whole spread as one claim, then stop batching.
+      // Send the whole spread as one claim, then stop batching. Reported even
+      // when empty — a miss is a shot the room still needs to see and hear.
       const batch = this._pelletBatch;
       this._pelletBatch = null;
-      if (batch?.length) this.onRemoteHit?.(batch.length === 1 ? batch[0] : batch);
+      this.onShotResolved?.(batch, def.id);
 
       if (anyHit) this._registerHit(totalDamage, anyHeadshot, killed, lastPoint);
     }
@@ -621,8 +641,18 @@ export class WeaponSystem {
      * what the server already expects — it accepts several hits in a message
      * for pellet weapons specifically.
      */
+    /*
+     * Inside a trigger pull, collect. Outside one, report immediately.
+     *
+     * A sniper round resolves frames after the trigger was pulled — the batch
+     * for that shot is long closed — and a knife swing resolves outside the
+     * hitscan path entirely. Pushing those into a batch that nothing will ever
+     * send is how a hit silently does nothing, which is exactly the fault that
+     * made projectile weapons and the knife useless in multiplayer once
+     * before.
+     */
     if (this._pelletBatch) this._pelletBatch.push(claim);
-    else this.onRemoteHit?.(claim);
+    else this.onShotResolved?.([claim], def.id);
 
     // `killed` stays false: only the server can confirm a kill and it announces
     // one over the wire. Guessing here would flash a phantom kill on screen.

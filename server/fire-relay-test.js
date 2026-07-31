@@ -29,13 +29,14 @@ const check = (label, ok, detail = '') => {
 function join(name, room) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(URL);
-    const s = { ws, id: null, spawn: null, seq: 0, fires: [], hits: [] };
+    const s = { ws, id: null, spawn: null, seq: 0, fires: [], hits: [], kills: [] };
     ws.on('message', (raw) => {
       let m; try { m = JSON.parse(raw); } catch { return; }
       if (m.t === MSG.WELCOME) { s.id = m.id; s.spawn = m.sp; resolve(s); }
       else if (m.t === MSG.DENIED) reject(new Error(m.why || 'denied'));
       else if (m.t === MSG.FIRE) s.fires.push(m);
       else if (m.t === MSG.HIT) s.hits.push(m);
+      else if (m.t === MSG.KILL) s.kills.push(m);
     });
     ws.on('error', reject);
     ws.on('close', () => reject(new Error('closed before WELCOME')));
@@ -102,6 +103,62 @@ async function main() {
   check('flash spam is bounded by the same limiter as damage',
     b.fires.length > 0 && b.fires.length <= 8,
     `${b.fires.length} of 40 instant shots relayed`);
+
+  /*
+   * --- and holding the trigger down still relays every round ---------------
+   *
+   * Every shot now costs a rate-limit token, where before only shots that HIT
+   * did. If the bucket could not keep up with a weapon's own fire rate, a
+   * player firing legitimately would have most of their gunfire silently
+   * dropped — which is the same failure as before, just harder to spot.
+   */
+  b.fires.length = 0;
+  await sleep(1500);
+  const RPM = 720, gap = 60000 / RPM, rounds = 30;
+  for (let i = 0; i < rounds; i++) {
+    send(a, {
+      t: MSG.SHOT, o: [a.spawn[0], a.spawn[1] + 1.6, a.spawn[2]], d: [0, 0, -1],
+      w: 'rifle', h: [],
+    });
+    await sleep(gap);
+  }
+  await sleep(400);
+  check('holding the trigger relays every round',
+    b.fires.length >= rounds - 2,
+    `${b.fires.length} of ${rounds} at the rifle's own ${RPM} rpm`);
+
+  /*
+   * --- a bolt-action sniper keeps both of its messages ----------------------
+   *
+   * A projectile weapon sends two per trigger pull — the shot, which the room
+   * sees and hears, and the impact frames later, which carries the damage.
+   * Budgeted as one, the sniper drained its own bucket and started dropping
+   * the messages that do the damage.
+   */
+  b.fires.length = 0; b.hits.length = 0; b.kills.length = 0;
+  await sleep(1500);
+  const SNIPER_RPM = 45, sniperGap = 60000 / SNIPER_RPM;
+  // A sniper limb hit takes about half a health bar, so the target dies part
+  // way through — count the killing round too, or the tally looks like dropped
+  // damage when it is simply a dead target.
+  let fired = 0;
+  for (let i = 0; i < 6; i++) {
+    if (b.kills.some((k) => k.v === b.id)) break;
+    const from = [a.spawn[0], a.spawn[1] + 1.6, a.spawn[2]];
+    send(a, { t: MSG.SHOT, o: from, d: [0, 0, -1], w: 'sniper', h: [] });   // the shot
+    await sleep(60);
+    send(a, { t: MSG.SHOT, o: from, d: [0, 0, -1], w: 'sniper',             // the impact
+      h: [{ v: b.id, pt: 'limb' }] });
+    fired++;
+    await sleep(sniperGap - 60);
+  }
+  await sleep(400);
+  check('every sniper shot is seen', b.fires.length >= fired * 2 - 1,
+    `${b.fires.length} of ${fired * 2} messages relayed`);
+  const landed = b.hits.filter((h) => h.v === b.id).length
+    + b.kills.filter((k) => k.v === b.id).length;
+  check('and none of its damage is dropped', landed >= fired,
+    `${landed} of ${fired} rounds accounted for`);
 
   // --- a garbage origin is dropped rather than relayed ----------------------
   b.fires.length = 0;

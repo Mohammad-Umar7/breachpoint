@@ -63,6 +63,16 @@ export const GAME_STATE = Object.freeze({
 
 const ANISOTROPY = { low: 1, medium: 4, high: 8, ultra: 16 };
 
+/*
+ * Range limits for OTHER players' gunfire — see net.onFire.
+ *
+ * The arena is 120 m across, so a shot from the far corner is both inaudible
+ * and unlit. Both of these bound the per-shot cost of a busy match, where
+ * every trigger pull in the room now reaches this client.
+ */
+const FIRE_AUDIBLE_RANGE_SQ = 85 * 85;
+const FIRE_LIGHT_RANGE_SQ = 22 * 22;
+
 export class Game {
   /** @param {HTMLCanvasElement} canvas */
   constructor(canvas) {
@@ -1229,6 +1239,16 @@ export class Game {
       const hasBody = this.remotes?.muzzleWorldPosition(f.shooter, this._tmpB);
       const from = hasBody ? this._tmpB : this._tmpA;
 
+      /*
+       * How far away it happened decides how much of this is worth building.
+       *
+       * Every shot in the room now arrives here, and a lobby of players on
+       * automatics is a lot of shots — each gunshot is a synthesised graph of
+       * a dozen Web Audio nodes, built and torn down. Spending that on someone
+       * firing from the far corner of a 120 m arena buys nothing audible.
+       */
+      const distSq = this._tmpA.distanceToSquared(this.player.position);
+
       const dir = Array.isArray(f.direction)
         ? this._tmpC.set(f.direction[0], f.direction[1], f.direction[2])
         : this._tmpC.set(0, 0, -1);
@@ -1240,7 +1260,13 @@ export class Game {
       // nonsense. Their own FX are already driven by the damage they do.
       const silentMuzzle = def.category === 'throwable' || def.category === 'hazard';
       if (!silentMuzzle && def.category !== 'melee') {
-        this.fx.spawnMuzzleFlash(from, dir, def.muzzleScale ?? 1, true);
+        /*
+         * The dynamic light only reaches about 12 m, so past that it lights
+         * nothing — and there are only six in the pool. Letting a shot from
+         * across the map take one would rob a nearby explosion of its flash.
+         */
+        const lit = distSq < FIRE_LIGHT_RANGE_SQ;
+        this.fx.spawnMuzzleFlash(from, dir, def.muzzleScale ?? 1, lit);
 
         /*
          * A tracer, so a shot that MISSES is still visible — which is the one
@@ -1254,8 +1280,9 @@ export class Game {
       }
 
       // Positional, so it carries a direction and a distance — the whole point
-      // is knowing WHERE the shooting is coming from.
-      if (def.fireSound) {
+      // is knowing WHERE the shooting is coming from. Skipped entirely beyond
+      // the range at which it would be inaudible anyway; see above.
+      if (def.fireSound && distSq < FIRE_AUDIBLE_RANGE_SQ) {
         this.audio.play(def.fireSound, { position: from, volume: 0.85 });
       }
     };
@@ -1303,12 +1330,29 @@ export class Game {
       }
     };
 
-    net.onLeft = (id) => this.remotes.bodies.has(id) && this.remotes.sync(
-      new Map([...(this.remotes._lastSample ?? [])].filter(([k]) => k !== id)),
-      new Map(), 0,
-    );
+    // Take the body out at once rather than waiting for them to age out of the
+    // interpolation buffer, which left a corpse standing for a moment after
+    // they had gone — and, until RemotePlayers.remove existed, one that shots
+    // still registered against.
+    net.onLeft = (id) => this.remotes.remove(id);
 
     net.onStateChange = (state, detail) => {
+      if (state === NET_STATE.OFFLINE || state === NET_STATE.FAILED) {
+        /*
+         * Clear the other players when the connection goes, not just when the
+         * player chooses to leave.
+         *
+         * _updateNetwork returns early once the socket is gone, so nothing was
+         * ever syncing the bodies again — everyone in the match froze mid-
+         * stride and stood there permanently, solid enough to be shot at and
+         * never hit. leaveMatch() did clear them, so this only ever happened on
+         * a connection actually dropping, which is precisely when the player
+         * most needs the world to make sense.
+         */
+        this.remotes?.clear();
+        this.weapons.remoteHitTest = null;
+        this.weapons.onShotResolved = null;
+      }
       if (state === NET_STATE.OFFLINE && this.hasActiveRun) {
         this.ui.showNetWarning?.(detail || 'Disconnected from the match.');
       }
@@ -1319,13 +1363,21 @@ export class Game {
     // Hit registration: the weapon asks who is on the ray, and reports claims.
     this.weapons.remoteHitTest = (origin, dir, maxDist) =>
       (net.connected ? this.remotes.raycast(origin, dir, maxDist) : null);
-    this.weapons.onRemoteHit = (hit) => {
-      // A shotgun reports its whole spread as one claim, so this may be an
-      // array. Sending it as a single message matters: the server charges one
-      // fire-rate token per MESSAGE, so nine pellets sent separately spend
-      // nine tokens and most of the blast is discarded.
-      const claims = Array.isArray(hit) ? hit : [hit];
-      if (!claims.length) return;
+    this.weapons.onShotResolved = (claims, weaponId) => {
+      /*
+       * One message per trigger pull, hit or miss.
+       *
+       * A shotgun reports its whole spread in one message: the server charges
+       * one fire-rate token per MESSAGE, so nine pellets sent separately spend
+       * nine tokens against a five-token budget and most of the blast is
+       * discarded.
+       *
+       * A MISS is sent too, with an empty claim list. The server relays
+       * gunfire to the rest of the room off the back of this message, and
+       * while it was only sent on a hit, a shot that missed produced no muzzle
+       * flash, no tracer and no report for anybody else — being shot at and
+       * missed was completely silent.
+       */
       /*
        * The origin has to be where the shot came FROM.
        *
@@ -1342,7 +1394,7 @@ export class Game {
       net.sendShot({
         origin: this._tmpA,
         direction: this._camForward,
-        weaponId: claims[0].weaponId,
+        weaponId,
         hits: claims.map((c) => ({ victimId: c.victimId, part: c.part })),
       });
     };
@@ -1395,7 +1447,7 @@ export class Game {
     this._netSample = net.sample(performance.now(), this._netSample);
     // net.players is already a Map of exactly what sync() wants. Rebuilding it
     // here was allocating an array and a Map on every single frame for nothing.
-    this.remotes.sync(this._netSample, net.players, dt);
+    this.remotes.sync(this._netSample, net.players, dt, this.player.position);
 
     // Dead: hold still and offer a respawn once the server's timer is up.
     if (!this.player.alive && this._respawnAt) {
@@ -1409,7 +1461,7 @@ export class Game {
     this.net?.disconnect();
     this.remotes?.clear();
     this.weapons.remoteHitTest = null;
-    this.weapons.onRemoteHit = null;
+    this.weapons.onShotResolved = null;
     this._respawnAt = 0;
     this.ui.hideRespawn?.();
     this.ui.hideNetWarning?.();

@@ -19,7 +19,7 @@
 import * as THREE from 'three';
 import { damp } from '../core/MathUtils.js';
 import { getWeaponDef } from '../weapons/WeaponDefinitions.js';
-import { FLAG } from './protocol.js';
+import { FLAG, PLAYER_MAX_HEALTH } from './protocol.js';
 
 /** Parts that make up a body, and which material role each takes. */
 const BODY_PARTS = [
@@ -55,6 +55,13 @@ const CHEST_Y = 1.05;
  * which looks like a fall rather than a peek; the pair below put the head
  * roughly where the peeker's own camera is while still reading as a lean.
  */
+/**
+ * Past this range a player stops casting a shadow. 28 m is roughly half the
+ * arena, so a firefight at any normal engagement distance keeps its shadows
+ * and the far side of the map stops costing anything.
+ */
+const SHADOW_CUTOFF_SQ = 28 * 28;
+
 const PEEK_ROLL = 25 * (Math.PI / 180);
 // Measured, not guessed: with the roll above, 0.28 puts the head 0.48 m out —
 // the same distance the peeker's own camera travelled. Anything less and they
@@ -108,8 +115,10 @@ export class RemotePlayers {
    * @param {Map<number, object>} sample  from NetworkClient.sample()
    * @param {Map<number, object>} roster  id -> { name, hp, kills }
    * @param {number} dt
+   * @param {THREE.Vector3} [viewer]  where the camera is, for distance culling.
+   *   Omitted, everyone casts a shadow — correct, just more expensive.
    */
-  sync(sample, roster, dt) {
+  sync(sample, roster, dt, viewer = null) {
     // Held for raycast(), so hit registration tests the exact positions that
     // were drawn this frame rather than a separately-sampled set.
     this._lastSample = sample;
@@ -139,7 +148,28 @@ export class RemotePlayers {
       this._setWeapon(body, s.weapon);
       this._animate(body, s, dt);
       this._updateTag(body, s, roster.get(id));
+      if (viewer) this._cullShadow(body, viewer);
     }
+  }
+
+  /**
+   * Stop distant players casting shadows.
+   *
+   * A body is fifteen meshes, and a shadow caster is drawn a second time for
+   * the shadow map — so a full lobby spends a hundred and twenty draw calls
+   * per frame on shadows, most of them for players nowhere near the camera.
+   * A directional light's shadow camera covers the whole arena, so this is not
+   * saved by ordinary frustum culling: someone standing behind you is still
+   * drawn into the shadow map every frame.
+   *
+   * Beyond the cutoff their shadow is a handful of pixels under a body you can
+   * barely make out. The body itself keeps drawing — only the shadow goes.
+   */
+  _cullShadow(body, viewer) {
+    const far = body.group.position.distanceToSquared(viewer) > SHADOW_CUTOFF_SQ;
+    if (far === body.shadowCulled) return;      // only walk the tree on a change
+    body.shadowCulled = far;
+    for (const mesh of body.shadowCasters) mesh.castShadow = !far;
   }
 
   /**
@@ -193,6 +223,24 @@ export class RemotePlayers {
       };
     }
     return best;
+  }
+
+  /**
+   * Take one player out of the world, immediately.
+   *
+   * Called when someone leaves rather than waiting for them to fall out of the
+   * interpolation buffer, so their body does not stand around for a further
+   * couple of hundred milliseconds after they have gone.
+   */
+  remove(id) {
+    const body = this.bodies.get(id);
+    if (!body) return false;
+    this._destroy(body);
+    this.bodies.delete(id);
+    // Also out of the sample raycast() tests against, or shots would keep
+    // registering on a player who is no longer here.
+    this._lastSample?.delete(id);
+    return true;
   }
 
   /** Brief red flash when this player takes damage. */
@@ -281,7 +329,10 @@ export class RemotePlayers {
       // The model stands with its feet at y=0, but the server reports the
       // player's CAPSULE CENTRE. Without this offset every body floats.
       footOffset: 0.9,
-      tag: null, tagCanvas: null, tagTexture: null, hpBar: null,
+      tag: null, tagCanvas: null, tagTexture: null,
+      // Gathered once at build so distance culling can flip them without
+      // walking the object tree every frame. See _cullShadow.
+      shadowCasters: [], shadowCulled: false,
     };
 
     const limb = (partName, role) => {
@@ -293,6 +344,7 @@ export class RemotePlayers {
       mesh.name = partName;
       mesh.castShadow = true;
       mesh.receiveShadow = true;
+      record.shadowCasters.push(mesh);
       return mesh;
     };
 
@@ -472,7 +524,16 @@ export class RemotePlayers {
     const model = source.clone(true);
     model.traverse((o) => {
       if (!o.isMesh) return;
-      o.castShadow = true;
+      /*
+       * The gun does NOT cast a shadow.
+       *
+       * A weapon model is nine separate meshes, and every shadow caster is a
+       * second draw call in the shadow pass. Nine per player, times a full
+       * lobby, is seventy-odd draw calls spent on a shadow the size of a
+       * pencil that nobody has ever noticed. The body still casts, which is
+       * what actually grounds a player in the scene.
+       */
+      o.castShadow = false;
       o.receiveShadow = false;
       // The source is a view model on the weapon layer, which the world camera
       // cannot see. A gun in a remote player's hands is world geometry.
@@ -520,7 +581,7 @@ export class RemotePlayers {
     this._drawTag(record);
   }
 
-  _drawTag(record, hp = 100) {
+  _drawTag(record, hp = PLAYER_MAX_HEALTH) {
     const c = record.tagCanvas;
     const ctx = c.getContext('2d');
     ctx.clearRect(0, 0, c.width, c.height);
@@ -538,7 +599,9 @@ export class RemotePlayers {
     // Health bar under the name.
     const barW = 168;
     const x = (c.width - barW) / 2;
-    const frac = Math.max(0, Math.min(1, hp / 100));
+    // Against the real maximum, not a hardcoded 100. Health is 150, so the bar
+    // read full anywhere from 100 up and every wound above that was invisible.
+    const frac = Math.max(0, Math.min(1, hp / PLAYER_MAX_HEALTH));
     ctx.fillStyle = 'rgba(2, 8, 14, 0.85)';
     ctx.fillRect(x - 2, 44, barW + 4, 12);
     ctx.fillStyle = frac > 0.5 ? '#63d19a' : frac > 0.25 ? '#e0b64f' : '#e05f52';
@@ -552,7 +615,7 @@ export class RemotePlayers {
     const name = rosterEntry?.name;
     if (name && name !== body.name) { body.name = name; this._drawTag(body, s.hp); return; }
     // Only redraw when the bar would visibly move — this is a canvas upload.
-    if (Math.abs((body.tagHp ?? 100) - s.hp) >= 4) this._drawTag(body, s.hp);
+    if (Math.abs((body.tagHp ?? PLAYER_MAX_HEALTH) - s.hp) >= 4) this._drawTag(body, s.hp);
   }
 
   // -------------------------------------------------------------- animation

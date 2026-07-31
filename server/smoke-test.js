@@ -14,6 +14,7 @@
 import { WebSocket } from 'ws';
 import {
   MSG, PROTOCOL_VERSION, MATCH_STATE, MATCH_RULES, LIMITS, PLAYER_MAX_HEALTH,
+  PLAYER_START_ARMOR, ARMOR_ABSORB,
 } from '../src/net/protocol.js';
 import { WEAPON_DEFS } from '../src/weapons/WeaponDefinitions.js';
 
@@ -156,7 +157,23 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
         * ((range - RIFLE.falloffStart) / (RIFLE.falloffEnd - RIFLE.falloffStart));
   const expectBody = RIFLE.damage * falloff;
   const expectHead = RIFLE.damage * RIFLE.headMul * falloff;
-  const rifleShotsToKill = Math.ceil(PLAYER_MAX_HEALTH / expectBody);
+  /*
+   * Shots to kill, ARMOUR INCLUDED.
+   *
+   * Against health alone this came to exactly the number of rounds fired, so
+   * the check sat on the boundary: one round lost to ordinary timing jitter
+   * left the victim alive on a sliver of health and the whole death-and-
+   * respawn section failed. Armour soaks its share until it runs out, which is
+   * worth an extra couple of rounds — walk the same arithmetic the server does
+   * rather than assume a figure that weapon balancing would invalidate.
+   */
+  let simHp = PLAYER_MAX_HEALTH, simArmor = PLAYER_START_ARMOR, rifleShotsToKill = 0;
+  while (simHp > 0 && rifleShotsToKill < 60) {
+    const absorbed = Math.min(simArmor, expectBody * ARMOR_ABSORB);
+    simArmor -= absorbed;
+    simHp -= expectBody - absorbed;
+    rifleShotsToKill++;
+  }
   for (let i = 0; i < rifleShotsToKill + 2; i++) {
     a.shootAt(b.id, 'torso');
     await sleep(130);        // rifle rpm allows ~8.3/s; stay under it
@@ -213,7 +230,23 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   // instead of registering — the check would then read a KILL as a missing HIT.
   a.clear();
   for (let i = 0; i < 6 && a; i++) { a.shootAt(b.id, 'torso'); await sleep(90); }
-  await sleep(MATCH_RULES.respawnDelaySec * 1000 + 700);
+
+  /*
+   * WAIT for B to be alive and whole, rather than sleeping a fixed span.
+   *
+   * The fixed wait was tuned to how long B took to die back when only health
+   * absorbed damage. Armour buys them a couple more rounds, so the death
+   * landed later, the respawn landed later still, and the headshot went into a
+   * corpse — the server correctly ignores hits on the dead, and the check read
+   * the missing HIT as a broken multiplier. Watching the snapshot removes the
+   * guesswork whatever the damage numbers become.
+   */
+  const DEAD_FLAG = 1 << 4;
+  for (let i = 0; i < 120; i++) {
+    await sleep(100);
+    const row = a.drain(MSG.SNAPSHOT).at(-1)?.p?.find((r) => r[0] === b.id);
+    if (row && (row[6] & DEAD_FLAG) === 0 && row[8] >= PLAYER_MAX_HEALTH) break;
+  }
   a.clear();
   a.shootAt(b.id, 'head');
   await sleep(250);

@@ -643,7 +643,19 @@ function handleShot(player, msg) {
   const now = Date.now();
   const rec = player.shotBudget.get(weapon.id) ?? { tokens: LIMITS.shotBurst, at: now };
   const elapsed = Math.max(0, (now - rec.at) / 1000);
-  const allowedPerSec = 1 / minFireInterval(weapon);
+  /*
+   * The budget is in MESSAGES, and a projectile weapon honestly sends two per
+   * trigger pull: the shot itself, which is what the room sees and hears, and
+   * the impact frames later, which carries the damage claim.
+   *
+   * Budgeting one message per shot made a bolt-action sniper — 45 rpm against
+   * a 0.94/s allowance — spend 1.5/s and drain its own bucket, so after the
+   * opening burst it started dropping the very messages that do the damage.
+   * The ceiling still tracks each weapon's real rate; it just counts the
+   * messages that rate actually produces.
+   */
+  const perShot = weapon.projectile ? 2 : 1;
+  const allowedPerSec = perShot / minFireInterval(weapon);
   rec.tokens = Math.min(LIMITS.shotBurst, rec.tokens + allowedPerSec * elapsed);
   rec.at = now;
   if (rec.tokens < 1) { player.shotBudget.set(weapon.id, rec); return; }
