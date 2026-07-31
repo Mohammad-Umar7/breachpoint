@@ -52,11 +52,8 @@ export class Level {
     this.playerSpawn = new THREE.Vector3(0, 1.1, 26);
     this.playerSpawnYaw = 0; // looking down -Z, toward the warehouse
     /** @type {THREE.Vector3[]} */
-    this.enemySpawns = [];
     /** @type {{pos:THREE.Vector3, links:number[]}[]} */
-    this.waypoints = [];
     /** @type {THREE.Vector3[]} */
-    this.coverPoints = [];
     /** @type {Array} pickup definitions consumed by PickupManager */
     this.pickupSpots = [];
 
@@ -498,8 +495,6 @@ export class Level {
     ];
     for (const [x, y, z, rotY] of defs) {
       this._box('metalPanel', [x, y, z], [6.1, 2.6, 2.5], { rotY, tile: 2.2, surface: SURFACE.METAL });
-      this._containerCovers ??= [];
-      this._containerCovers.push({ x, z, rotY, hx: rotY ? 1.25 : 3.05, hz: rotY ? 3.05 : 1.25 });
     }
 
     // A ramp onto the west container stack.
@@ -517,8 +512,6 @@ export class Level {
       const rotY = ((x * 31 + z * 17) % 7) * 0.22;
       this._box('concrete', [x, 0.55, z], [2.4, 1.1, 0.8], { rotY, tile: 1.4 });
       this._box('hazard', [x, 1.14, z], [2.4, 0.08, 0.8], { rotY, collide: false, tile: 1 });
-      this._coverBlocks ??= [];
-      this._coverBlocks.push({ x, z, hx: 1.2, hz: 0.4, rotY });
     }
   }
 
@@ -833,89 +826,6 @@ export class Level {
 
   // ------------------------------------------------------------- navigation
   _buildNavData() {
-    // --- Patrol waypoint graph (x, z) ---
-    // Hand-placed so every edge is a clear straight line through the level:
-    // routes into the warehouse pass through its doorways, and the interior
-    // partition is only crossed at node 11 (the gap at z = -10).
-    const wp = [
-      [0, 29],    //  0 south yard, centre (player spawn side)
-      [-15, 22],  //  1 south-west
-      [15, 22],   //  2 south-east
-      [-32, 26],  //  3 far south-west corner
-      [32, 26],   //  4 far south-east corner
-      [0, 4],     //  5 outside the warehouse main door
-      [0, 14],    //  6 mid yard
-      [-16, 8],   //  7 west of the warehouse
-      [16, 8],    //  8 east of the warehouse
-      [-4, -6],   //  9 warehouse interior, south-west
-      [5, -4],    // 10 warehouse interior, south-east
-      [-7.5, -10],// 11 interior partition doorway
-      [-11, -13], // 12 warehouse interior, north-west
-      [6, -13],   // 13 warehouse interior, north-east
-      [-16, -8],  // 14 west corridor
-      [16, -8],   // 15 east corridor
-      [-30, -26], // 16 north-west corner
-      [30, -26],  // 17 north-east corner
-      [0, -24],   // 18 north yard, centre
-      [9, -21],   // 19 outside the warehouse service door
-      [-14, -21], // 20 north-west of the warehouse
-      [-33, 20],  // 21 west flank (behind the west blockhouse)
-      [33, 20],   // 22 east flank (behind the east blockhouse)
-    ];
-    const links = [
-      [1, 2, 6],        //  0
-      [0, 3, 7, 21],    //  1
-      [0, 4, 8, 22],    //  2
-      [1, 21],          //  3
-      [2, 22],          //  4
-      [6, 9, 10],       //  5
-      [0, 5, 7, 8],     //  6
-      [1, 6, 14],       //  7
-      [2, 6, 15],       //  8
-      [5, 10, 11],      //  9
-      [5, 9, 13],       // 10
-      [9, 12, 13],      // 11
-      [11],             // 12
-      [10, 11, 19],     // 13
-      [7, 16, 20],      // 14
-      [8, 17],          // 15
-      [14, 18, 20],     // 16
-      [15, 18, 19],     // 17
-      [16, 17, 19, 20], // 18
-      [13, 17, 18],     // 19
-      [14, 16, 18],     // 20
-      [1, 3],           // 21
-      [2, 4],           // 22
-    ];
-    for (let i = 0; i < wp.length; i++) {
-      this.waypoints.push({
-        pos: new THREE.Vector3(wp[i][0], 0.9, wp[i][1]),
-        links: links[i] ?? [],
-      });
-    }
-
-    // --- Cover points derived automatically from cover blocks + containers ---
-    const addCoverRing = (x, z, hx, hz, rotY) => {
-      const offs = [[hx + 0.85, 0], [-hx - 0.85, 0], [0, hz + 0.85], [0, -hz - 0.85]];
-      const c = Math.cos(rotY), s = Math.sin(rotY);
-      for (const [ox, oz] of offs) {
-        this.coverPoints.push(new THREE.Vector3(x + ox * c - oz * s, 0.9, z + ox * s + oz * c));
-      }
-    };
-    for (const b of this._coverBlocks ?? []) addCoverRing(b.x, b.z, b.hx, b.hz, b.rotY);
-    for (const c of this._containerCovers ?? []) addCoverRing(c.x, c.z, c.hx, c.hz, 0);
-    // Doorway/corner cover inside the warehouse
-    for (const [x, z] of [[-7, -13], [7, -13], [-7, -3], [7, -3], [-12, -6], [12, -6]]) {
-      this.coverPoints.push(new THREE.Vector3(x, 0.9, z));
-    }
-
-    // --- Enemy spawn points: perimeter + interior, all with headroom ---
-    const spawns = [
-      [-30, -30], [30, -30], [-30, 30], [30, 30], [0, -32],
-      [-32, 0], [32, 0], [8, -14], [-8, -14], [22, 18], [-22, 18], [0, -22],
-    ];
-    for (const [x, z] of spawns) this.enemySpawns.push(new THREE.Vector3(x, 1.0, z));
-
     // --- Pickup spots ---
     this.pickupSpots = [
       { type: 'health', pos: new THREE.Vector3(-11.5, 0.6, 5.5) },
@@ -933,72 +843,6 @@ export class Level {
       { type: 'ammo', pos: new THREE.Vector3(-28, 0.6, 24) },
       { type: 'ammo', pos: new THREE.Vector3(28, 0.6, 24) },
     ];
-  }
-
-  /**
-   * Breadth-first search over the waypoint graph.
-   *
-   * Returns a list of world positions from the nearest waypoint to `from`
-   * through to `to`. Enemies only fall back to this when they have no direct
-   * line of sight, so the cost (a few dozen node visits, at most once a
-   * second per enemy) is negligible.
-   *
-   * @param {THREE.Vector3} from
-   * @param {THREE.Vector3} to
-   * @returns {THREE.Vector3[]}
-   */
-  findPath(from, to) {
-    const n = this.waypoints.length;
-    if (n === 0) return [to.clone()];
-
-    const start = this.nearestWaypoint(from);
-    const goal = this.nearestWaypoint(to);
-    if (start === goal) return [this.waypoints[goal].pos.clone(), to.clone()];
-
-    const prev = new Int16Array(n).fill(-1);
-    const visited = new Uint8Array(n);
-    const queue = [start];
-    visited[start] = 1;
-
-    let head = 0;
-    let found = false;
-    while (head < queue.length) {
-      const cur = queue[head++];
-      if (cur === goal) { found = true; break; }
-      const links = this.waypoints[cur].links;
-      for (let i = 0; i < links.length; i++) {
-        const next = links[i];
-        if (next < 0 || next >= n || visited[next]) continue;
-        visited[next] = 1;
-        prev[next] = cur;
-        queue.push(next);
-      }
-    }
-
-    if (!found) return [to.clone()];
-
-    const path = [];
-    let node = goal;
-    let guard = 0;
-    while (node !== start && node !== -1 && guard++ < n) {
-      path.push(this.waypoints[node].pos.clone());
-      node = prev[node];
-    }
-    path.push(this.waypoints[start].pos.clone());
-    path.reverse();
-    path.push(to.clone());
-    return path;
-  }
-
-  /** Nearest waypoint index to a world position. */
-  nearestWaypoint(pos) {
-    let best = 0;
-    let bestD = Infinity;
-    for (let i = 0; i < this.waypoints.length; i++) {
-      const d = this.waypoints[i].pos.distanceToSquared(pos);
-      if (d < bestD) { bestD = d; best = i; }
-    }
-    return best;
   }
 
   /** Restore every prop and explosive barrel to its starting state. */

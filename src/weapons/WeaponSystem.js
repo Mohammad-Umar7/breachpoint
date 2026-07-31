@@ -19,7 +19,7 @@
 
 import * as THREE from 'three';
 import { Weapon, WEAPON_STATE } from './Weapon.js';
-import { WEAPON_DEFS, getWeaponDef } from './WeaponDefinitions.js';
+import { WEAPON_DEFS } from './WeaponDefinitions.js';
 import { ADSSystem } from './ADSSystem.js';
 import { RecoilSystem } from './RecoilSystem.js';
 import { TAG_KIND } from '../physics/PhysicsWorld.js';
@@ -111,7 +111,6 @@ export class WeaponSystem {
      */
     this.remoteHitTest = null;
     this.onShotResolved = null;
-    this.onKill = null;
     this.onShotFired = null;
     this.onPropHit = null;
     this.onGrenadeExplode = null;
@@ -520,7 +519,7 @@ export class WeaponSystem {
 
       for (let p = 0; p < (def.pellets ?? 1); p++) {
         const r = this._castBullet(this._origin, this._dir, spread, w, p === 0);
-        if (r?.hitEnemy) {
+        if (r?.hitPlayer) {
           anyHit = true;
           totalDamage += r.damage;
           if (r.headshot) anyHeadshot = true;
@@ -657,7 +656,7 @@ export class WeaponSystem {
     // `killed` stays false: only the server can confirm a kill and it announces
     // one over the wire. Guessing here would flash a phantom kill on screen.
     return {
-      hitEnemy: true, remote: true, headshot, killed: false,
+      hitPlayer: true, remote: true, headshot, killed: false,
       damage: weapon.damageAtRange(remote.distance), point: remote.point,
     };
   }
@@ -668,46 +667,13 @@ export class WeaponSystem {
     const tag = hit.tag;
     const surface = tag?.surface ?? SURFACE.CONCRETE;
 
-    // ---------------------------------------------------------- enemies
-    if (tag?.kind === TAG_KIND.ENEMY && tag.enemy && tag.enemy.alive) {
-      // The hit zone is derived from where on the body the round landed.
-      const part = tag.enemy.partAtPoint(hit.point);
-      const headshot = part === 'head';
-      let damage = weapon.damageAtRange(distance);
-      if (headshot) damage *= def.headMul;
-      else if (part === 'limb') damage *= def.limbMul;
-
-      const killed = tag.enemy.takeDamage(damage, {
-        part,
-        headshot,
-        point: hit.point,
-        direction,
-        force: def.category === 'shotgun' ? 6 : def.category === 'sniper' ? 9 : 4,
-        armorPen: def.armorPen ?? 0.4,
-        source: 'player',
-      });
-
-      this.fx.spawnImpact(hit.point, hit.normal, SURFACE.FLESH, headshot ? 1.6 : 1);
-      this.fx.spawnBloodBurst(hit.point, direction, headshot ? 1.5 : 1);
-      this.audio.play(impactSoundFor(SURFACE.FLESH), { position: hit.point, volume: 0.8 });
-
-      const behind = this.physics.raycast(hit.point, direction, 3.5, {
-        excludeCollider: hit.collider,
-        filter: (t) => !!t && (t.kind === TAG_KIND.WORLD || t.kind === TAG_KIND.PROP),
-      });
-      if (behind) this.fx.addDecal(behind.point, behind.normal, 'blood', randRange(0.3, 0.6));
-
-      if (killed) this.onKill?.(tag.enemy, headshot);
-      return { hitEnemy: true, damage, headshot, killed, point: hit.point };
-    }
-
     // ------------------------------------------------- explosive barrels
     if (tag?.kind === TAG_KIND.EXPLOSIVE && tag.prop) {
       this.onPropHit?.(tag.prop, weapon.damageAtRange(distance), hit.point, direction);
       this.fx.spawnImpact(hit.point, hit.normal, SURFACE.METAL, 1);
       this.audio.play(impactSoundFor(SURFACE.METAL), { position: hit.point, volume: 0.75 });
       this._pushBody(hit, def, direction);
-      return { hitEnemy: false };
+      return { hitPlayer: false };
     }
 
     // ------------------------------------------------------ pushable props
@@ -719,7 +685,7 @@ export class WeaponSystem {
     if (surface !== SURFACE.GLASS && Math.random() < 0.22) {
       this.audio.play('ricochet', { position: hit.point, volume: 0.5 });
     }
-    return { hitEnemy: false };
+    return { hitPlayer: false };
   }
 
   // ----------------------------------------------------------- projectiles
@@ -729,7 +695,7 @@ export class WeaponSystem {
       // Pool exhausted (extremely unlikely) — fall back to hitscan so the
       // shot is never silently lost.
       const r = this._castBullet(origin, baseDir, spreadRad, weapon, true);
-      if (r?.hitEnemy) this._registerHit(r.damage, r.headshot, r.killed, r.point);
+      if (r?.hitPlayer) this._registerHit(r.damage, r.headshot, r.killed, r.point);
       return;
     }
 
@@ -785,7 +751,7 @@ export class WeaponSystem {
             this._tmp,
             weapon,
           );
-          if (r?.hitEnemy) this._registerHit(r.damage, r.headshot, r.killed, r.point);
+          if (r?.hitPlayer) this._registerHit(r.damage, r.headshot, r.killed, r.point);
           this.fx.spawnTracer(p.tracerFrom ?? p.prev, remote.point, {
             color: weapon.def.tracerColor,
             width: weapon.def.tracerWidth,
@@ -798,7 +764,7 @@ export class WeaponSystem {
         if (hit) {
           const weapon = this.pool.get(p.weaponId);
           const r = this._resolveImpact(hit, this._tmp, weapon, p.travelled);
-          if (r?.hitEnemy) this._registerHit(r.damage, r.headshot, r.killed, r.point);
+          if (r?.hitPlayer) this._registerHit(r.damage, r.headshot, r.killed, r.point);
           this.fx.spawnTracer(p.tracerFrom ?? p.prev, hit.point, {
             color: weapon.def.tracerColor,
             width: weapon.def.tracerWidth,
@@ -842,7 +808,7 @@ export class WeaponSystem {
 
     const mesh = new THREE.Mesh(
       new THREE.SphereGeometry(0.075, 12, 8),
-      this.assets.getMaterial('enemyVest')
+      this.assets.getMaterial('soldierVest')
     );
     mesh.castShadow = true;
     this.fx.scene.add(mesh);
@@ -941,37 +907,11 @@ export class WeaponSystem {
       if (remote) {
         const r = this._resolveRemoteHit(remote, this._spreadDir, weapon);
         this.audio.play('knifeHit', { position: remote.point });
-        if (r?.hitEnemy) this._registerHit(r.damage, r.headshot, r.killed, r.point);
+        if (r?.hitPlayer) this._registerHit(r.damage, r.headshot, r.killed, r.point);
         return;
       }
 
       if (!hit) continue;
-
-      if (hit.tag?.kind === TAG_KIND.ENEMY && hit.tag.enemy?.alive) {
-        const enemy = hit.tag.enemy;
-        const part = enemy.partAtPoint(hit.point);
-        const headshot = part === 'head';
-        // Backstab: are we behind them?
-        this._tmp.set(-Math.sin(enemy.facing), 0, -Math.cos(enemy.facing));
-        this._tmp2.subVectors(enemy.position, this._origin).setY(0).normalize();
-        const behind = this._tmp.dot(this._tmp2) > 0.35;
-        const damage = def.damage * (behind ? def.backstabMul : 1) * (headshot ? def.headMul : 1);
-
-        const killed = enemy.takeDamage(damage, {
-          part,
-          headshot,
-          point: hit.point,
-          direction: this._spreadDir,
-          force: 7,
-          armorPen: def.armorPen,
-          source: 'player',
-        });
-        this.fx.spawnBloodBurst(hit.point, this._spreadDir, 1.4);
-        this.audio.play('knifeHit', { position: hit.point });
-        this._registerHit(damage, headshot, killed, hit.point);
-        if (killed) this.onKill?.(enemy, headshot);
-        return;
-      }
 
       if (hit.distance < def.range * 0.8) {
         this.fx.spawnImpact(hit.point, hit.normal, hit.tag?.surface ?? SURFACE.CONCRETE, 0.5);
@@ -999,7 +939,7 @@ export class WeaponSystem {
   _groundYNear(pos) {
     const hit = this.physics.raycast(pos, DOWN, 6, {
       excludeCollider: this.player.collider,
-      filter: (tag) => !!tag && tag.kind !== TAG_KIND.PLAYER && tag.kind !== TAG_KIND.ENEMY,
+      filter: (tag) => !!tag && tag.kind !== TAG_KIND.PLAYER,
     });
     return hit ? hit.point.y : 0;
   }

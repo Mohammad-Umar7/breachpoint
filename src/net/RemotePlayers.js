@@ -1,9 +1,9 @@
 /**
  * RemotePlayers — draws the other people in the match.
  *
- * Reuses the authored soldier model (`public/models/soldier.glb`, 16 named
- * parts) that the AI enemies use, assembled around the same joint pivots so the
- * walk cycle and head aim work identically. Nothing new had to be modelled.
+ * Built from the authored soldier model (`public/models/soldier.glb`, 16 named
+ * parts), assembled around the joint pivots baked into it so the walk cycle and
+ * head aim work from the same numbers the model was authored with.
  *
  * Geometry is shared across every body — `AssetManager._prepareCharacter` has
  * already baked the joint offsets into it — so eight players cost eight sets of
@@ -47,6 +47,13 @@ const NAME_SCALE = 0.55;
 /** Height of the chest joint above the feet. Also the fallback muzzle height. */
 const CHEST_Y = 1.05;
 
+/**
+ * Past this range a player stops casting a shadow. 28 m is roughly half the
+ * arena, so a firefight at any normal engagement distance keeps its shadows
+ * and the far side of the map stops costing anything.
+ */
+const SHADOW_CUTOFF_SQ = 28 * 28;
+
 /*
  * How far a peek moves the body, split between a roll and a sideways shift.
  *
@@ -55,13 +62,6 @@ const CHEST_Y = 1.05;
  * which looks like a fall rather than a peek; the pair below put the head
  * roughly where the peeker's own camera is while still reading as a lean.
  */
-/**
- * Past this range a player stops casting a shadow. 28 m is roughly half the
- * arena, so a firefight at any normal engagement distance keeps its shadows
- * and the far side of the map stops costing anything.
- */
-const SHADOW_CUTOFF_SQ = 28 * 28;
-
 const PEEK_ROLL = 25 * (Math.PI / 180);
 // Measured, not guessed: with the roll above, 0.28 puts the head 0.48 m out —
 // the same distance the peeker's own camera travelled. Anything less and they
@@ -210,7 +210,7 @@ export class RemotePlayers {
       if (best && hit.t >= best.distance) continue;
 
       // Which part, from where up the body the ray passed. Matches the bands
-      // the AI enemies use so damage feels consistent between the two.
+      // the local player's own capsule uses, so damage reads consistently.
       const hitY = origin.y + dir.y * hit.t;
       const frac = (hitY - (s.y - half - RADIUS)) / (half * 2 + RADIUS * 2);
       const part = frac > 0.82 ? 'head' : frac < 0.34 ? 'limb' : 'torso';
@@ -292,11 +292,11 @@ export class RemotePlayers {
 
     const tint = PLAYER_TINTS[(id - 1) % PLAYER_TINTS.length];
     const mats = {
-      body: this.assets.getMaterial('enemyFatigues').clone(),
-      gear: this.assets.getMaterial('enemyVest').clone(),
-      skin: this.assets.getMaterial('enemySkin').clone(),
-      helmet: this.assets.getMaterial('enemyHelmet').clone(),
-      visor: this.assets.getMaterial('enemyEye').clone(),
+      body: this.assets.getMaterial('soldierFatigues').clone(),
+      gear: this.assets.getMaterial('soldierVest').clone(),
+      skin: this.assets.getMaterial('soldierSkin').clone(),
+      helmet: this.assets.getMaterial('soldierHelmet').clone(),
+      visor: this.assets.getMaterial('soldierVisor').clone(),
     };
     mats.body.color.setHex(tint);
 
@@ -304,7 +304,7 @@ export class RemotePlayers {
      * Materials that can take a hit flash — i.e. that actually have an
      * emissive channel.
      *
-     * This MUST NOT include the visor. `enemyEye` is a MeshBasicMaterial, which
+     * This MUST NOT include the visor. `soldierVisor` is a MeshBasicMaterial, which
      * has no emissive uniform, and assigning `.emissive` to one is catastrophic
      * rather than merely useless: three.js's refreshUniformsCommon does
      *
@@ -314,8 +314,8 @@ export class RemotePlayers {
      * uniform that does not exist. The result is a TypeError thrown inside the
      * renderer on every frame for every visor mesh — nearly 12,000 of them in
      * one session — which ground the game to a halt the moment a second player
-     * appeared, on LAN and hosted alike. Enemy.js excludes the eye from its own
-     * flash list for exactly this reason.
+     * appeared, on LAN and hosted alike. The eye is excluded from the flash
+     * list for exactly that reason.
      */
     const flashable = [mats.body, mats.gear, mats.skin, mats.helmet]
       .filter((m) => m.emissive !== undefined);
@@ -368,7 +368,7 @@ export class RemotePlayers {
     group.add(chest);
     record.chest = chest;
 
-    // Joint groups, matching Enemy's pivots so the same animation maths works.
+    // Joint groups, matching the pivots baked into the model's geometry.
     // Legs stay on the body so they are unaffected by aiming; arms hang off
     // the chest so they inherit the aim pose.
     const joints = {};
@@ -939,9 +939,9 @@ export class RemotePlayers {
   _destroy(body) {
     this.destroyed++;
     this.scene.remove(body.group);
-    // Geometry is SHARED with the AI enemies and every other remote body —
-    // disposing it here would blank out all of them. Only the per-player
-    // materials and this body's own name-tag texture are ours to free.
+    // Geometry is SHARED with every other remote body — disposing it here
+    // would blank out all of them. Only the per-player materials and this
+    // body's own name-tag texture are ours to free.
     for (const m of Object.values(body.mats)) m.dispose();
     body.tag?.material?.dispose();
     body.tagTexture?.dispose();

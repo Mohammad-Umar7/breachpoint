@@ -37,8 +37,8 @@ export const MODEL_MANIFEST = [
   { id: 'knife', url: 'models/knife.glb', kind: 'weapon' },
   { id: 'grenade', url: 'models/grenade.glb', kind: 'weapon' },
 
-  // Enemy character, exported as separately named body parts rather than one
-  // merged mesh so Enemy.js can keep animating, tinting and toggling them.
+  // Player character, exported as separately named body parts rather than one
+  // merged mesh so RemotePlayers can animate, tint and toggle them.
   { id: 'soldier', url: 'models/soldier.glb', kind: 'character' },
 ];
 
@@ -52,7 +52,7 @@ export const MODEL_MANIFEST = [
  * at the pivot — after which `legL.rotation.x` bends at the hip, exactly as
  * it does for the procedural boxes this replaces.
  *
- * Values match the pivots Enemy._buildMesh already uses; changing one here
+ * Values match the pivots the model was authored around; changing one here
  * without changing it there will visibly dislocate the limb.
  */
 export const SOLDIER_PIVOTS = Object.freeze({
@@ -237,9 +237,9 @@ export class AssetManager {
   /**
    * Re-pivot an authored character so its limbs rotate at their joints.
    *
-   * Runs once per load, not once per enemy: the translation is baked into the
-   * shared BufferGeometry, so every enemy in the level reuses the same 16
-   * geometries and only clones materials. With 8-12 enemies alive that is the
+   * Runs once per load, not once per body: the translation is baked into the
+   * shared BufferGeometry, so every player in the match reuses the same 16
+   * geometries and only clones materials. With a full lobby that is the
    * difference between 16 buffers and ~190.
    */
   _prepareCharacter(scene) {
@@ -828,7 +828,7 @@ export class AssetManager {
   }
 
   _buildCharacterMaterials() {
-    this._register('enemyFatigues', {
+    this._register('soldierFatigues', {
       size: 128,
       roughness: 0.92,
       metalness: 0.0,
@@ -846,21 +846,21 @@ export class AssetManager {
     });
 
     this.materials.set(
-      'enemyVest',
-      new THREE.MeshStandardMaterial({ color: 0x23262a, roughness: 0.75, metalness: 0.15, name: 'enemyVest' })
+      'soldierVest',
+      new THREE.MeshStandardMaterial({ color: 0x23262a, roughness: 0.75, metalness: 0.15, name: 'soldierVest' })
     );
     this.materials.set(
-      'enemySkin',
-      new THREE.MeshStandardMaterial({ color: 0xa07a5c, roughness: 0.78, metalness: 0.0, name: 'enemySkin' })
+      'soldierSkin',
+      new THREE.MeshStandardMaterial({ color: 0xa07a5c, roughness: 0.78, metalness: 0.0, name: 'soldierSkin' })
     );
     this.materials.set(
-      'enemyHelmet',
-      new THREE.MeshStandardMaterial({ color: 0x3b4235, roughness: 0.6, metalness: 0.25, name: 'enemyHelmet' })
+      'soldierHelmet',
+      new THREE.MeshStandardMaterial({ color: 0x3b4235, roughness: 0.6, metalness: 0.25, name: 'soldierHelmet' })
     );
     // Eye glow doubles as a cheap "is this thing alive/alerted" tell.
     this.materials.set(
-      'enemyEye',
-      new THREE.MeshBasicMaterial({ color: 0xff5533, toneMapped: false, name: 'enemyEye' })
+      'soldierVisor',
+      new THREE.MeshBasicMaterial({ color: 0xff5533, toneMapped: false, name: 'soldierVisor' })
     );
 
     this.materials.set(

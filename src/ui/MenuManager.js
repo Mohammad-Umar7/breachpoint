@@ -21,7 +21,7 @@ import { clamp } from '../core/MathUtils.js';
 const SCREENS = [
   'screen-loading', 'screen-menu', 'screen-lobby', 'screen-loadout',
   'screen-controls', 'screen-credits', 'screen-pause', 'screen-settings',
-  'screen-gameover', 'screen-victory', 'screen-error',
+  'screen-gameover', 'screen-error',
 ];
 
 /** Percentage formatter for 0..1 volume-style values. */
@@ -269,7 +269,6 @@ export class MenuManager {
       loadoutSecondaryTag: id('loadout-secondary-tag'),
       continueBtn: id('btn-continue'),
       gameoverStats: id('gameover-stats'),
-      victoryStats: id('victory-stats'),
       errorText: id('error-text'),
     };
   }
@@ -309,12 +308,11 @@ export class MenuManager {
     this.el.continueBtn.classList.toggle('hidden', !can);
   }
 
-  showResults(screen, stats) {
-    const target = screen === 'victory' ? this.el.victoryStats : this.el.gameoverStats;
-    target.innerHTML = stats
+  showResults(stats) {
+    this.el.gameoverStats.innerHTML = stats
       .map(([k, v]) => `<div class="k">${k}</div><div class="v">${v}</div>`)
       .join('');
-    this.showScreen(screen === 'victory' ? 'screen-victory' : 'screen-gameover');
+    this.showScreen('screen-gameover');
   }
 
   // ---------------------------------------------------------------- binding
@@ -324,10 +322,8 @@ export class MenuManager {
     click('btn-continue', () => this.onContinue?.());
     click('btn-resume', () => this.onResume?.());
     click('btn-restart-over', () => this.onRestart?.());
-    click('btn-restart-win', () => this.onRestart?.());
     click('btn-quit', () => this.onQuitToMenu?.());
     click('btn-menu-over', () => this.onQuitToMenu?.());
-    click('btn-menu-win', () => this.onQuitToMenu?.());
     click('btn-error-reload', () => window.location.reload());
 
     click('btn-play', () => this._quickMatch());

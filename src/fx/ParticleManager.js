@@ -544,7 +544,7 @@ export class ParticleManager {
     t.head.copy(start);
   }
 
-  /** World-space muzzle flash (used for enemy weapons). */
+  /** World-space muzzle flash, for other players' weapons. */
   spawnMuzzleFlash(pos, dir, scale = 1, withLight = true) {
     const f = this._getFlash();
     f.alive = true;

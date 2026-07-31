@@ -162,12 +162,6 @@ export class Player {
 
     this._createBody();
 
-    /** Collision filter for the character controller: ignore enemy bodies. */
-    this._movementFilter = (collider) => {
-      const tag = this.physics.getTag(collider);
-      return !tag || tag.kind !== TAG_KIND.ENEMY;
-    };
-
     /** Callbacks wired up by Game. */
     this.onDeath = null;
     this.onDamage = null;
@@ -350,15 +344,10 @@ export class Player {
     this._desired.y = this.velocity.y * dt;
     this._desired.z = this.velocity.z * dt;
 
-    // Enemies are deliberately excluded from the player's collision solve.
-    // If they weren't, a squad pressing into you would shove you across the
-    // map — the character controller resolves that overlap every single step.
     this.controller.computeColliderMovement(
       this.collider,
       this._desired,
       this.physics.RAPIER.QueryFilterFlags.EXCLUDE_SENSORS,
-      undefined,
-      this._movementFilter
     );
     const moved = this.controller.computedMovement();
 
@@ -417,7 +406,7 @@ export class Player {
       this._tmp.copy(this.position);
       const hit = this.physics.raycast(this._tmp, this._down, this.halfHeight + RADIUS + 0.4, {
         excludeCollider: this.collider,
-        filter: (tag) => !!tag && tag.kind !== TAG_KIND.PLAYER && tag.kind !== TAG_KIND.ENEMY,
+        filter: (tag) => !!tag && tag.kind !== TAG_KIND.PLAYER,
       });
       this.currentSurface = hit?.tag?.surface ?? SURFACE.CONCRETE;
     }

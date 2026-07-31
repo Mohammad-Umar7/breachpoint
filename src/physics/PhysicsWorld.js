@@ -5,7 +5,7 @@
  *  - Own the Rapier `World` and run it on a **fixed 60 Hz timestep** with an
  *    accumulator, so simulation is identical regardless of display refresh.
  *  - Keep a `colliderHandle -> tag` map. Rapier colliders can't carry JS
- *    references, so this is how a raycast hit becomes "the head of enemy #4".
+ *    references, so this is how a raycast hit becomes "that barrel".
  *  - Track every dynamic body paired with a Three.js mesh and interpolate
  *    their transforms for rendering (removes jitter on 144 Hz displays).
  *  - Provide the raycast / explosion helpers the rest of the game needs.
@@ -23,7 +23,6 @@ export const TAG_KIND = Object.freeze({
   WORLD: 'world',
   PROP: 'prop',
   EXPLOSIVE: 'explosive',
-  ENEMY: 'enemy',
   PLAYER: 'player',
 });
 
@@ -198,7 +197,7 @@ export class PhysicsWorld {
     return { body, collider };
   }
 
-  /** Kinematic capsule used by the player and by enemies. */
+  /** Kinematic capsule used by the player. */
   createCharacterBody(pos, halfHeight, radius, tag) {
     const body = this.world.createRigidBody(
       RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(pos.x, pos.y, pos.z)
@@ -209,7 +208,7 @@ export class PhysicsWorld {
     return { body, collider };
   }
 
-  /** Extra collider attached to an existing body (e.g. an enemy's head). */
+  /** Extra collider attached to an existing body. */
   addSphereCollider(body, offsetY, radius, tag) {
     const colDesc = RAPIER.ColliderDesc.ball(radius).setTranslation(0, offsetY, 0);
     const collider = this.world.createCollider(colDesc, body);
@@ -376,9 +375,8 @@ export class PhysicsWorld {
   }
 
   /**
-   * Cheap boolean line-of-sight test against world geometry and props only —
-   * enemies must never see or shoot through walls, but shouldn't be blocked
-   * by each other.
+   * Cheap boolean line-of-sight test against world geometry and props only, so
+   * a blast is stopped by a wall but not by the people standing in it.
    */
   hasLineOfSight(from, to, extraFilter = null) {
     this._tmpVec.subVectors(to, from);

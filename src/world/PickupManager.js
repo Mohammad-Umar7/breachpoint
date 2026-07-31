@@ -1,9 +1,7 @@
 /**
  * PickupManager — health, armour and ammunition pickups.
  *
- * Two kinds of pickup exist:
- *   - **Fixed**: placed by the level, respawn on a timer after collection.
- *   - **Drops**: dropped by dead enemies, expire after a while.
+ * Pickups are placed by the level and respawn on a timer after collection.
  *
  * Pickups are plain meshes (no physics bodies) collected by a simple distance
  * check, which is cheaper and far more reliable than sensor colliders for
@@ -14,8 +12,7 @@ import * as THREE from 'three';
 import { randRange } from '../core/MathUtils.js';
 
 const PICKUP_RADIUS = 1.35;
-const FIXED_RESPAWN = 26;
-const DROP_LIFETIME = 32;
+const RESPAWN_DELAY = 26;
 
 const TYPES = {
   health: { material: 'pickupHealth', amount: 35, sound: 'pickupHealth', label: '+35 HEALTH', toastClass: '' },
@@ -60,18 +57,11 @@ export class PickupManager {
   // ------------------------------------------------------------------ build
   buildFromLevel(level) {
     for (const spot of level.pickupSpots) {
-      this._create(spot.type, spot.pos, true);
+      this._create(spot.type, spot.pos);
     }
   }
 
-  /** Enemy loot drop. */
-  drop(type, position) {
-    const p = position.clone();
-    p.y = Math.max(0.55, p.y + 0.35);
-    this._create(type, p, false);
-  }
-
-  _create(type, position, fixed) {
+  _create(type, position) {
     const def = TYPES[type];
     if (!def) {
       console.warn(`[Pickups] Unknown pickup type "${type}"`);
@@ -115,10 +105,8 @@ export class PickupManager {
       holder,
       glow,
       basePos: position.clone(),
-      fixed,
       active: true,
       respawnTimer: 0,
-      lifetime: fixed ? Infinity : DROP_LIFETIME,
       phase: randRange(0, Math.PI * 2),
     };
     this.pickups.push(entry);
@@ -133,25 +121,14 @@ export class PickupManager {
     for (let i = this.pickups.length - 1; i >= 0; i--) {
       const p = this.pickups[i];
 
-      // --- respawn / expiry ---
+      // --- respawn ---
       if (!p.active) {
-        if (!p.fixed) continue;
         p.respawnTimer -= dt;
         if (p.respawnTimer <= 0) {
           p.active = true;
           p.holder.visible = true;
         }
         continue;
-      }
-
-      if (!p.fixed) {
-        p.lifetime -= dt;
-        if (p.lifetime <= 0) {
-          this._destroy(i);
-          continue;
-        }
-        // Blink out during the last three seconds.
-        p.holder.visible = p.lifetime > 3 || Math.floor(p.lifetime * 6) % 2 === 0;
       }
 
       // --- idle animation ---
@@ -166,13 +143,9 @@ export class PickupManager {
       const dz = p.holder.position.z - playerPos.z;
       if (dx * dx + dy * dy + dz * dz < PICKUP_RADIUS * PICKUP_RADIUS) {
         if (this._tryCollect(p)) {
-          if (p.fixed) {
-            p.active = false;
-            p.holder.visible = false;
-            p.respawnTimer = FIXED_RESPAWN;
-          } else {
-            this._destroy(i);
-          }
+          p.active = false;
+          p.holder.visible = false;
+          p.respawnTimer = RESPAWN_DELAY;
         }
       }
     }
@@ -228,17 +201,12 @@ export class PickupManager {
     this.pickups.splice(index, 1);
   }
 
-  /** Remove drops and restore every fixed pickup (used on restart). */
+  /** Restore every pickup (used on restart). */
   reset() {
-    for (let i = this.pickups.length - 1; i >= 0; i--) {
-      const p = this.pickups[i];
-      if (!p.fixed) {
-        this._destroy(i);
-      } else {
-        p.active = true;
-        p.holder.visible = true;
-        p.respawnTimer = 0;
-      }
+    for (const p of this.pickups) {
+      p.active = true;
+      p.holder.visible = true;
+      p.respawnTimer = 0;
     }
   }
 

@@ -733,15 +733,6 @@ export class AudioManager {
     this._ambience = null;
   }
 
-  /** Rising tension sting used when a wave begins. */
-  playWaveSting(waveIndex) {
-    if (!this._canPlay()) return;
-    const base = 110 * Math.pow(2, Math.min(waveIndex, 5) / 12);
-    this._tone(this.musicBus, null, { type: 'sawtooth', freq: base, freqEnd: base * 1.5, duration: 1.1, gain: 0.16, attack: 0.15 });
-    this._tone(this.musicBus, null, { type: 'square', freq: base * 2, freqEnd: base * 3, duration: 0.9, gain: 0.05, attack: 0.2 });
-    this._burst(this.musicBus, null, { duration: 1.4, gain: 0.1, type: 'bandpass', freq: 300, freqEnd: 1800, q: 0.8, attack: 0.4 });
-  }
-
   dispose() {
     this.stopAmbience();
     if (this.ctx) {
@@ -846,13 +837,6 @@ const SYNTHS = {
 
   // AI weapon: same model, pulled back so a firefight full of them does not
   // drown out the player’s own gun.
-  shootEnemy(a, { position = null, volume = 1 } = {}) {
-    // Through the saturated, reverb-sent weapon chain — see init().
-    const bus = a.shotDrive ?? a.sfxBus;
-    a._shot(bus, position, { bore: 160, crack: 2400, blast: 1200, bodyMs: 50, power: 0.6 * volume, ref: 9,
-        slaps: [[32, 0.16], [70, 0.09]] });
-    a._mech(bus, position, { delay: 0.040, gain: 0.08 * volume, freq: 3000, refDistance: 9 });
-  },
 
   dryFire(a, { volume = 1 } = {}) {
     a._burst(a.sfxBus, null, { duration: 0.05, gain: 0.35 * volume, type: 'highpass', freq: 2600, q: 2 });
@@ -1013,28 +997,6 @@ const SYNTHS = {
     a._tone(a.sfxBus, position, { type: 'sine', freq: 130, freqEnd: 50, duration: 0.14, gain: 0.25 * volume, refDistance: 5 });
   },
 
-  // ---------------------------------------------------------------- enemy
-  enemyAlert(a, { position = null, volume = 1 } = {}) {
-    // Two formant-ish tones read as a distant shout without a voice sample.
-    const f0 = 150 + Math.random() * 40;
-    a._tone(a.sfxBus, position, { type: 'sawtooth', freq: f0, freqEnd: f0 * 1.35, duration: 0.28, gain: 0.3 * volume, refDistance: 12 });
-    a._tone(a.sfxBus, position, { type: 'square', freq: 640, freqEnd: 900, duration: 0.24, gain: 0.06 * volume, refDistance: 12 });
-    a._burst(a.sfxBus, position, { duration: 0.3, gain: 0.09 * volume, type: 'bandpass', freq: 1400, q: 1.5, refDistance: 12 });
-  },
-  enemyHurt(a, { position = null, volume = 1 } = {}) {
-    const f0 = 190 + Math.random() * 70;
-    a._tone(a.sfxBus, position, { type: 'sawtooth', freq: f0, freqEnd: f0 * 0.6, duration: 0.22, gain: 0.26 * volume, refDistance: 10 });
-    a._burst(a.sfxBus, position, { duration: 0.16, gain: 0.1 * volume, type: 'bandpass', freq: 1100, q: 1.2, refDistance: 10 });
-  },
-  enemyDeath(a, { position = null, volume = 1 } = {}) {
-    const f0 = 160 + Math.random() * 40;
-    a._tone(a.sfxBus, position, { type: 'sawtooth', freq: f0, freqEnd: 55, duration: 0.7, gain: 0.28 * volume, refDistance: 12 });
-    a._burst(a.sfxBus, position, { duration: 0.5, gain: 0.12 * volume, type: 'lowpass', freq: 1200, freqEnd: 200, refDistance: 12 });
-  },
-  bodyFall(a, { position = null, volume = 1 } = {}) {
-    a._burst(a.sfxBus, position, { duration: 0.24, gain: 0.34 * volume, type: 'lowpass', freq: 800, freqEnd: 120, refDistance: 8 });
-  },
-
   // ---------------------------------------------------------------- player
   playerHurt(a, { volume = 1 } = {}) {
     // Taking a round: a hard slap on the plate, then the thud underneath it.
@@ -1103,18 +1065,6 @@ const SYNTHS = {
   // ------------------------------------------------------------------- UI
   uiClick(a, { volume = 1 } = {}) {
     a._tone(a.sfxBus, null, { type: 'square', freq: 720, freqEnd: 540, duration: 0.05, gain: 0.08 * volume });
-  },
-  waveComplete(a, { volume = 1 } = {}) {
-    const notes = [523.25, 659.25, 783.99];
-    notes.forEach((f, i) =>
-      setTimeout(() => a._canPlay() && a._tone(a.musicBus, null, { type: 'triangle', freq: f, duration: 0.28, gain: 0.16 * volume }), i * 110)
-    );
-  },
-  victory(a, { volume = 1 } = {}) {
-    const notes = [523.25, 659.25, 783.99, 1046.5];
-    notes.forEach((f, i) =>
-      setTimeout(() => a._canPlay() && a._tone(a.musicBus, null, { type: 'triangle', freq: f, duration: 0.5, gain: 0.2 * volume }), i * 160)
-    );
   },
   defeat(a, { volume = 1 } = {}) {
     const notes = [392, 349.23, 293.66, 196];

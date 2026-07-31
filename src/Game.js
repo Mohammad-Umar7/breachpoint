@@ -3,7 +3,7 @@
  * machine, and wires the systems to each other through callbacks.
  *
  * Rendering is layered:
- *   LAYER_WORLD      the arena, enemies, props, particles
+ *   LAYER_WORLD      the arena, other players, props, particles
  *   LAYER_VIEWMODEL  the first-person weapon only
  *
  * The world camera and the scope camera see only LAYER_WORLD; a dedicated
@@ -17,10 +17,10 @@
  *   3. sync dynamic meshes       — interpolated between the last two steps
  *   4. camera transform          — bob / recoil / lean / shake
  *   5. weapons                   — needs the final camera transform
- *   6. enemies, pickups, particles, UI
+ *   6. pickups, particles, UI
  *   7. scope render-to-texture, main render, scope overlay
  *
- * States: loading -> menu -> playing <-> paused -> gameover | victory
+ * States: loading -> menu -> playing <-> paused -> gameover
  */
 
 import * as THREE from 'three';
@@ -39,8 +39,6 @@ import { WeaponSystem } from './weapons/WeaponSystem.js';
 import { getWeaponDef } from './weapons/WeaponDefinitions.js';
 import { WeaponViewModel } from './weapons/WeaponViewModel.js';
 import { ADSSystem } from './weapons/ADSSystem.js';
-import { EnemyManager } from './enemies/EnemyManager.js';
-import { NavigationSystem } from './enemies/NavigationSystem.js';
 import { ParticleManager } from './fx/ParticleManager.js';
 import { PostFX } from './fx/PostFX.js';
 import { ScopeRenderer, LAYER_WORLD } from './fx/ScopeRenderer.js';
@@ -58,7 +56,6 @@ export const GAME_STATE = Object.freeze({
   PLAYING: 'playing',
   PAUSED: 'paused',
   GAMEOVER: 'gameover',
-  VICTORY: 'victory',
 });
 
 const ANISOTROPY = { low: 1, medium: 4, high: 8, ultra: 16 };
@@ -140,7 +137,7 @@ export class Game {
 
   _blankStats() {
     return {
-      score: 0, kills: 0, deaths: 0, headshots: 0, waveReached: 1,
+      score: 0, kills: 0, deaths: 0, headshots: 0,
       startTime: 0, elapsed: 0, damageTaken: 0,
     };
   }
@@ -167,7 +164,6 @@ export class Game {
       this.level = new Level(this.scene, this.physics, this.assets, this.settings, this.renderer);
       this.level.build();
       this.level.captureResetState();
-      this.nav = new NavigationSystem(this.level, this.physics);
 
       // Multiplayer. The client is created but idle until a match is joined,
       // so a failed or absent server never blocks the game from booting.
@@ -198,19 +194,6 @@ export class Game {
         assets: this.assets,
         viewModel: this.viewModel,
         adsSystem: this.adsSystem,
-      });
-
-      this.menus.setLoadingProgress(0.86, 'Briefing hostiles');
-      this.enemies = new EnemyManager({
-        scene: this.scene,
-        physics: this.physics,
-        assets: this.assets,
-        audio: this.audio,
-        fx: this.fx,
-        level: this.level,
-        player: this.player,
-        nav: this.nav,
-        settings: this.settings,
       });
 
       this.pickups = new PickupManager({
@@ -438,10 +421,6 @@ export class Game {
       if (this.net?.connected) return;
       this._gameOver();
     };
-    // Sprinting is loud — nearby soldiers will come and look.
-    this.player.onFootstep = (loudness) =>
-      this.enemies.alertNear(this.player.position, loudness, 'footstep');
-
     // --------------------------------------------------------- the weapons
     this.weapons.onHit = (info) => {
       this.ui.showHitmarker(info.killed, info.headshot);
@@ -453,37 +432,10 @@ export class Game {
         );
       }
     };
-    this.weapons.onShotFired = (pos, loudness) => this.enemies.alertNear(pos, loudness, 'gunfire');
     this.weapons.onPropHit = (prop, dmg, point, dir) => this._damageProp(prop, dmg, point, dir);
     this.weapons.onGrenadeExplode = (pos, def) => {
       this._detonate(pos, def.blastRadius, def.damage, 420, true);
     };
-
-    // --------------------------------------------------------- the enemies
-    this.enemies.onPlayerDamaged = (amount, from) => this.player.applyDamage(amount, from, 'bullet');
-    this.enemies.onPropHit = (prop, dmg, point, dir) => this._damageProp(prop, dmg, point, dir);
-    this.enemies.onEnemyKilled = (enemy, headshot) => {
-      const source = enemy.lastDamageSource === 'player' ? 'gun' : 'explosion';
-      this._registerKill(enemy, headshot, source);
-    };
-    this.enemies.onDrop = (type, pos) => this.pickups.drop(type, pos);
-    this.enemies.onWaveStart = (index, cfg) => {
-      this.stats.waveReached = index + 1;
-      this.ui.showBanner(cfg.label, 2.6);
-      this.audio.playWaveSting(index);
-    };
-    this.enemies.onWaveCleared = (index, wasLast) => {
-      if (wasLast) return;
-      const bonus = 250 * (index + 1);
-      this.stats.score += bonus;
-      this.ui.showBanner(`WAVE CLEAR  +${bonus}`, 2.4);
-      this.audio.play('waveComplete');
-      this.enemies.beginIntermission(6);
-      setTimeout(() => {
-        if (this.state === GAME_STATE.PLAYING) this.ui.showBanner('REINFORCEMENTS INBOUND', 2.0, true);
-      }, 2800);
-    };
-    this.enemies.onAllWavesCleared = () => this._victory();
 
     // --------------------------------------------------------- the pickups
     this.pickups.onCollect = (type, label, cls, amount) => {
@@ -496,20 +448,6 @@ export class Game {
         this.net?.claimHeal?.(amount, type);
       }
     };
-  }
-
-  /** Central scoring path for every kill, however it happened. */
-  _registerKill(enemy, headshot, source) {
-    const base = enemy.scoreValue ?? 100;
-    const points = Math.round(headshot ? base * 1.5 : base);
-    this.stats.score += points;
-    this.stats.kills++;
-    if (headshot) this.stats.headshots++;
-
-    const typeLabel = enemy.stats?.label ?? 'HOSTILE';
-    const tag = source === 'explosion' ? ' <b>[BLAST]</b>' : headshot ? ' <b>[HEADSHOT]</b>' : '';
-    this.ui.addKill(`${typeLabel.toUpperCase()} DOWN${tag}`, points, headshot);
-    this.audio.play('killConfirm');
   }
 
   // ============================================================== explosives
@@ -541,7 +479,7 @@ export class Game {
 
   /**
    * Shared blast: physics impulse, line-of-sight damage to the player and
-   * every enemy, knockback, full FX and a scorch mark.
+   * every player in range, knockback, full FX and a scorch mark.
    */
   /**
    * @param sourceId  weapon or hazard id the blast is reported to the server
@@ -551,7 +489,6 @@ export class Game {
    */
   _detonate(pos, radius, damage, force, fromPlayer, sourceId = 'grenade') {
     this.physics.applyExplosion(pos, radius, force);
-    this.enemies.applyExplosionDamage(pos, radius, damage, fromPlayer ? 'player' : 'explosion');
 
     this._tmpB.copy(this.player.position);
     this._tmpB.y += 0.3;
@@ -589,9 +526,9 @@ export class Game {
     /*
      * Other players, which nothing here used to touch.
      *
-     * Explosions only ever damaged AI enemies and the local player, so in a
-     * deathmatch a grenade landing at someone's feet did nothing at all — the
-     * one weapon in the loadout that could not hurt anybody.
+     * Explosions only ever damaged the local player, so in a deathmatch a
+     * grenade landing at someone's feet did nothing at all — the one weapon in
+     * the loadout that could not hurt anybody.
      *
      * Reported as ordinary hit claims so the server stays the authority on
      * damage. The origin sent is the BLAST CENTRE rather than the camera,
@@ -635,7 +572,6 @@ export class Game {
     this._tmpB.set(0, 1, 0);
     this.fx.addDecal({ x: pos.x, y: 0.02, z: pos.z }, this._tmpB, 'blood', radius * 0.5);
 
-    this.enemies.alertNear(pos, 60, 'gunfire');
   }
 
   _updatePendingExplosions(dt) {
@@ -683,7 +619,7 @@ export class Game {
     this._samplesRequested = true;
     this.audio.loadSamples?.([
       'shootRifle', 'shootPistol', 'shootShotgun', 'shootMagnum', 'shootBurst',
-      'shootSmg', 'shootLmg', 'shootSniper', 'shootMarksman', 'shootEnemy',
+      'shootSmg', 'shootLmg', 'shootSniper', 'shootMarksman',
       'reload', 'reloadEmpty', 'explosion', 'hitmarker', 'killConfirm',
     ]).catch(() => { /* optional by design */ });
   }
@@ -711,8 +647,6 @@ export class Game {
     // Level.playerSpawn, which in a match would drop everyone onto one tile.
     if (this.net?.connected && this._pendingSpawn) this._placePlayer(this._pendingSpawn);
 
-    // Deathmatch: opponents are other players, so no AI wave is started.
-    // EnemyManager stays wired up but idle, ready for a future PvE mode.
     this.ui.showBanner(
       this.net?.connected && this.net.isWarmup
         ? 'WAITING FOR PLAYERS' : 'FIGHT',
@@ -766,25 +700,9 @@ export class Game {
     this.audio.play('defeat');
     setTimeout(() => {
       if (this.state !== GAME_STATE.GAMEOVER) return;
-      this.menus.showResults('gameover', this._buildStatLines());
+      this.menus.showResults(this._buildStatLines());
       this.ui.showHud(false);
     }, 1400);
-  }
-
-  _victory() {
-    if (this.state !== GAME_STATE.PLAYING) return;
-    this._setState(GAME_STATE.VICTORY);
-    this.hasActiveRun = false;
-    this.stats.score += 2000;
-    this.input.exitPointerLock();
-    this.audio.setMuffled(true);
-    this.audio.play('victory');
-    this.ui.showBanner('AREA SECURED', 3);
-    setTimeout(() => {
-      if (this.state !== GAME_STATE.VICTORY) return;
-      this.menus.showResults('victory', this._buildStatLines());
-      this.ui.showHud(false);
-    }, 2200);
   }
 
   _buildStatLines() {
@@ -794,14 +712,6 @@ export class Game {
     const acc = this.weapons.shotsFired > 0
       ? Math.round((this.weapons.shotsHit / this.weapons.shotsFired) * 100)
       : 0;
-    /*
-     * Leftovers from the wave mode that this game no longer has: THREAT LEVEL
-     * read a `difficulty` setting that was deleted (so it silently showed the
-     * default, "VETERAN", to everyone) and WAVE REACHED counted waves that are
-     * never started in a deathmatch — it read "0 / 12" every time.
-     *
-     * Replaced with the numbers a free-for-all actually produces.
-     */
     const kd = this.stats.deaths > 0
       ? (this.stats.kills / this.stats.deaths).toFixed(2)
       : String(this.stats.kills);
@@ -819,13 +729,11 @@ export class Game {
 
   /** Put the world back to its starting state without reloading the page. */
   _resetWorld() {
-    this.enemies.reset();
     this.pickups.reset();
     this.fx.reset();
     this.weapons.reset();
     this.lean.reset();
     this.adsSystem.reset();
-    this.nav.clearClaims();
     this._pendingExplosions.length = 0;
 
     for (const prop of this.level.explosives) {
@@ -915,11 +823,7 @@ export class Game {
     this.player.updateLook(dt);
 
     // 2. Fixed-step simulation.
-    const ctx = { player: this.player };
-    this.physics.step(dt, (fdt) => {
-      this.player.fixedUpdate(fdt);
-      this.enemies.fixedUpdate(fdt, ctx);
-    });
+    this.physics.step(dt, (fdt) => this.player.fixedUpdate(fdt));
 
     // 3. Dynamic meshes follow their bodies (interpolated).
     this.physics.syncMeshes();
@@ -933,7 +837,6 @@ export class Game {
     this._updateNetwork(dt);
 
     // 6. Everything else.
-    this.enemies.update(dt, this.physics.alpha);
     this.pickups.update(dt, this.camera);
     this._updatePendingExplosions(dt);
     this.fx.update(dt, this.camera);
@@ -956,16 +859,11 @@ export class Game {
 
   /** Menus and post-game: keep the world alive but frozen for the player. */
   _updateIdle(dt) {
-    if (this.state === GAME_STATE.GAMEOVER || this.state === GAME_STATE.VICTORY) {
-      const ctx = { player: this.player };
-      this.physics.step(dt, (fdt) => {
-        this.player.fixedUpdate(fdt);
-        this.enemies.fixedUpdate(fdt, ctx);
-      });
+    if (this.state === GAME_STATE.GAMEOVER) {
+      this.physics.step(dt, (fdt) => this.player.fixedUpdate(fdt));
       this.physics.syncMeshes();
       this.player.update(dt, this.physics.alpha);
       this.viewModel.syncCamera();
-      this.enemies.update(dt, this.physics.alpha);
       this.fx.update(dt, this.camera);
       this._updatePendingExplosions(dt);
       this._updateScope(dt);
@@ -1522,7 +1420,6 @@ export class Game {
     this.scope?.dispose();
     this.postfx?.dispose();
     this.pickups?.dispose();
-    this.enemies?.dispose();
     this.weapons?.dispose();
     this.viewModel?.dispose();
     this.player?.dispose();
