@@ -789,9 +789,16 @@ export class RemotePlayers {
        * the right shoulder, which is what lets the barrel come round to only
        * about 17 degrees of cant instead of 30.
        */
+      /*
+       * Hand heights are measured, not guessed. Before this the shouldered
+       * muzzle sat 25 cm BELOW the head — a man aiming at the floor — and the
+       * ready carry hung at navel height. Both are lifted so the weapon rides
+       * where a person actually holds one: at the ready just under the
+       * shoulder, and shouldered with the sight line near the eye.
+       */
       //                      ready                    shouldered
-      const tR = carry(0.165, 0.010, -0.215,   0.020, 0.195, -0.215, this._handR);
-      const tL = carry(-0.055, 0.075, -0.405, -0.016, 0.210, -0.450, this._handL);
+      const tR = carry(0.165, 0.105, -0.215,   0.020, 0.345, -0.215, this._handR);
+      const tL = carry(-0.055, 0.170, -0.405, -0.016, 0.360, -0.450, this._handL);
 
       // Pole hints push each elbow outward, away from the chest.
       body.outOfReachR = this._solveArmIK(body, body.armR, body.foreR, tR, 0.8);

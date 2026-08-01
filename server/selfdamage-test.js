@@ -185,6 +185,39 @@ async function main() {
   check('and never exceeds the health cap', !huge || huge.hp <= PLAYER_MAX_HEALTH,
     huge ? `hp ${huge.hp} of ${PLAYER_MAX_HEALTH}` : '');
 
+  /*
+   * --- a blast at your feet hurts while you are MOVING ---------------------
+   *
+   * Standing still is the easy case and was already covered above. This is
+   * the one that gets reported: you throw a grenade, you keep moving, and it
+   * seems to do nothing.
+   *
+   * The server judges a claim against its own copy of the victim, and for
+   * everyone EXCEPT you that copy is rewound ~110 ms to match what the
+   * shooter saw. Rewinding your own body is wrong — you see yourself live —
+   * and handleShot no longer does it. In practice the two positions differ by
+   * only centimetres at realistic speeds, so this check cannot isolate the
+   * rewind on its own; what it does pin down is the symptom, that a blast at
+   * your feet while moving still takes most of the bar.
+   */
+  a.hits.length = 0;
+  await sleep(3600);                                   // come back alive
+  const at = [...a.spawn];
+  for (let i = 0; i < 40; i++) {
+    at[0] += 0.15;                                     // ~7.5 m/s, inside the budget
+    send(a, { t: MSG.INPUT, q: ++a.seq, p: at, y: 0, a: 0, f: 0, w: 'grenade' });
+    await sleep(20);
+  }
+  send(a, { t: MSG.SHOT, o: at, d: [0, 0, -1], w: 'grenade', h: [{ v: a.id, pt: 'torso' }] });
+  await sleep(450);
+  const onTheMove = a.hits.find((h) => h.v === a.id && h.a === a.id);
+  const FULL = 130;                                    // the frag's point-blank damage
+  check('a blast at your feet hurts even while you are moving', !!onTheMove,
+    onTheMove ? `${onTheMove.d} damage` : 'no hit registered');
+  check('and takes most of the bar rather than a sliver',
+    !!onTheMove && onTheMove.d >= FULL * 0.85,
+    onTheMove ? `${onTheMove.d} of ${FULL}` : '');
+
   a.ws.close(); b.ws.close();
   await sleep(150);
   console.log(`\n${passed}/${passed + failed} passed`);

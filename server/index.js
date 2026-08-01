@@ -728,7 +728,25 @@ function handleShot(player, msg) {
     // measured here and then thrown away, which is why nothing had falloff.
     let dist = null;
     if (origin) {
-      const was = victim.positionAt(rewindTo);
+      /*
+       * Rewind OTHER people, never yourself.
+       *
+       * The rewind exists because the shooter sees everyone else
+       * INTERP_DELAY_MS in the past, so the server has to judge the shot
+       * against what they actually saw. None of that applies to your own
+       * body: you see yourself live, with no interpolation, so the position
+       * to price your own blast against is where you are NOW.
+       *
+       * Rewinding it meant a grenade at your feet was measured against where
+       * you stood up to 400 ms earlier — 3.5 m away at a sprint. A blast
+       * radius of 7.5 m that falls off to ZERO at the edge turns that error
+       * into no damage at all, which is exactly how "the grenade doesn't hurt
+       * me" was reported: it did, whenever you happened to be standing still,
+       * and did nothing whenever you were moving.
+       */
+      const was = victim === player
+        ? { x: victim.x, y: victim.y, z: victim.z }
+        : victim.positionAt(rewindTo);
       dist = Math.hypot(origin[0] - was.x, origin[1] - was.y, origin[2] - was.z);
       const maxRange = (weapon.range ?? 150) * LIMITS.rangeSlack;
       if (dist > maxRange) continue;

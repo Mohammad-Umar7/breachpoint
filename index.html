@@ -209,7 +209,11 @@
           <button class="nav-btn" id="btn-credits"><span class="k">08</span>CREDITS</button>
         </nav>
         <div class="menu-footer">
-          <div class="chip"><span>CALLSIGN</span><b id="menu-name-tag">OPERATOR</b></div>
+          <!-- Editable: PLAY reads the saved callsign, and the only place to
+               set one used to be the CREATE/JOIN lobby — so anyone who only ever
+               pressed PLAY was called OPERATOR to everybody else, forever. -->
+          <label class="chip chip-input" for="menu-name-input"><span>CALLSIGN</span><input id="menu-name-input" maxlength="16" autocomplete="off" spellcheck="false"
+                   placeholder="OPERATOR" aria-label="Your callsign" /></label>
           <div class="chip"><span>PRIMARY</span><b id="menu-primary-tag">AR-15</b></div>
           <div class="chip"><span>SECONDARY</span><b id="menu-secondary-tag">M9</b></div>
         </div>

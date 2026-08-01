@@ -800,10 +800,17 @@ export class WeaponSystem {
     this._tmp2.y += 2.2;
     this._tmp2.add(this.player.velocity);
 
-    const mesh = new THREE.Mesh(
-      new THREE.SphereGeometry(0.075, 12, 8),
-      this.assets.getMaterial('darkGear')
-    );
+    /*
+     * The thrown grenade is the AUTHORED model, not a sphere.
+     *
+     * The frag you hold is `grenade.glb` — the one built in Blender — but the
+     * one that left your hand was a twelve-segment sphere with a dark
+     * material on it. Two different objects for the same grenade, and the
+     * moment it mattered (watching it bounce into a room) you saw the wrong
+     * one. The sphere stays as a fallback for a missing or failed model,
+     * which is how every other asset here degrades.
+     */
+    const mesh = this._buildThrownGrenade();
     mesh.castShadow = true;
     this.fx.scene.add(mesh);
 
@@ -829,6 +836,70 @@ export class WeaponSystem {
     if (w.magazine <= 0 && w.reserve > 0) w.startReload();
   }
 
+  /**
+   * The mesh for a grenade in flight.
+   *
+   * Cloned from the authored model so the thing bouncing across the floor is
+   * the same object you were holding. Object3D.clone() shares geometry AND
+   * materials with the source, so each throw costs a handful of Object3Ds and
+   * no GPU memory — and, because the materials are shared, no shader compile.
+   *
+   * Scaled to the physics body rather than trusted: the view model is authored
+   * at whatever size reads well in first person, which is not necessarily the
+   * 14 cm the collider is.
+   */
+  _buildThrownGrenade() {
+    const DIAMETER = 0.14;                       // matches the 0.07 half-extent
+    const source = this.assets.getModel?.('grenade');
+
+    if (source) {
+      const model = source.clone(true);
+      model.traverse((o) => {
+        if (!o.isMesh) return;
+        // The source is a view model on the weapon layer, which the world
+        // camera cannot see. A grenade in the air is world geometry.
+        o.layers.set(0);
+        o.castShadow = true;
+        o.receiveShadow = false;
+        o.frustumCulled = true;
+      });
+      const box = new THREE.Box3().setFromObject(model);
+      const size = box.getSize(new THREE.Vector3());
+      const largest = Math.max(size.x, size.y, size.z);
+      if (largest > 1e-4) model.scale.multiplyScalar(DIAMETER / largest);
+
+      // Centre it on its own bounds so it spins about its middle rather than
+      // about whatever origin the model was authored around.
+      const centre = box.getCenter(new THREE.Vector3()).multiplyScalar(DIAMETER / (largest || 1));
+      model.position.sub(centre);
+
+      const holder = new THREE.Group();
+      holder.add(model);
+      return holder;
+    }
+
+    // No model loaded — the same progressive-enhancement fallback every other
+    // asset here uses.
+    const fallback = new THREE.Mesh(
+      new THREE.SphereGeometry(DIAMETER / 2, 12, 8),
+      this.assets.getMaterial('darkGear'),
+    );
+    fallback.userData.ownsGeometry = true;
+    return fallback;
+  }
+
+
+  /**
+   * Free a thrown grenade's mesh.
+   *
+   * ONLY the fallback sphere owns its geometry. A cloned model shares both
+   * geometry and materials with the source in AssetManager — disposing those
+   * would blank out the grenade in your hands and every one thrown after it,
+   * and a Group has no `.geometry` to dispose in the first place.
+   */
+  _disposeGrenadeMesh(mesh) {
+    if (mesh?.userData?.ownsGeometry) mesh.geometry?.dispose();
+  }
   _updateGrenades(dt) {
     for (let i = this.grenades.length - 1; i >= 0; i--) {
       const g = this.grenades[i];
@@ -841,7 +912,7 @@ export class WeaponSystem {
 
       this.physics.removeBody(g.body);
       this.fx.scene.remove(g.mesh);
-      g.mesh.geometry.dispose();
+      this._disposeGrenadeMesh(g.mesh);
       this.grenades.splice(i, 1);
     }
   }
@@ -850,7 +921,7 @@ export class WeaponSystem {
     for (const g of this.grenades) {
       this.physics.removeBody(g.body);
       this.fx.scene.remove(g.mesh);
-      g.mesh.geometry.dispose();
+      this._disposeGrenadeMesh(g.mesh);
     }
     this.grenades.length = 0;
     for (const p of this.projectiles) p.alive = false;

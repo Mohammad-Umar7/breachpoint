@@ -201,9 +201,28 @@ export class InputManager {
       this.pointerLocked = false;
     };
 
+    /*
+     * Anything that can take the input away has to drop every held button.
+     *
+     * A `mousedown` is only recorded while the pointer is locked, but a
+     * `mouseup` that never arrives leaves the trigger latched down — and an
+     * automatic weapon fires on `isMouseDown` alone, so the gun keeps
+     * shooting with nobody touching the mouse. blur covers most of it;
+     * visibilitychange covers switching tab or workspace, which does not
+     * always raise blur first, and pointerup is a second chance at the
+     * release in environments that deliver one and not the other.
+     */
     this._onBlur = () => {
       this.keys.clear();
       this.mouseButtons.clear();
+    };
+
+    this._onVisibility = () => {
+      if (document.hidden) this._onBlur();
+    };
+
+    this._onPointerUp = (e) => {
+      this.mouseButtons.delete(e.button);
     };
 
     window.addEventListener('keydown', this._onKeyDown);
@@ -211,6 +230,8 @@ export class InputManager {
     window.addEventListener('blur', this._onBlur);
     window.addEventListener('mousedown', this._onMouseDown);
     window.addEventListener('mouseup', this._onMouseUp);
+    window.addEventListener('pointerup', this._onPointerUp);
+    document.addEventListener('visibilitychange', this._onVisibility);
     window.addEventListener('mousemove', this._onMouseMove);
     window.addEventListener('wheel', this._onWheel, { passive: false });
     window.addEventListener('contextmenu', this._onContextMenu, { capture: true });
@@ -382,6 +403,8 @@ export class InputManager {
     window.removeEventListener('blur', this._onBlur);
     window.removeEventListener('mousedown', this._onMouseDown);
     window.removeEventListener('mouseup', this._onMouseUp);
+    window.removeEventListener('pointerup', this._onPointerUp);
+    document.removeEventListener('visibilitychange', this._onVisibility);
     window.removeEventListener('mousemove', this._onMouseMove);
     window.removeEventListener('wheel', this._onWheel);
     window.removeEventListener('contextmenu', this._onContextMenu, { capture: true });

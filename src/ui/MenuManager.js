@@ -17,6 +17,7 @@ import { DEFAULT_SETTINGS } from '../core/Settings.js';
 import { RETICLE_STYLES } from '../fx/ScopeRenderer.js';
 import { effectiveAimSpeed } from '../core/SensitivityManager.js';
 import { clamp } from '../core/MathUtils.js';
+import { sanitizeName } from '../net/protocol.js';
 
 const SCREENS = [
   'screen-loading', 'screen-menu', 'screen-lobby', 'screen-loadout',
@@ -254,7 +255,7 @@ export class MenuManager {
       settingsBody: id('settings-body'),
       weaponList: id('weapon-list'),
       weaponDetail: id('weapon-detail'),
-      menuNameTag: id('menu-name-tag'),
+      menuNameInput: id('menu-name-input'),
       lobbyTitle: id('lobby-title'),
       lobbyStatus: id('lobby-status'),
       lobbyCode: id('lobby-code'),
@@ -325,6 +326,17 @@ export class MenuManager {
     click('btn-quit', () => this.onQuitToMenu?.());
     click('btn-menu-over', () => this.onQuitToMenu?.());
     click('btn-error-reload', () => window.location.reload());
+
+    /*
+     * The callsign has to be saved as it is typed.
+     *
+     * PLAY reads `playerName` from settings, and the only thing that ever wrote
+     * it was the CREATE/JOIN lobby. Anyone who only pressed PLAY was called
+     * OPERATOR to everyone else no matter what they did.
+     */
+    this.el.menuNameInput?.addEventListener('input', () => {
+      this.settings.set('playerName', sanitizeName(this.el.menuNameInput.value, ''));
+    });
 
     click('btn-play', () => this._quickMatch());
     click('btn-create', () => this.openLobby('create'));
@@ -722,8 +734,9 @@ export class MenuManager {
   // ------------------------------------------------------------------ tags
   /** Keep the summary chips on the main menu in sync. */
   refreshTags() {
-    if (this.el.menuNameTag) {
-      this.el.menuNameTag.textContent = this.settings.get('playerName') || 'OPERATOR';
+    // Only overwrite while it is not being typed in, or the caret jumps.
+    if (this.el.menuNameInput && document.activeElement !== this.el.menuNameInput) {
+      this.el.menuNameInput.value = this.settings.get('playerName') || '';
     }
     if (this.el.menuPrimaryTag) this.el.menuPrimaryTag.textContent = shortName(this.settings.get('loadoutPrimary'));
     if (this.el.menuSecondaryTag) this.el.menuSecondaryTag.textContent = shortName(this.settings.get('loadoutSecondary'));

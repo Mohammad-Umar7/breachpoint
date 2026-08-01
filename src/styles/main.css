@@ -488,6 +488,19 @@ button.primary:hover { background: linear-gradient(180deg, rgba(85,190,225,0.9),
 .chip span { font-size: 10px; letter-spacing: 2px; color: var(--ink-dim); }
 .chip b { font-size: 13px; letter-spacing: 2px; color: var(--accent); }
 
+/* The callsign chip is editable in place — it is the only way somebody who
+   only ever presses PLAY can set a name. Styled to look like the other chips
+   until focused, so the menu still reads as a summary strip. */
+.chip-input { cursor: text; }
+.chip-input input {
+  width: 11ch; padding: 0; border: 0; background: transparent;
+  font: inherit; font-size: 13px; letter-spacing: 2px;
+  color: var(--accent); text-transform: uppercase;
+}
+.chip-input input::placeholder { color: var(--accent); opacity: 0.55; }
+.chip-input input:focus { outline: none; }
+.chip-input:focus-within { border-left-color: var(--accent); background: rgba(6,11,15,0.9); }
+
 .screen-footer {
   display: flex; gap: 10px; align-items: center; justify-content: flex-end;
   flex-wrap: wrap; padding-top: 4px;
