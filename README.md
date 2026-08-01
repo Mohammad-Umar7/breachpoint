@@ -438,6 +438,7 @@ src/
 │   ├── protocol.js             Wire format — SHARED with the server
 │   ├── NetworkClient.js        Socket, interpolation, prediction
 │   ├── RemotePlayers.js        Other players' bodies, IK, lean, name tags
+│   ├── wireNetwork.js          Every multiplayer callback, wired to the game
 │   └── arena.js                Bounds and spawn points
 ├── fx/
 │   ├── ParticleManager.js      Sparks, smoke, debris, tracers, shells, decals

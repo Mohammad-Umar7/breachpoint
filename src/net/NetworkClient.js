@@ -109,7 +109,7 @@ export class NetworkClient {
     this.onStateChange = null;   // (netState, detail)
     this.onWelcome = null;       // ({ id, room, spawn, players, match })
     this.onJoined = null;        // (playerSummary)
-    this.onLeft = null;          // (id)
+    this.onLeft = null;          // (id, name) — name captured before removal
     this.onHit = null;           // ({ victim, attacker, damage, part, hp, armor })
     this.onFire = null;          // ({ shooter, origin, direction, weapon })
     this.onKill = null;          // ({ victim, attacker, weapon, headshot })
@@ -398,13 +398,18 @@ export class NetworkClient {
         if (msg.p) { this._upsert(msg.p); this.onJoined?.(msg.p); }
         break;
 
-      case MSG.LEFT:
+      case MSG.LEFT: {
+        // Read the name BEFORE the delete below: a listener that wants to say
+        // who left cannot look it up afterwards, and nameOf() would give it
+        // the "SOMEONE" fallback.
+        const goneName = this.nameOf(msg.id);
         this.players.delete(msg.id);
         // Purge from history too, or the leaver's body hangs in the world for
         // as long as the interpolation buffer holds them.
         for (const s of this.snapshots) s.players.delete(msg.id);
-        this.onLeft?.(msg.id);
+        this.onLeft?.(msg.id, goneName);
         break;
+      }
 
       case MSG.HIT: {
         if (msg.a === this.selfId) this.hitsConfirmed++;

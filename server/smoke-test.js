@@ -224,40 +224,50 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await sleep(200);
   check('cannot damage yourself', a.drain(MSG.HIT).length === 0);
 
-  // --- headshot multiplier ------------------------------------------------
-  // Put B back to full health first. The spam test above now lands its whole
-  // burst allowance, which leaves B low enough that a 48-damage headshot kills
-  // instead of registering — the check would then read a KILL as a missing HIT.
-  a.clear();
-  for (let i = 0; i < 6 && a; i++) { a.shootAt(b.id, 'torso'); await sleep(90); }
-
   /*
-   * WAIT for B to be alive and whole, rather than sleeping a fixed span.
+   * --- headshot multiplier -----------------------------------------------
    *
-   * The fixed wait was tuned to how long B took to die back when only health
-   * absorbed damage. Armour buys them a couple more rounds, so the death
-   * landed later, the respawn landed later still, and the headshot went into a
-   * corpse — the server correctly ignores hits on the dead, and the check read
-   * the missing HIT as a broken multiplier. Watching the snapshot removes the
-   * guesswork whatever the damage numbers become.
-   */
-  /*
-   * Both clients KEEP SENDING while waiting. A real one does — this is the
+   * B has to be at FULL health for this, and getting them there means killing
+   * them and letting them respawn. Fire until the server actually says they
+   * died rather than assuming a round count: how many it takes depends on the
+   * range, and the two spawn points are not always the same distance apart.
+   *
+   * A fixed six rounds killed B at 58 m and left them on 17 hp at 84 m. The
+   * headshot then finished them off, the server sent a KILL instead of a HIT,
+   * and the check read the missing HIT as a broken multiplier — a green suite
+   * on close spawns and a red one on far spawns, for a multiplier that was
+   * never wrong. The server log said `ACCEPT rifle head ... victimHp 17`.
+   *
+   * Both clients keep sending throughout. A real one does — this is the
    * position stream — and the server drops anyone silent for LIMITS.timeoutSec.
-   * The first version of this loop sat mute for up to twelve seconds against a
-   * fifteen second timeout, so on a slow run both players were disconnected
-   * before the next check and three unrelated assertions failed together,
-   * pointing at a headshot multiplier that was never broken.
    */
   const DEAD_FLAG = 1 << 4;
-  const respawnBy = Date.now() + MATCH_RULES.respawnDelaySec * 1000 + 4000;
-  while (Date.now() < respawnBy) {
+  a.clear();
+  let bDied = false;
+  for (let i = 0; i < 40 && !bDied; i++) {
+    a.shootAt(b.id, 'torso');
+    a.input(a.pos);
+    b.input(b.pos);
+    await sleep(110);
+    bDied = a.drain(MSG.KILL).some((k) => k.v === b.id);
+  }
+  check('the target can be killed at this range', bDied,
+    bDied ? `at ${range.toFixed(0)} m` : 'never died — check falloff');
+
+  // Then wait for them to come back whole, watching the snapshot rather than
+  // sleeping a span tuned to damage numbers that balancing will change.
+  const respawnBy = Date.now() + MATCH_RULES.respawnDelaySec * 1000 + 6000;
+  let bWhole = false;
+  while (Date.now() < respawnBy && !bWhole) {
     a.input(a.pos);
     b.input(b.pos);
     await sleep(100);
     const row = a.drain(MSG.SNAPSHOT).at(-1)?.p?.find((r) => r[0] === b.id);
-    if (row && (row[6] & DEAD_FLAG) === 0 && row[8] >= PLAYER_MAX_HEALTH) break;
+    bWhole = !!row && (row[6] & DEAD_FLAG) === 0 && row[8] >= PLAYER_MAX_HEALTH;
   }
+  check('and comes back at full health for the next check', bWhole,
+    bWhole ? '' : 'never returned to full health');
+
   a.clear();
   a.shootAt(b.id, 'head');
   await sleep(250);

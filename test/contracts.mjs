@@ -364,5 +364,26 @@ for (const [hook] of declaredHooks) {
 check('no callback hook is declared but never invoked',
   orphanHooks.length === 0, orphanHooks.join(', ') || `${declaredHooks.size} hooks`);
 
+/*
+ * And the other way round: a hook that IS fired but that nothing listens to.
+ *
+ * `onJoined` was declared by NetworkClient and called on every arrival, and no
+ * one had ever assigned it — so a friend joining your match produced no notice
+ * at all. Nothing failed, nothing warned; the feature simply was not there.
+ * That is the quietest kind of missing wiring, and the only way to see it is
+ * to look for the gap deliberately.
+ */
+const unheardHooks = [];
+for (const [hook, declaredIn] of declaredHooks) {
+  const listenedTo = ALL_SRC.some(({ file, text }) =>
+    file !== declaredIn && new RegExp(`\\.${hook}\\s*=`).test(text));
+  if (listenedTo) continue;
+  const fired = ALL_SRC.some(({ file, text }) =>
+    file === declaredIn && new RegExp(`${hook}\\?\\.\\(`).test(text));
+  if (fired) unheardHooks.push(`${hook} (${declaredIn})`);
+}
+check('no callback is fired that nothing listens to',
+  unheardHooks.length === 0, unheardHooks.join(', ') || `${declaredHooks.size} hooks`);
+
 console.log(`\n${passed}/${passed + failed} passed`);
 process.exit(failed ? 1 : 0);

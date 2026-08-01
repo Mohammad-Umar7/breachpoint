@@ -111,7 +111,6 @@ export class WeaponSystem {
      */
     this.remoteHitTest = null;
     this.onShotResolved = null;
-    this.onShotFired = null;
     this.onPropHit = null;
     this.onGrenadeExplode = null;
 
@@ -537,11 +536,6 @@ export class WeaponSystem {
       if (anyHit) this._registerHit(totalDamage, anyHeadshot, killed, lastPoint);
     }
 
-    // Gunfire is loud — let the AI hear it.
-    const loudness = def.category === 'sniper' ? 60
-      : def.category === 'shotgun' || def.category === 'lmg' ? 45
-      : def.category === 'pistol' ? 30 : 38;
-    this.onShotFired?.(this._origin, loudness);
   }
 
   _registerHit(damage, headshot, killed, point) {
