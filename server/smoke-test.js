@@ -14,7 +14,7 @@
 import { WebSocket } from 'ws';
 import {
   MSG, PROTOCOL_VERSION, MATCH_STATE, MATCH_RULES, LIMITS, PLAYER_MAX_HEALTH,
-  PLAYER_START_ARMOR, ARMOR_ABSORB,
+  PLAYER_START_ARMOR, ARMOR_ABSORB, FLAG,
 } from '../src/net/protocol.js';
 import { WEAPON_DEFS } from '../src/weapons/WeaponDefinitions.js';
 
@@ -254,19 +254,30 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   check('the target can be killed at this range', bDied,
     bDied ? `at ${range.toFixed(0)} m` : 'never died — check falloff');
 
-  // Then wait for them to come back whole, watching the snapshot rather than
-  // sleeping a span tuned to damage numbers that balancing will change.
-  const respawnBy = Date.now() + MATCH_RULES.respawnDelaySec * 1000 + 6000;
+  /*
+   * Then wait for them to come back whole AND SHOOTABLE, watching the snapshot
+   * rather than sleeping a span tuned to damage numbers that balancing will
+   * change.
+   *
+   * The protection check is not decoration. A respawned player is invulnerable
+   * for MATCH_RULES.spawnProtectSec, so the next check below — which fires one
+   * round and reads the damage — got no HIT at all and reported the headshot
+   * multiplier as `undefined`. Waiting on the flag rather than on a duration
+   * means changing that duration cannot silently break this test again.
+   */
+  const respawnBy = Date.now() + MATCH_RULES.respawnDelaySec * 1000
+    + MATCH_RULES.spawnProtectSec * 1000 + 6000;
   let bWhole = false;
   while (Date.now() < respawnBy && !bWhole) {
     a.input(a.pos);
     b.input(b.pos);
     await sleep(100);
     const row = a.drain(MSG.SNAPSHOT).at(-1)?.p?.find((r) => r[0] === b.id);
-    bWhole = !!row && (row[6] & DEAD_FLAG) === 0 && row[8] >= PLAYER_MAX_HEALTH;
+    bWhole = !!row && (row[6] & DEAD_FLAG) === 0 && row[8] >= PLAYER_MAX_HEALTH
+      && (row[6] & FLAG.PROTECTED) === 0;
   }
-  check('and comes back at full health for the next check', bWhole,
-    bWhole ? '' : 'never returned to full health');
+  check('and comes back at full health, out of spawn protection', bWhole,
+    bWhole ? '' : 'never returned to full health and shootable');
 
   a.clear();
   a.shootAt(b.id, 'head');

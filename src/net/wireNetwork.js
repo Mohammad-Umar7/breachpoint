@@ -18,7 +18,9 @@
 import * as THREE from 'three';
 
 import { getWeaponDef } from '../weapons/WeaponDefinitions.js';
-import { MATCH_STATE } from './protocol.js';
+import {
+  MATCH_STATE, STREAK_TIERS, STREAK_ANNOUNCE_AT, streakName, multiKillName,
+} from './protocol.js';
 import { NET_STATE } from './NetworkClient.js';
 import { clamp } from '../core/MathUtils.js';
 
@@ -245,6 +247,28 @@ export function wireNetwork(game) {
       k.attackerName + ' \u2192 ' + k.victimName + (k.headshot ? '  HS' : ''),
       k.isSelfAttacker,
     );
+    /*
+     * Streaks — see MSG.KILL and STREAK_TIERS in protocol.js.
+     *
+     * Two announcements, for two different audiences. The MILESTONE goes to
+     * the whole room on purpose: a player on a long run should have everybody
+     * else looking for them, which is what stops one good player quietly
+     * farming a lobby and gives the other five a shared reason to co-operate.
+     * The MULTI-KILL is personal — it is a reward for the fight you have just
+     * won, and it means nothing to anybody who did not see it.
+     */
+    const milestone = streakName(k.streak);
+    if (milestone) {
+      game.ui.addKillFeed?.(`${k.attackerName}  ${milestone}  x${k.streak}`, k.isSelfAttacker);
+    }
+    // Whoever ends a long run gets the credit for it, in front of everyone.
+    if (k.endedStreak >= STREAK_ANNOUNCE_AT && !k.isSelfVictim) {
+      game.ui.addKillFeed?.(
+        `${k.attackerName} ENDED ${k.victimName} x${k.endedStreak}`,
+        k.isSelfAttacker,
+      );
+    }
+
     if (k.isSelfAttacker) {
       game.stats.kills++;
       if (k.headshot) game.stats.headshots++;
@@ -259,10 +283,27 @@ export function wireNetwork(game) {
       // The kill marker is a distinct shape and colour from a hit, because
       // "they are dead" is the one piece of information you must not miss.
       game.ui.showHitmarker(true, k.headshot);
-      // Says who, and that the kill put you back on your feet — the health
-      // arrives separately as a HEAL from the server.
-      game.ui.showBanner?.(
-        `${k.headshot ? 'HEADSHOT' : 'ELIMINATED'}  ${k.victimName}`, 1.6);
+
+      /*
+       * ONE banner, saying the most notable true thing.
+       *
+       * Multi-kill beats milestone beats the plain elimination. Winning a
+       * three-way fight is the rarer event, and stacking two banners in the
+       * same second means neither gets read. Nothing is lost by not repeating
+       * the streak here — it has already gone to the whole room above.
+       */
+      const multi = multiKillName(k.multiKill);
+      const headline = multi ?? milestone
+        ?? `${k.headshot ? 'HEADSHOT' : 'ELIMINATED'}  ${k.victimName}`;
+      game.ui.showBanner?.(headline, multi || milestone ? 2.1 : 1.6);
+
+      // A rising note per step, so a streak is audible without having to read
+      // anything in the middle of a fight.
+      if (multi || milestone) {
+        const tier = STREAK_TIERS.findIndex(([at]) => at === k.streak);
+        const step = multi ? k.multiKill : 2 + Math.max(0, tier);
+        setTimeout(() => game.audio.play('killStreak', { step }), 150);
+      }
     }
     if (k.isSelfVictim) {
       game.stats.deaths++;

@@ -29,7 +29,7 @@ in under a second. If you add a new name-based link, add a check for it there.
 | `src/core/` | Settings, input, asset loading, sensitivity, quality detection | `AssetManager` owns every model, material and texture **by name** |
 | `src/player/` | The local player: movement, camera, vitals, lean | Movement runs on the fixed physics step; look runs per frame |
 | `src/weapons/` | Weapon behaviour, view model, ADS, recoil | `WeaponDefinitions.js` is **data** — most weapon changes are only here |
-| `src/net/` | Multiplayer: protocol, client, other players' bodies | `protocol.js` is shared with the server — it is the contract |
+| `src/net/` | Multiplayer: protocol, client, other players' bodies and sounds | `protocol.js` is shared with the server — it is the contract |
 | `src/world/` | The arena geometry and pickups | |
 | `src/fx/`, `src/audio/` | Particles, post-processing, scope, all sound | Sounds are **synthesised**, looked up by name |
 | `src/ui/` | HUD (`UIManager`) and menus (`MenuManager`) | Both reference `index.html` ids as strings |
@@ -63,6 +63,7 @@ of them.**
 | `src/net/protocol.js` | shared | **Both** the client and the server import it. Change it and you must change both ends, or old clients break |
 | `WEAPON_DEFS` | `WeaponDefinitions.js` | Client damage, server damage validation, the loadout UI |
 | `TAG_KIND` | `PhysicsWorld` | Every raycast filter in the weapons and player code |
+| `body.phase` / `body.speed` | `RemotePlayers._animate` | `RemoteAudio` reads both to place footsteps on the visible footfall — renaming either silences every player |
 
 > A real example. The player-body materials used to be named `enemyFatigues`,
 > `enemyVest`, `enemySkin`. Nothing said they were also what every multiplayer
@@ -123,15 +124,27 @@ Contracts check every id you reference exists.
 ## Checking your work
 
 ```bash
-npm test                      # 14 suites, 157 checks, ~1 min
+npm test                      # every suite, ~2 min
 npm test -- contracts         # just the wiring checks, ~1 second
 npm run deps <file|name>      # blast radius before you cut
 npm run deps -- --unused      # files nothing imports
 npm run build                 # catches syntax and bad imports
+npm run bot -- BUDDY 2        # two practice players, to look at it yourself
 ```
 
 `npm test` starts and stops a game server itself. New suites are picked up
 automatically — drop a file in `test/*.mjs` or `server/*-test.js` and it runs.
+
+### Things only a second player can show you
+
+Plenty of this is not testable from a server suite: whether a footstep lands on
+the visible footfall, whether a spawn shield reads as protection or as broken
+hit registration, whether a name tag sits at the right height. `npm run bot`
+puts a player in the room who walks, sprints, crouches, jumps, reloads and
+fires, so any of that can be checked alone in about ten seconds.
+
+Two of them (`npm run bot -- BUDDY 2`) is enough to take a match LIVE without
+you joining, which is what most match-state behaviour needs.
 
 ### A warning about tests that pass
 

@@ -47,6 +47,7 @@ import { MenuManager } from './ui/MenuManager.js';
 import { Minimap } from './ui/Minimap.js';
 import { NetworkClient, inviteUrl, roomFromUrl } from './net/NetworkClient.js';
 import { RemotePlayers } from './net/RemotePlayers.js';
+import { RemoteAudio } from './net/RemoteAudio.js';
 import { wireNetwork } from './net/wireNetwork.js';
 import { FLAG, MATCH_STATE, DEFAULT_NAME, hasRealName } from './net/protocol.js';
 import { clamp, damp, randRange } from './core/MathUtils.js';
@@ -139,6 +140,12 @@ export class Game {
     this._menuTime = 0;
     this._tmpA = new THREE.Vector3();
     this._tmpB = new THREE.Vector3();
+    /** Straight down, for ground probes. Constant — never write to it. */
+    this._down = new THREE.Vector3(0, -1, 0);
+    // Its own scratch rather than _tmpA. The surface probe runs in the middle
+    // of remotes.sync(), and sharing a scratch across a call that deep is how
+    // you get a bug that only shows up with several players on screen.
+    this._probeAt = new THREE.Vector3();
     this._camForward = new THREE.Vector3();
     this._camUp = new THREE.Vector3();
     this._focusRayDir = new THREE.Vector3();
@@ -188,7 +195,22 @@ export class Game {
 
       this.menus.setLoadingProgress(0.72, 'Spawning effects');
       this.fx = new ParticleManager(this.scene, this.assets, this.settings);
-      this.remotes = new RemotePlayers({ scene: this.scene, assets: this.assets });
+      /*
+       * The other players become audible here.
+       *
+       * Footsteps, landings and reloads, all derived from the snapshot the
+       * client already receives — see net/RemoteAudio.js. The surface probe is
+       * what makes a catwalk ring and concrete thud; without it everyone walks
+       * on concrete, which is most of this arena anyway.
+       */
+      this.remotes = new RemotePlayers({
+        scene: this.scene,
+        assets: this.assets,
+        audio: new RemoteAudio({
+          audio: this.audio,
+          surfaceProbe: (x, y, z) => this._surfaceUnder(x, y, z),
+        }),
+      });
 
       this.menus.setLoadingProgress(0.78, 'Arming player');
       this.lean = new LeanSystem(this.input, this.settings, this.physics);
@@ -791,7 +813,19 @@ export class Game {
     }
 
     this.clock.last = now;
-    dt = Math.min(dt, 0.1);
+    /*
+     * Clamped at BOTH ends.
+     *
+     * The upper bound stops a long stall being integrated as one enormous
+     * step. The lower bound guards a negative dt, which sounds impossible —
+     * performance.now() is monotonic — but arrives the moment anything else
+     * drives this loop alongside the animation frame, and a single negative
+     * step is unrecoverable rather than merely wrong: it puts NaN into a
+     * position, every damp() and hypot() downstream propagates it, and the
+     * player never comes back. Found exactly that way, driving the loop from a
+     * timer to test remote players in a hidden tab.
+     */
+    dt = Math.min(Math.max(dt, 0), 0.1);
 
     this._updateFps(dt);
     this.governor?.update(dt);
@@ -957,6 +991,23 @@ export class Game {
     this.postfx.setFocus(hit ? hit.distance : 60, dt);
   }
 
+  /**
+   * What another player is standing on, so their footsteps sound like it.
+   *
+   * Called from RemoteAudio, at most once per audible footstep — roughly two
+   * raycasts a second per nearby player, and none at all for the ones too far
+   * away to hear. Cheap enough not to need throttling of its own, unlike the
+   * local player's equivalent which runs every frame and therefore does.
+   *
+   * @returns {string|null} a SURFACE tag, or null to fall back to concrete
+   */
+  _surfaceUnder(x, y, z) {
+    this._probeAt.set(x, y + 0.35, z);
+    const hit = this.physics.raycast(this._probeAt, this._down, 1.4, {
+      filter: (tag) => !!tag && tag.kind !== TAG_KIND.PLAYER,
+    });
+    return hit?.tag?.surface ?? null;
+  }
 
   // ============================================================ multiplayer
   /**
@@ -1129,6 +1180,11 @@ export class Game {
           ? this.net.nameOf(this.net.selfId)
           : (this.settings.get('playerName') || DEFAULT_NAME),
         maxArmor: this.player.maxArmor,
+        // Read off the server's own snapshot rather than run down a local
+        // timer, so the readout cannot claim protection the server has already
+        // taken away — which is precisely the moment it would matter.
+        spawnProtected: this.net?.connected
+          && (this.net.selfFlags & FLAG.PROTECTED) !== 0,
         weapon: this.weapons.hudState(),
         lean: this.lean.amount,
         match: this.net?.connected ? this.net.match : null,

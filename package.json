@@ -11,6 +11,7 @@
     "test": "node scripts/test.mjs",
     "deps": "node scripts/deps.mjs",
     "loadtest": "node scripts/loadtest.mjs",
+    "bot": "node scripts/bot.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -18,6 +19,7 @@
     "three": "^0.169.0"
   },
   "devDependencies": {
-    "vite": "^5.4.10"
+    "vite": "^5.4.10",
+    "ws": "^8.18.0"
   }
 }

@@ -34,6 +34,7 @@ import {
   MSG, FLAG, TICK_MS, MATCH_STATE, MATCH_RULES, LIMITS, PLAYER_MAX_HEALTH,
   PLAYER_MAX_ARMOR, PLAYER_START_ARMOR, ARMOR_ABSORB,
   PROTOCOL_VERSION, ROOM_CODE_ALPHABET, ROOM_CODE_LENGTH,
+  MULTIKILL_WINDOW_MS, STREAK_ANNOUNCE_AT,
   isValidRoomCode, sanitizeName, damageFor,
 } from '../src/net/protocol.js';
 import { pickSpawn, isInsideArena } from '../src/net/arena.js';
@@ -83,6 +84,16 @@ class Player {
     this.kills = 0;
     this.deaths = 0;
     this.ping = 0;
+    /**
+     * Server time until which this player cannot be hurt. Set on spawn, and
+     * cleared the moment they pull a trigger. See MATCH_RULES.spawnProtectSec.
+     */
+    this.protectedUntil = 0;
+    /** Kills without dying. Reset by death and by a match restart. */
+    this.streak = 0;
+    /** Kills inside MULTIKILL_WINDOW_MS, and when the last one landed. */
+    this.multiKill = 0;
+    this.lastKillAt = 0;
 
     this.lastInputSeq = -1;
     this.lastInputAt = 0;
@@ -284,6 +295,18 @@ class Room {
     player.flags = 0;
     player.respawnAt = 0;
     player.history.length = 0;
+    /*
+     * A moment of grace on arrival.
+     *
+     * The clearance rule above keeps a spawn away from everyone who is alive
+     * RIGHT NOW, which is all it can do — it cannot stop somebody rounding the
+     * corner a second later, and being killed before you have even worked out
+     * which way you are facing is the least recoverable thing that can happen
+     * in a match.
+     *
+     * Ends the instant they shoot. See handleShot.
+     */
+    player.protectedUntil = Date.now() + MATCH_RULES.spawnProtectSec * 1000;
     // The jump to the spawn point is the server's own doing, so it must not be
     // charged to the player. Clearing lastInputAt skips the check entirely on
     // their next input, and refills the bucket for the run back into the map.
@@ -303,8 +326,22 @@ class Room {
     // Self-harm reaches here only for throwables — handleShot gates it. Blowing
     // yourself up is a legitimate thing to do to yourself; being shot by
     // yourself is not.
+    const now = Date.now();
     const selfInflicted = victim === attacker;
     if (selfInflicted && weapon.selfHarm !== true) return;
+
+    /*
+     * Spawn protection.
+     *
+     * Checked here rather than in handleShot so it covers every route damage
+     * can arrive by — bullets, blast radius, a barrel somebody shot near the
+     * spawn — instead of only the one that was in mind when it was written.
+     *
+     * Your OWN explosive still hurts you while protected: it is a decision you
+     * made about yourself, and a grenade you can survive by having spawned
+     * recently is a strange thing to have to reason about.
+     */
+    if (!selfInflicted && now < victim.protectedUntil) return;
 
     const raw = damageFor(weapon, part, distance);
     const dmg = Math.min(raw, LIMITS.maxDamagePerHit);
@@ -329,13 +366,40 @@ class Room {
     victim.armor = 0;
     victim.alive = false;
     victim.deaths++;
-    victim.respawnAt = Date.now() + MATCH_RULES.respawnDelaySec * 1000;
+    victim.respawnAt = now + MATCH_RULES.respawnDelaySec * 1000;
+    // Protection does not survive the life it was granted to. Without this a
+    // corpse stays flagged through the whole countdown, and the body draws its
+    // shield while lying dead.
+    victim.protectedUntil = 0;
     // Blowing yourself up costs a death and earns nothing. Without this guard
     // the suicide would credit a kill to the person who committed it.
     if (this.state === MATCH_STATE.LIVE && !selfInflicted) attacker.kills++;
 
+    /*
+     * Streaks.
+     *
+     * Read the victim's run BEFORE clearing it, so the message can say that
+     * this kill is what ended it. Killing yourself ends your own streak and
+     * starts nobody's — which is the whole reason the two are handled apart
+     * rather than as one "the attacker gained, the victim lost".
+     */
+    const endedStreak = victim.streak >= STREAK_ANNOUNCE_AT ? victim.streak : 0;
+    victim.streak = 0;
+    victim.multiKill = 0;
+
+    if (!selfInflicted && this.state === MATCH_STATE.LIVE) {
+      attacker.streak++;
+      // Consecutive kills stack only while they keep landing inside the
+      // window; the first one outside it starts counting again from one.
+      attacker.multiKill = now - attacker.lastKillAt <= MULTIKILL_WINDOW_MS
+        ? attacker.multiKill + 1
+        : 1;
+      attacker.lastKillAt = now;
+    }
+
     this.broadcast(MSG.KILL, {
       v: victim.id, a: attacker.id, w: weapon.id, hs: headshot,
+      st: attacker.streak, mk: attacker.multiKill, es: endedStreak,
     });
 
     /*
@@ -388,6 +452,9 @@ class Room {
     this.state = MATCH_STATE.WARMUP;
     for (const p of this.players.values()) {
       p.kills = 0; p.deaths = 0;
+      // Streaks belong to a match. Carrying one across a restart would have
+      // somebody announced as UNSTOPPABLE on the first kill of a fresh game.
+      p.streak = 0; p.multiKill = 0; p.lastKillAt = 0;
       this.spawn(p);
     }
     this.evaluateMatchState();
@@ -434,7 +501,12 @@ class Room {
       ts: now,
       p: [...this.players.values()].map((p) => [
         p.id, r2(p.x), r2(p.y), r2(p.z), r3(p.yaw), r3(p.pitch),
-        p.flags | (p.alive ? 0 : FLAG.DEAD), p.weapon, Math.round(p.hp),
+        p.flags
+          | (p.alive ? 0 : FLAG.DEAD)
+          // Added by the server, never read off the input: a client cannot
+          // declare itself invulnerable.
+          | (p.alive && now < p.protectedUntil ? FLAG.PROTECTED : 0),
+        p.weapon, Math.round(p.hp),
       ]),
     });
   }
@@ -655,6 +727,21 @@ function handleShot(player, msg) {
 
   const weapon = WEAPON_BY_ID.get(typeof msg.w === 'string' ? msg.w : player.weapon);
   if (!weapon) return;
+
+  /*
+   * Pulling the trigger gives up spawn protection.
+   *
+   * Deliberately ABOVE the rate limiter: the decision to shoot is what ends
+   * it, not whether the round was allowed through. Otherwise a player could
+   * spray at the fire-rate ceiling and keep the shots the server dropped from
+   * costing them anything, which is a strange thing to have to think about
+   * and an obvious one to exploit.
+   *
+   * The whole point is that invulnerability and being a threat are mutually
+   * exclusive. You may take a moment to get your bearings, or you may start
+   * shooting — not both.
+   */
+  player.protectedUntil = 0;
 
   // Rate limit per weapon, so switching weapons cannot be used to fire faster
   // than any single one allows.

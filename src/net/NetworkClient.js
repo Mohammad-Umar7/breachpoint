@@ -90,6 +90,11 @@ export class NetworkClient {
 
     /** Server-reported roster: id -> { id, name, kills, deaths, ping, alive } */
     this.players = new Map();
+    /**
+     * Our own flag bits, straight off the last snapshot. See _handleSnapshot —
+     * `sample()` skips our row, so this is the only place they survive.
+     */
+    this.selfFlags = 0;
     this.match = { state: MATCH_STATE.WARMUP, timeLeft: 0, killTarget: 0, winnerId: null };
 
     /** @type {Array<{ts:number, at:number, players:Map}>} newest last */
@@ -296,6 +301,7 @@ export class NetworkClient {
     this.players.clear();
     this.snapshots.length = 0;
     this.selfId = null;
+    this.selfFlags = 0;
     this.room = null;
     this._clockOffset = null;
     if (this.state !== NET_STATE.OFFLINE) this._setState(NET_STATE.OFFLINE);
@@ -445,6 +451,12 @@ export class NetworkClient {
           victim: msg.v, attacker: msg.a, weapon: msg.w, headshot: !!msg.hs,
           victimName: this.nameOf(msg.v), attackerName: this.nameOf(msg.a),
           isSelfVictim: msg.v === this.selfId, isSelfAttacker: msg.a === this.selfId,
+          // Streak state, counted by the server. Defaulted rather than left
+          // undefined so an older server simply produces no announcements
+          // instead of "undefined KILL STREAK".
+          streak: typeof msg.st === 'number' ? msg.st : 0,
+          multiKill: typeof msg.mk === 'number' ? msg.mk : 0,
+          endedStreak: typeof msg.es === 'number' ? msg.es : 0,
         });
         break;
       }
@@ -518,6 +530,12 @@ export class NetworkClient {
     for (const row of msg.p ?? []) {
       const [id, x, y, z, yaw, pitch, flags, weapon, hp] = row;
       players.set(id, { id, x, y, z, yaw, pitch, flags, weapon, hp });
+      // Our own row, which sample() deliberately skips — it never interpolates
+      // us — but which is the only authoritative word on flags the SERVER
+      // grants rather than the client claiming, spawn protection being the one
+      // that exists. Working it out locally from a timer would be a guess that
+      // disagrees with the server exactly when it matters.
+      if (id === this.selfId) this.selfFlags = flags;
       const known = this.players.get(id);
       if (known) {
         known.hp = hp;

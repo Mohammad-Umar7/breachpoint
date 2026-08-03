@@ -208,6 +208,23 @@ html, body {
   color: var(--accent); opacity: 0.75; margin-bottom: 6px;
   text-shadow: 0 1px 3px rgba(0,0,0,0.8);
 }
+/*
+ * Spawn shield readout. The same cold blue the protected BODY pulses in
+ * (RemotePlayers._animate), so the thing you see on other players and the
+ * thing you see on yourself are recognisably one mechanic.
+ */
+#spawn-shield {
+  font-size: 11px; letter-spacing: 2px; text-transform: uppercase;
+  color: #8fd0ff; margin-bottom: 6px;
+  text-shadow: 0 1px 3px rgba(0,0,0,0.85);
+  animation: spawn-shield-pulse 0.9s ease-in-out infinite;
+}
+#spawn-shield[hidden] { display: none; }
+@keyframes spawn-shield-pulse {
+  0%, 100% { opacity: 0.55; }
+  50%      { opacity: 1; }
+}
+
 .bar-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
 .bar-icon { width: 18px; text-align: center; font-size: 16px; color: var(--accent); }
 .bar {

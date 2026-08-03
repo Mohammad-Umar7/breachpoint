@@ -438,6 +438,7 @@ src/
 │   ├── protocol.js             Wire format — SHARED with the server
 │   ├── NetworkClient.js        Socket, interpolation, prediction
 │   ├── RemotePlayers.js        Other players' bodies, IK, lean, name tags
+│   ├── RemoteAudio.js          Other players' footsteps, landings, reloads
 │   ├── wireNetwork.js          Every multiplayer callback, wired to the game
 │   └── arena.js                Bounds and spawn points
 ├── fx/
@@ -455,7 +456,10 @@ server/
 test/*.mjs                      Suites that do not
 scripts/
 ├── test.mjs                    `npm test` — runs every suite, starts the server
-└── deps.mjs                    `npm run deps` — blast radius before you cut
+├── deps.mjs                    `npm run deps` — blast radius before you cut
+├── loadtest.mjs                `npm run loadtest` — how many players a box holds
+├── lan.mjs                     `npm run lan` — serve to other machines
+└── bot.mjs                     `npm run bot` — a practice player, to test alone
 ```
 
 See **[ARCHITECTURE.md](ARCHITECTURE.md)** for what each module owns, which

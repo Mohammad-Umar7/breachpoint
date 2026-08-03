@@ -97,7 +97,20 @@ export const MSG = Object.freeze({
    * definitions — the same ones it uses for its own gun.
    */
   FIRE: 'F',      // { id: shooterId, o: [x,y,z], d: [x,y,z], w: weaponId }
-  KILL: 'K',      // { v: victimId, a: attackerId, w: weaponId, hs: headshot }
+  /**
+   * Somebody died.
+   *
+   * `st`, `mk` and `es` carry the streak state so the client never has to
+   * count kills for itself. It could — it sees every KILL — but then two
+   * clients that joined at different times would disagree about how long
+   * somebody's run has been, and the server is the only party that knows.
+   *
+   *   st  the killer's streak INCLUDING this kill (1 for a fresh one)
+   *   mk  kills inside the multi-kill window, 1 unless they are stacking up
+   *   es  the victim's streak, but only when it was long enough to announce.
+   *       0 otherwise, so "X ENDED Y'S RAMPAGE" needs no lookup.
+   */
+  KILL: 'K',      // { v, a, w: weaponId, hs: headshot, st: streak, mk: multi, es: endedStreak }
   /**
    * Where the victim will come back, sent to THEM ONLY the moment they die.
    *
@@ -127,6 +140,15 @@ export const FLAG = Object.freeze({
   RELOADING: 1 << 6,
   LEAN_L: 1 << 7,
   LEAN_R: 1 << 8,
+  /**
+   * Freshly spawned and not yet shootable. Server -> client only; an input
+   * claiming it is ignored, since the server is the one that grants it.
+   *
+   * On the wire so it can be DRAWN. Invulnerability that nobody can see is
+   * indistinguishable from broken hit registration — you land four rounds on
+   * someone and nothing happens — and that is a bug report, not a mechanic.
+   */
+  PROTECTED: 1 << 9,
 });
 
 export const MATCH_STATE = Object.freeze({
@@ -180,7 +202,67 @@ export const MATCH_RULES = Object.freeze({
   postMatchSec: 12,
   /** Spawn at least this far from the nearest living player. */
   spawnClearance: 12,
+  /**
+   * How long a freshly spawned player cannot be hurt.
+   *
+   * `spawnClearance` already keeps spawns away from anyone alive, but it can
+   * only account for where people are at that instant — it cannot stop someone
+   * walking round the corner half a second later. With thirteen spawn points
+   * and up to twelve players, that happens.
+   *
+   * Two seconds is enough to get your bearings and start moving, and short
+   * enough that it is never a way to hold ground. FIRING ENDS IT IMMEDIATELY
+   * (see handleShot), so it cannot be used to trade a fight for free — the
+   * moment you become a threat you also become a target.
+   */
+  spawnProtectSec: 2,
 });
+
+/**
+ * Kill streaks.
+ *
+ * Two separate things, deliberately, because they reward different play:
+ *
+ *   STREAK      kills without dying. A slow, cumulative reward for staying
+ *               alive, and the reason the whole room is told about it — a
+ *               player on a long run should have everybody hunting them.
+ *   MULTI-KILL  kills in quick succession. A burst reward for winning a
+ *               fight against several people at once, which a streak alone
+ *               does not distinguish from killing three people over a minute.
+ *
+ * Shared with the client so both ends name them the same. The client could
+ * hold its own table, and then a server change would silently rename nothing.
+ */
+export const STREAK_TIERS = Object.freeze([
+  [3, 'KILLING SPREE'],
+  [5, 'RAMPAGE'],
+  [7, 'DOMINATING'],
+  [10, 'UNSTOPPABLE'],
+  [15, 'GODLIKE'],
+]);
+
+/** Kills closer together than this stack into a multi-kill. */
+export const MULTIKILL_WINDOW_MS = 3500;
+
+const MULTIKILL_NAMES = Object.freeze([null, null, 'DOUBLE KILL', 'TRIPLE KILL', 'QUAD KILL']);
+
+/** The name for a streak of exactly `n`, or null if `n` is not a milestone. */
+export function streakName(n) {
+  for (const [at, name] of STREAK_TIERS) if (n === at) return name;
+  return null;
+}
+
+/** The name for `n` kills inside the multi-kill window, or null below two. */
+export function multiKillName(n) {
+  if (n < 2) return null;
+  return MULTIKILL_NAMES[n] ?? 'MULTI KILL';
+}
+
+/**
+ * Streaks at or above this are worth telling the room about — both when they
+ * are reached and when somebody ends them.
+ */
+export const STREAK_ANNOUNCE_AT = STREAK_TIERS[0][0];
 
 /**
  * Server-side sanity limits.

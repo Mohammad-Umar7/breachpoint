@@ -76,9 +76,19 @@ const PEEK_ROLL = 25 * (Math.PI / 180);
 const PEEK_SHIFT = 0.28;
 
 export class RemotePlayers {
-  constructor({ scene, assets }) {
+  /**
+   * @param {object} opts
+   * @param {THREE.Scene} opts.scene
+   * @param {object} opts.assets
+   * @param {import('./RemoteAudio.js').RemoteAudio|null} [opts.audio]
+   *   Makes the other players audible — footsteps, landings, reloads. Optional
+   *   so this class still works headless and without sound; drawing bodies and
+   *   making noise are separate concerns and only one of them needs a GPU.
+   */
+  constructor({ scene, assets, audio = null }) {
     this.scene = scene;
     this.assets = assets;
+    this.audio = audio;
     /** @type {Map<number, object>} id -> body record */
     this.bodies = new Map();
     this._available = assets.getModel?.('soldier') != null;
@@ -132,7 +142,21 @@ export class RemotePlayers {
 
     // Remove bodies for players no longer in the sample.
     for (const [id, body] of this.bodies) {
-      if (!sample.has(id)) { this._destroy(body); this.bodies.delete(id); }
+      if (!sample.has(id)) {
+        this._destroy(body);
+        this.bodies.delete(id);
+        /*
+         * And forget how they were walking.
+         *
+         * _create picks a RANDOM starting phase, so a body rebuilt under the
+         * same id — which happens whenever somebody drops out of the
+         * interpolation buffer for a moment and comes back — lands on a
+         * different point in its stride. Against a stale footfall index that
+         * reads as a step, and one phantom footstep behind you is worse than
+         * none: it is a player who is not there.
+         */
+        this.audio?.forget(id);
+      }
     }
 
     for (const [id, s] of sample) {
@@ -145,7 +169,13 @@ export class RemotePlayers {
 
       const dead = (s.flags & FLAG.DEAD) !== 0;
       body.group.visible = !dead;
-      if (dead) continue;
+      if (dead) {
+        // Told anyway, so a corpse forgets where it was in its stride. Without
+        // this a respawning player cracks out a footstep and a landing thud
+        // the instant their body is put back on its feet.
+        this.audio?.update(id, body, s, Infinity);
+        continue;
+      }
 
       body.group.position.set(s.x, s.y - body.footOffset, s.z);
       body.group.rotation.y = s.yaw;
@@ -155,7 +185,15 @@ export class RemotePlayers {
       this._setWeapon(body, s.weapon);
       this._animate(body, s, dt);
       this._updateTag(body, s, roster.get(id));
-      if (viewer) this._cullShadow(body, viewer);
+
+      // Measured once and shared: both the culling and the audio want it, and
+      // it is per body per frame.
+      const d2 = viewer ? body.group.position.distanceToSquared(viewer) : 0;
+      // AFTER _animate, which has just advanced the gait phase this frame —
+      // footfalls are read off that phase, so the sound lands on the same
+      // frame the foot does. See RemoteAudio.
+      this.audio?.update(id, body, s, d2);
+      if (viewer) this._cullShadow(body, d2);
     }
   }
 
@@ -172,9 +210,7 @@ export class RemotePlayers {
    * Beyond the cutoff their shadow is a handful of pixels under a body you can
    * barely make out. The body itself keeps drawing — only the shadow goes.
    */
-  _cullShadow(body, viewer) {
-    const d2 = body.group.position.distanceToSquared(viewer);
-
+  _cullShadow(body, d2) {
     const far = d2 > SHADOW_CUTOFF_SQ;
     if (far !== body.shadowCulled) {           // only walk the tree on a change
       body.shadowCulled = far;
@@ -262,6 +298,7 @@ export class RemotePlayers {
     if (!body) return false;
     this._destroy(body);
     this.bodies.delete(id);
+    this.audio?.forget(id);
     // Also out of the sample raycast() tests against, or shots would keep
     // registering on a player who is no longer here.
     this._lastSample?.delete(id);
@@ -848,6 +885,36 @@ export class RemotePlayers {
     body.crouch = damp(body.crouch ?? 0, crouch, 8, dt);
     body.group.position.y += bob - body.crouch * 0.34;
 
+    /* ------------------------------------------------------- spawn shield
+     * A player who cannot be hurt has to LOOK like one.
+     *
+     * Invulnerability nobody can see is indistinguishable from broken hit
+     * registration — you land four rounds and nothing happens — and this
+     * project has already shipped that exact confusion twice, with armour and
+     * with the barrel. A cold blue pulse says "not yet" without needing a
+     * label, and it costs nothing: the emissive channel is already there for
+     * the hit flash.
+     *
+     * The two never collide, because a protected player takes no damage and so
+     * is never flashed. The flash keeps priority anyway — being shot is the
+     * more urgent thing to read, and relying on "cannot happen" is how it
+     * eventually does.
+     */
+    const shielded = (s.flags & FLAG.PROTECTED) !== 0;
+    if (shielded && body.flash <= 0) {
+      body.shieldT = (body.shieldT ?? 0) + dt;
+      // ~3 Hz, never fully off — a pulse that reaches zero reads as flicker.
+      const e = 0.20 + 0.12 * Math.sin(body.shieldT * 19);
+      for (const m of body.flashMats) m.emissive.setRGB(0.12 * e, 0.5 * e, 1.15 * e);
+      body.wasShielded = true;
+    } else if (body.wasShielded) {
+      // Back to black exactly once, rather than every frame for the rest of
+      // the match. The hit flash below clears itself the same way.
+      body.wasShielded = false;
+      body.shieldT = 0;
+      if (body.flash <= 0) for (const m of body.flashMats) m.emissive.setRGB(0, 0, 0);
+    }
+
     // ---------------------------------------------------------------- flash
     if (body.flash > 0) {
       // Faster decay than before (5 -> 7.5) with a brighter peak. A long, dim
@@ -982,6 +1049,7 @@ export class RemotePlayers {
   clear() {
     for (const body of this.bodies.values()) this._destroy(body);
     this.bodies.clear();
+    this.audio?.clear();
   }
 
   dispose() { this.clear(); }

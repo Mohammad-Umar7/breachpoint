@@ -61,6 +61,7 @@ export class UIManager {
       banner: id('banner'),
       bannerText: id('banner-text'),
       callsign: id('hud-callsign'),
+      spawnShield: id('spawn-shield'),
       healthFill: id('health-fill'),
       healthNum: id('health-num'),
       armorFill: id('armor-fill'),
@@ -140,6 +141,13 @@ export class UIManager {
     if (this.el.callsign && s.callsign && this._shownCallsign !== s.callsign) {
       this._shownCallsign = s.callsign;
       this.el.callsign.textContent = s.callsign;
+    }
+
+    // Spawn protection. Same once-on-change rule as the callsign above, for
+    // the same reason — this toggles twice a life, not sixty times a second.
+    if (this.el.spawnShield && this._shownShield !== !!s.spawnProtected) {
+      this._shownShield = !!s.spawnProtected;
+      this.el.spawnShield.hidden = !s.spawnProtected;
     }
 
     const ap = clamp(s.armor / s.maxArmor, 0, 1);

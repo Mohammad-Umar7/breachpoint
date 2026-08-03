@@ -843,40 +843,54 @@ const SYNTHS = {
     a._tone(a.sfxBus, null, { type: 'square', freq: 900, freqEnd: 420, duration: 0.04, gain: 0.12 * volume });
   },
 
-  // ------------------------------------------------------------- reloads
-  magOut(a, { volume = 1 } = {}) {
-    a._burst(a.sfxBus, null, { duration: 0.09, gain: 0.35 * volume, type: 'bandpass', freq: 1500, q: 2.5 });
-    a._tone(a.sfxBus, null, { type: 'square', freq: 320, freqEnd: 180, duration: 0.07, gain: 0.1 * volume });
+  /*
+   * ------------------------------------------------------------- reloads
+   *
+   * All of these take an optional `position`, because they are played for
+   * OTHER players as well as for your own hands (see net/RemoteAudio.js).
+   * Somebody reloading behind a wall is the most actionable sound in a
+   * shooter — it says they cannot shoot back for the next two seconds — and
+   * that is worth nothing at all unless you can hear WHERE it came from.
+   *
+   * Omitting the position, as your own weapon does, leaves them unpanned and
+   * at full volume, which is correct for a gun you are holding.
+   *
+   * `refDistance: 6` rather than the 12 m weapons use: a magazine change is a
+   * close-quarters tell, not something to be heard across the arena.
+   */
+  magOut(a, { volume = 1, position = null } = {}) {
+    a._burst(a.sfxBus, position, { duration: 0.09, gain: 0.35 * volume, type: 'bandpass', freq: 1500, q: 2.5, refDistance: 6 });
+    a._tone(a.sfxBus, position, { type: 'square', freq: 320, freqEnd: 180, duration: 0.07, gain: 0.1 * volume, refDistance: 6 });
   },
-  magIn(a, { volume = 1 } = {}) {
-    a._burst(a.sfxBus, null, { duration: 0.12, gain: 0.42 * volume, type: 'bandpass', freq: 1050, q: 2 });
-    a._tone(a.sfxBus, null, { type: 'square', freq: 210, freqEnd: 120, duration: 0.1, gain: 0.13 * volume });
+  magIn(a, { volume = 1, position = null } = {}) {
+    a._burst(a.sfxBus, position, { duration: 0.12, gain: 0.42 * volume, type: 'bandpass', freq: 1050, q: 2, refDistance: 6 });
+    a._tone(a.sfxBus, position, { type: 'square', freq: 210, freqEnd: 120, duration: 0.1, gain: 0.13 * volume, refDistance: 6 });
   },
-  boltRelease(a, { volume = 1 } = {}) {
-    a._burst(a.sfxBus, null, { duration: 0.11, gain: 0.4 * volume, type: 'highpass', freq: 2100, q: 1.4 });
-    a._tone(a.sfxBus, null, { type: 'square', freq: 640, freqEnd: 260, duration: 0.07, gain: 0.1 * volume });
+  boltRelease(a, { volume = 1, position = null } = {}) {
+    a._burst(a.sfxBus, position, { duration: 0.11, gain: 0.4 * volume, type: 'highpass', freq: 2100, q: 1.4, refDistance: 6 });
+    a._tone(a.sfxBus, position, { type: 'square', freq: 640, freqEnd: 260, duration: 0.07, gain: 0.1 * volume, refDistance: 6 });
   },
-  shellInsert(a, { volume = 1 } = {}) {
-    a._burst(a.sfxBus, null, { duration: 0.08, gain: 0.32 * volume, type: 'bandpass', freq: 1800, q: 3 });
+  shellInsert(a, { volume = 1, position = null } = {}) {
+    a._burst(a.sfxBus, position, { duration: 0.08, gain: 0.32 * volume, type: 'bandpass', freq: 1800, q: 3, refDistance: 6 });
   },
-  weaponSwitch(a, { volume = 1 } = {}) {
-    a._burst(a.sfxBus, null, { duration: 0.1, gain: 0.28 * volume, type: 'bandpass', freq: 1300, q: 1.6 });
-    a._tone(a.sfxBus, null, { type: 'triangle', freq: 520, freqEnd: 300, duration: 0.09, gain: 0.09 * volume });
+  weaponSwitch(a, { volume = 1, position = null } = {}) {
+    a._burst(a.sfxBus, position, { duration: 0.1, gain: 0.28 * volume, type: 'bandpass', freq: 1300, q: 1.6, refDistance: 6 });
+    a._tone(a.sfxBus, position, { type: 'triangle', freq: 520, freqEnd: 300, duration: 0.09, gain: 0.09 * volume, refDistance: 6 });
   },
   adsIn(a, { volume = 1 } = {}) {
     a._burst(a.sfxBus, null, { duration: 0.07, gain: 0.16 * volume, type: 'bandpass', freq: 900, q: 2 });
   },
 
   /** Heavy bolt being worked: extract, eject, chamber. */
-  boltCycle(a, { volume = 1 } = {}) {
-    a._burst(a.sfxBus, null, { duration: 0.11, gain: 0.4 * volume, type: 'bandpass', freq: 1250, q: 2.2 });
-    a._tone(a.sfxBus, null, { type: 'square', freq: 260, freqEnd: 150, duration: 0.09, gain: 0.11 * volume });
-    setTimeout(() => a._canPlay() && a._burst(a.sfxBus, null, { duration: 0.13, gain: 0.42 * volume, type: 'bandpass', freq: 850, q: 1.8 }), 170);
+  boltCycle(a, { volume = 1, position = null } = {}) {
+    a._burst(a.sfxBus, position, { duration: 0.11, gain: 0.4 * volume, type: 'bandpass', freq: 1250, q: 2.2, refDistance: 6 });
+    a._tone(a.sfxBus, position, { type: 'square', freq: 260, freqEnd: 150, duration: 0.09, gain: 0.11 * volume, refDistance: 6 });
+    setTimeout(() => a._canPlay() && a._burst(a.sfxBus, position, { duration: 0.13, gain: 0.42 * volume, type: 'bandpass', freq: 850, q: 1.8, refDistance: 6 }), 170);
   },
 
-  pumpAction(a, { volume = 1 } = {}) {
-    a._burst(a.sfxBus, null, { duration: 0.1, gain: 0.4 * volume, type: 'bandpass', freq: 1500, q: 2.4 });
-    setTimeout(() => a._canPlay() && a._burst(a.sfxBus, null, { duration: 0.12, gain: 0.44 * volume, type: 'bandpass', freq: 1000, q: 2.0 }), 130);
+  pumpAction(a, { volume = 1, position = null } = {}) {
+    a._burst(a.sfxBus, position, { duration: 0.1, gain: 0.4 * volume, type: 'bandpass', freq: 1500, q: 2.4, refDistance: 6 });
+    setTimeout(() => a._canPlay() && a._burst(a.sfxBus, position, { duration: 0.12, gain: 0.44 * volume, type: 'bandpass', freq: 1000, q: 2.0, refDistance: 6 }), 130);
   },
 
   // ------------------------------------------------------------- optics
@@ -1048,6 +1062,30 @@ const SYNTHS = {
     a._tone(a.sfxBus, null, { type: 'triangle', freq: 780, freqEnd: 940, duration: 0.07, gain: 0.34 * volume, attack: 0.001 });
     a._tone(a.sfxBus, null, { type: 'triangle', freq: 1180, freqEnd: 1420, duration: 0.16, gain: 0.30 * volume, attack: 0.055 });
     a._tone(a.sfxBus, null, { type: 'sine', freq: 2360, freqEnd: 2840, duration: 0.18, gain: 0.14 * volume, attack: 0.06 });
+  },
+
+  /**
+   * A streak or multi-kill, layered ON TOP of the kill confirm.
+   *
+   * `step` climbs with the streak, and the pitch climbs with it — a fourth per
+   * step up a pentatonic scale, so the fifth kill in a row is recognisably a
+   * continuation of the second rather than a different sound. That is the
+   * whole trick: the player should hear that it is still going without having
+   * to read the banner in the middle of a fight.
+   *
+   * Deliberately not positional. It is about you, not about somewhere.
+   */
+  killStreak(a, { volume = 1, step = 2 } = {}) {
+    const n = Math.max(0, Math.min(6, Math.round(step) - 2));
+    // Pentatonic degrees, so any two steps sound consonant together — a plain
+    // chromatic climb starts sounding like an alarm by the fourth one.
+    const semis = [0, 3, 5, 7, 10, 12, 15][n];
+    const base = 660 * Math.pow(2, semis / 12);
+    a._tone(a.sfxBus, null, { type: 'triangle', freq: base, freqEnd: base * 1.5, duration: 0.20, gain: 0.26 * volume, attack: 0.004 });
+    a._tone(a.sfxBus, null, { type: 'sine', freq: base * 2, freqEnd: base * 3, duration: 0.26, gain: 0.13 * volume, attack: 0.03 });
+    // A low body note that grows with the streak, so the later ones land
+    // heavier rather than just higher.
+    a._tone(a.sfxBus, null, { type: 'sine', freq: 150, freqEnd: 96, duration: 0.28, gain: (0.06 + n * 0.022) * volume, attack: 0.01 });
   },
   pickupHealth(a, { volume = 1 } = {}) {
     a._tone(a.sfxBus, null, { type: 'sine', freq: 660, duration: 0.09, gain: 0.16 * volume });

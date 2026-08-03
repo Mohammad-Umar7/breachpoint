@@ -21,7 +21,7 @@
  *   node server/shot-jitter-test.js
  */
 import { WebSocket } from 'ws';
-import { MSG, PROTOCOL_VERSION, PLAYER_MAX_HEALTH } from '../src/net/protocol.js';
+import { MSG, PROTOCOL_VERSION, PLAYER_MAX_HEALTH, FLAG, MATCH_RULES } from '../src/net/protocol.js';
 
 const URL = process.env.URL || 'ws://localhost:8787';
 const RPM = 720;                       // the standard rifle
@@ -39,6 +39,7 @@ function connect(name, room) {
       if (m.t === MSG.WELCOME) { s.id = m.id; s.spawn = m.sp; resolve(s); }
       else if (m.t === MSG.DENIED) reject(new Error('denied: ' + (m.r ?? '')));
       else if (m.t === MSG.HIT) { s.hitsTaken++; s.hp = m.hp; }
+      else if (m.t === MSG.SNAPSHOT) s.snapshot = m.p;
     });
     ws.on('error', reject);
     ws.on('close', () => reject(new Error('closed before WELCOME')));
@@ -90,6 +91,27 @@ async function run(pattern, roomSuffix) {
   send(a, { t: MSG.INPUT, q: ++a.seq, p: [a.pos.x, a.pos.y, a.pos.z], y: 0, a: 0, f: 0, w: 'rifle' });
   send(b, { t: MSG.INPUT, q: ++b.seq, p: [bPos.x, bPos.y, bPos.z], y: 0, a: 0, f: 0, w: 'rifle' });
   await sleep(400);
+
+  /*
+   * Wait out the target's spawn protection before counting anything.
+   *
+   * This test measures how many legitimately-paced rounds REGISTER, and a
+   * freshly spawned player is invulnerable for MATCH_RULES.spawnProtectSec —
+   * so without this it measured how much of the run overlapped a timer, and
+   * reported the shot limiter as broken.
+   *
+   * Watching the flag rather than sleeping the duration means a change to that
+   * duration cannot quietly turn this back into a failure.
+   */
+  const clearBy = Date.now() + MATCH_RULES.spawnProtectSec * 1000 + 3000;
+  for (;;) {
+    send(a, { t: MSG.INPUT, q: ++a.seq, p: [a.pos.x, a.pos.y, a.pos.z], y: 0, a: 0, f: 0, w: 'rifle' });
+    send(b, { t: MSG.INPUT, q: ++b.seq, p: [bPos.x, bPos.y, bPos.z], y: 0, a: 0, f: 0, w: 'rifle' });
+    const row = (a.snapshot ?? []).find((r) => r[0] === b.id);
+    if (row && (row[6] & FLAG.PROTECTED) === 0) break;
+    if (Date.now() > clearBy) throw new Error('target never left spawn protection');
+    await sleep(80);
+  }
 
   const n = await fire(a, b, pattern);
   a.ws.close(); b.ws.close();

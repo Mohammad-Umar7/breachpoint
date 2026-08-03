@@ -226,6 +226,94 @@ const unused = declared.filter((m) => !serverSends.has(m) && !clientSends.has(m)
 check('no message type is declared and then never used',
   unused.length === 0, unused.join(', ') || `${declared.length} declared`);
 
+/*
+ * Everything imported FROM protocol.js has to be exported BY protocol.js.
+ *
+ * It is the one file both ends share, so a name that only exists on one side
+ * is the most expensive kind of typo here: the client build fails loudly, but
+ * the SERVER is plain Node with no bundler, and an import of something that
+ * does not exist there fails at start-up in a hosted environment nobody is
+ * watching.
+ */
+const protoExports = new Set(
+  [...protoSrc.matchAll(/export (?:const|function|class) ([A-Za-z_][A-Za-z0-9_]*)/g)].map((m) => m[1]),
+);
+const protoImporters = [...ALL_SRC, { file: 'server/index.js', text: serverSrc }];
+const badProtoImports = [];
+for (const { file, text } of protoImporters) {
+  // `[^}]` rather than a lazy `[\s\S]*?`: lazy still happily crosses earlier
+  // import statements to reach the first protocol.js one, which reported
+  // `WebSocketServer` as a missing protocol export.
+  for (const m of text.matchAll(/import\s*\{([^}]*)\}\s*from\s*'[^']*protocol\.js'/g)) {
+    for (const raw of m[1].split(',')) {
+      const name = raw.trim().split(/\s+as\s+/)[0].trim();
+      if (name && !protoExports.has(name)) badProtoImports.push(`${name} (${file})`);
+    }
+  }
+}
+check('every name imported from protocol.js is exported by it',
+  badProtoImports.length === 0,
+  badProtoImports.join(', ') || `${protoExports.size} exports, ${protoImporters.length} files checked`);
+
+/*
+ * Flag bits are the other half of the wire format, and unlike MSG they are
+ * read with a bitwise AND rather than a switch — so a bit that exists on one
+ * side and not the other produces no error at all, just behaviour that never
+ * happens.
+ */
+const flagBlock = protoSrc.match(/export const FLAG = Object\.freeze\(\{([\s\S]*?)\n\}\);/)?.[1] ?? '';
+const flagNames = [...flagBlock.matchAll(/^ {2}([A-Z][A-Z_]*): 1 << /gm)].map((m) => m[1]);
+check('the flag table can actually be parsed', flagNames.length > 0,
+  `${flagNames.length} flags declared`);
+
+const flagUses = new Set(protoImporters.flatMap(({ text }) =>
+  [...text.matchAll(/FLAG\.([A-Z_]+)/g)].map((m) => m[1])));
+const undeclaredFlags = [...flagUses].filter((f) => !flagNames.includes(f));
+check('every FLAG bit referenced is declared in protocol.js',
+  undeclaredFlags.length === 0,
+  undeclaredFlags.join(', ') || `${flagUses.size} bits referenced`);
+
+/*
+ * Spawn protection has to be sent AND drawn.
+ *
+ * Invulnerability nobody can see is indistinguishable from broken hit
+ * registration — you land four rounds on somebody and nothing happens. That
+ * exact confusion has shipped here twice already, with armour and with the
+ * barrel, so the visible half is a requirement rather than a nicety.
+ */
+const remotePlayersSrc = read('src/net/RemotePlayers.js');
+const gameSrcForFlags = read('src/Game.js');
+const protectedIn = {
+  'server sends': /FLAG\.PROTECTED/.test(serverSrc),
+  'bodies draw': /FLAG\.PROTECTED/.test(remotePlayersSrc),
+  'HUD shows': /FLAG\.PROTECTED/.test(gameSrcForFlags),
+};
+const protectedMissing = Object.entries(protectedIn).filter(([, ok]) => !ok).map(([k]) => k);
+check('spawn protection is sent by the server, drawn on bodies, and shown on the HUD',
+  protectedMissing.length === 0,
+  protectedMissing.length ? `missing: ${protectedMissing.join(', ')}`
+                          : Object.keys(protectedIn).join(', '));
+
+/*
+ * RemoteAudio reads fields off RemotePlayers' body records.
+ *
+ * That is a deliberate, documented coupling — footsteps have to come off the
+ * same gait phase the legs are drawn from, or the sound does not land on the
+ * visible footfall — but it is a coupling by NAME across two files. Renaming
+ * `phase` in the animation code would silence every player in the game and
+ * break nothing that any other test looks at.
+ */
+const remoteAudioSrc = read('src/net/RemoteAudio.js');
+const audioReadsFields = [...new Set(
+  [...remoteAudioSrc.matchAll(/\bbody\.([a-zA-Z][a-zA-Z0-9]*)/g)].map((m) => m[1]),
+)];
+const absentFields = audioReadsFields.filter((f) =>
+  // Either assigned outright, or present in the record literal in _create.
+  !new RegExp(`body\\.${f}\\s*=|\\b${f}\\s*[,:]`).test(remotePlayersSrc));
+check('every body field RemoteAudio reads is one RemotePlayers sets',
+  absentFields.length === 0,
+  absentFields.join(', ') || `${audioReadsFields.length} fields: ${audioReadsFields.join(', ')}`);
+
 console.log('\n--- the world ---');
 
 // Pickup types the level places must be types the manager knows how to grant.
@@ -332,11 +420,24 @@ check('every source file appears in the README tree',
 const namedInTree = [...new Set(
   [...tree.matchAll(/(?<![-*.\w])([A-Za-z][A-Za-z0-9]*\.m?js)\b/g)].map((m) => m[1]),
 )];
-const phantom = namedInTree.filter((n) => {
-  const hit = [...SRC, 'src/main.js', 'server/index.js', 'scripts/test.mjs',
-    'scripts/deps.mjs', 'scripts/lan.mjs', 'vite.config.js'];
-  return !hit.some((f) => f.endsWith(`/${n}`) || f === n);
-});
+/*
+ * The set of real files is GLOBBED, not listed.
+ *
+ * It used to be a hardcoded array of the non-src entries — every scripts/ file
+ * spelled out by hand — which meant adding a script and documenting it failed
+ * this check until somebody also remembered to edit the list here. A check that
+ * has to be updated whenever the thing it checks is correct is just a second
+ * place to be wrong.
+ */
+const realFiles = [
+  ...SRC,
+  ...readdirSync(join(ROOT, 'scripts')).filter((n) => /\.m?js$/.test(n)).map((n) => `scripts/${n}`),
+  ...readdirSync(join(ROOT, 'server')).filter((n) => /\.m?js$/.test(n)).map((n) => `server/${n}`),
+  ...readdirSync(join(ROOT, 'test')).filter((n) => /\.m?js$/.test(n)).map((n) => `test/${n}`),
+  'vite.config.js',
+];
+const phantom = namedInTree.filter((n) =>
+  !realFiles.some((f) => f.endsWith(`/${n}`) || f === n));
 check('the README tree names no file that was deleted',
   phantom.length === 0, phantom.join(', ') || `${namedInTree.length} named`);
 
