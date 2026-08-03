@@ -20,6 +20,8 @@
  * otherwise drop everybody at the origin, inside whatever is built there.
  */
 
+import { TEAM } from './modes.js';
+
 /** The map a fresh install plays, and the fallback for anything unrecognised. */
 export const DEFAULT_MAP_ID = 'warehouse';
 
@@ -58,6 +60,27 @@ export const ARENAS = Object.freeze({
       minY: -12, maxY: 60,
       minZ: -60, maxZ: 60,
     }),
+
+    /*
+     * Capture the Flag: bases on OPPOSITE CORNERS, not opposite ends.
+     *
+     * The warehouse sits across the middle, so a corner-to-corner run has to
+     * commit to going through it or around it — a choice — where an
+     * end-to-end run down one side would be the same route every time.
+     *
+     * Team spawns sit behind each base, so defenders start between the
+     * attacker and the flag rather than beside it.
+     */
+    ctf: Object.freeze({
+      bases: Object.freeze({
+        [TEAM.RED]: Object.freeze([-26, -26]),
+        [TEAM.BLUE]: Object.freeze([26, 26]),
+      }),
+      spawns: Object.freeze({
+        [TEAM.RED]: Object.freeze([[-30, -30], [-22, -31], [-31, -22], [-32, -12], [-12, -32]]),
+        [TEAM.BLUE]: Object.freeze([[30, 30], [22, 31], [31, 22], [32, 12], [12, 32]]),
+      }),
+    }),
   }),
 
   /**
@@ -87,6 +110,24 @@ export const ARENAS = Object.freeze({
       minX: -44, maxX: 44,
       minY: -12, maxY: 50,
       minZ: -44, maxZ: 44,
+    }),
+
+    /*
+     * Bases in the north and south arms of the cross, behind the gateways.
+     *
+     * The only routes between them cross the market square or thread the
+     * arcade, which is where the fighting already happens — so the flag run
+     * uses the map rather than going round the outside of it.
+     */
+    ctf: Object.freeze({
+      bases: Object.freeze({
+        [TEAM.RED]: Object.freeze([0, -19]),
+        [TEAM.BLUE]: Object.freeze([0, 19]),
+      }),
+      spawns: Object.freeze({
+        [TEAM.RED]: Object.freeze([[0, -21], [-7, -21], [7, -21], [-21, -7], [21, -7]]),
+        [TEAM.BLUE]: Object.freeze([[0, 21], [-7, 21], [7, 21], [-21, 7], [21, 7]]),
+      }),
     }),
   }),
 });
@@ -123,9 +164,17 @@ export function isInsideArena(x, y, z, mapId = DEFAULT_MAP_ID) {
  * @param {() => number} rand   injected so the server stays testable
  * @param {string} mapId
  */
-export function pickSpawn(occupied, rand = Math.random, mapId = DEFAULT_MAP_ID) {
+export function pickSpawn(occupied, rand = Math.random, mapId = DEFAULT_MAP_ID, team = TEAM.NONE) {
   const arena = arenaFor(mapId);
-  const points = arena.spawnPoints;
+  /*
+   * A team spawns at its OWN end.
+   *
+   * Without this a defender can appear in the enemy base, which in Capture the
+   * Flag is not a spawn — it is a free capture. Falling back to the shared set
+   * matters too: a map with no CTF block still has to be playable rather than
+   * putting everybody at the origin.
+   */
+  const points = (team !== TEAM.NONE && arena.ctf?.spawns?.[team]) || arena.spawnPoints;
   const y = arena.spawnY;
 
   const living = occupied.filter((p) => p.alive);

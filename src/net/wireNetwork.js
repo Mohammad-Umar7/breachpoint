@@ -23,6 +23,7 @@ import {
   streakName, multiKillName,
 } from './protocol.js';
 import { NET_STATE } from './NetworkClient.js';
+import { TEAM_NAME, FLAG_EVENT, getMode } from './modes.js';
 import { clamp } from '../core/MathUtils.js';
 
 /*
@@ -50,7 +51,19 @@ const _tip = new THREE.Vector3();
 export function wireNetwork(game) {
   const net = game.net;
 
-  net.onWelcome = ({ spawn }) => {
+  net.onWelcome = ({ spawn, modeId }) => {
+    /*
+     * The HUD learns the mode HERE, not from the first MATCH message.
+     *
+     * MATCH is only broadcast when the match state changes, and a room with
+     * one person in it sits in warmup without changing anything — so a player
+     * who arrived first had no team scores and no flag readout until somebody
+     * else turned up. The mode is known the moment we are welcomed.
+     */
+    game.ui.setMode?.(modeId);
+    game.flagObjects?.apply(net.flags);
+    game.ui.setFlags?.(net.flags, net.teamScores, null);
+
     // The server owns spawn points, so adopt the one it gave us rather than
     // the single-player start.
     //
@@ -434,6 +447,9 @@ export function wireNetwork(game) {
 
   net.onScore = (roster) => game.ui.setScoreboard?.(roster, net.selfId, net.match);
   net.onMatch = (match) => {
+    // The mode arrives with the match, and it decides what the HUD even has
+    // on it — so it is applied before anything is drawn into that HUD.
+    game.ui.setMode?.(net.modeId);
     game.ui.setScoreboard?.(net.roster(), net.selfId, match);
     if (match.state === MATCH_STATE.OVER) {
       const winner = net.nameOf(match.winnerId);
@@ -442,6 +458,57 @@ export function wireNetwork(game) {
     } else if (match.state === MATCH_STATE.LIVE) {
       game.ui.setScoreboardVisible?.(false);
     }
+  };
+
+  /*
+   * Flags: where they are, and what just happened to one.
+   *
+   * The state and the event arrive together in one message, so the world and
+   * the announcement can never disagree — there is no window in which the HUD
+   * says a flag is home while it is being carried across the map.
+   */
+  net.onFlags = ({ flags, event, by, team }) => {
+    game.flagObjects?.apply(flags);
+    game.ui.setFlags?.(flags, net.teamScores, game.flagObjects?.carriedBy(net.selfId) ?? null);
+    if (!event) return;
+
+    const who = by === net.selfId ? 'YOU' : (net.nameOf(by) || 'SOMEONE');
+    const mine = net.team === team;         // is it OUR flag being acted on?
+    const teamName = TEAM_NAME[team] ?? '';
+
+    /*
+     * Whose news is this?
+     *
+     * "Your flag was taken" is a call to go and defend; "you took theirs" is a
+     * call to run. They are opposite instructions, so they must never read the
+     * same — the wording is chosen from the flag's team versus ours, and the
+     * urgent one is flagged danger so it comes up red.
+     */
+    let text = null;
+    let urgent = false;
+    switch (event) {
+      case FLAG_EVENT.TAKEN:
+        text = mine ? 'YOUR FLAG HAS BEEN TAKEN' : `${who} TOOK THE ${teamName} FLAG`;
+        urgent = mine;
+        break;
+      case FLAG_EVENT.DROPPED:
+        text = mine ? 'YOUR FLAG WAS DROPPED' : `THE ${teamName} FLAG WAS DROPPED`;
+        break;
+      case FLAG_EVENT.RETURNED:
+        text = mine ? 'YOUR FLAG IS HOME' : `THE ${teamName} FLAG RETURNED`;
+        break;
+      case FLAG_EVENT.CAPTURED: {
+        // A capture is scored by the team OPPOSITE the flag that moved.
+        const scorer = mine ? 'ENEMY' : 'YOUR TEAM';
+        text = by === net.selfId ? 'YOU SCORED' : `${scorer} SCORED`;
+        urgent = mine;
+        break;
+      }
+      default: return;
+    }
+    game.ui.showBanner?.(text, 2.2, urgent);
+    game.ui.addKillFeed?.(text);
+    game.audio?.play?.(urgent ? 'flagAlert' : 'flagGood', { volume: 0.9 });
   };
 
   // Take the body out at once rather than waiting for them to age out of the

@@ -51,6 +51,9 @@ import { ensureThumbnail, getThumbnail } from './world/MapThumbnail.js';
 import { RemotePlayers } from './net/RemotePlayers.js';
 import { RemoteAudio } from './net/RemoteAudio.js';
 import { KillCam } from './net/KillCam.js';
+import { FlagObjects } from './net/FlagObjects.js';
+import { arenaFor } from './net/arena.js';
+import { TEAM, DEFAULT_MODE_ID, getMode } from './net/modes.js';
 import { wireNetwork } from './net/wireNetwork.js';
 import {
   FLAG, MATCH_STATE, MATCH_RULES, DEFAULT_NAME, hasRealName,
@@ -185,6 +188,14 @@ export class Game {
       await this.assets.build((f, label) => this.menus.setLoadingProgress(0.2 + f * 0.36, label));
       this._applyTextureQuality();
 
+      /*
+       * Both flags and their bases. Empty until a map is built, and created
+       * BEFORE the first build — _buildLevel is what populates it, so a
+       * flagObjects made later than the arena is a flagObjects that misses the
+       * only build that ever happens in a session where the map never changes.
+       */
+      this.flagObjects = new FlagObjects(this.scene, () => this._netSample);
+
       this.menus.setLoadingProgress(0.58, 'Building arena');
       this._buildLevel(this.settings.get('mapId') ?? DEFAULT_MAP_ID);
 
@@ -233,6 +244,7 @@ export class Game {
       /** Death sequence: who did it, and whether the countdown is up yet. */
       this._killedBy = null;
       this._respawnShown = false;
+
 
       this.menus.setLoadingProgress(0.78, 'Arming player');
       this.lean = new LeanSystem(this.input, this.settings, this.physics);
@@ -937,6 +949,12 @@ export class Game {
 
     // 6. Everything else.
     this.pickups.update(dt, this.camera);
+    // After the sample: a carried flag rides its carrier, read from exactly
+    // the numbers that drew the carrier's body this frame.
+    if (this.net?.connected && getMode(this.modeId).teamBased) {
+      this.flagObjects.selfId = this.net.selfId;
+      this.flagObjects.update(dt);
+    }
     this.minimap?.update(dt, this.player, this.killcam?.sample ?? this._netSample);
     this._updatePendingExplosions(dt);
     this.fx.update(dt, this.camera);
@@ -1082,6 +1100,21 @@ export class Game {
     this.pickups?.buildFromLevel?.(this.level);
 
     /*
+     * Flags and bases belong to the MAP, so they are rebuilt with it.
+     *
+     * Built for every map whether or not the current mode uses them, and
+     * hidden when it does not — the alternative is rebuilding the world when
+     * the mode changes, and the mode is fixed for a room anyway.
+     */
+    const ctf = arenaFor(map.id).ctf;
+    this.flagObjects?.build(ctf?.bases ?? null, arenaFor(map.id).spawnY);
+    this._applyModeVisibility();
+    // The minimap is rebuilt above, so this has to be re-attached every time.
+    if (this.minimap) {
+      this.minimap.flags = getMode(this.modeId).teamBased ? this.flagObjects : null;
+    }
+
+    /*
      * Photograph the map the first time it is ever built.
      *
      * One render into a small offscreen target, cached in localStorage, so it
@@ -1096,6 +1129,26 @@ export class Game {
 
   /** The map currently built. */
   get mapId() { return this.level?.mapId ?? DEFAULT_MAP_ID; }
+
+  /** The mode the room is playing, or the local default outside a match. */
+  get modeId() {
+    return this.net?.connected ? this.net.modeId
+      : (this.settings.get('modeId') ?? DEFAULT_MODE_ID);
+  }
+
+  /**
+   * Flags and bases exist only in a team mode.
+   *
+   * Hidden rather than destroyed: a room's mode never changes, so this runs
+   * once per match, and rebuilding geometry to toggle visibility would be
+   * work for nothing.
+   */
+  _applyModeVisibility() {
+    const teamMode = getMode(this.modeId).teamBased;
+    for (const f of this.flagObjects?.flags?.values() ?? []) f.group.visible = teamMode;
+    for (const b of this.flagObjects?.bases ?? []) b.visible = teamMode;
+    if (this.minimap) this.minimap.flags = teamMode ? this.flagObjects : null;
+  }
 
   /**
    * Make sure every map has a photograph, once, while the player reads the menu.
@@ -1187,6 +1240,7 @@ export class Game {
         room,
         quick,
         mapId: this.mapId,
+        modeId: this.settings.get('modeId') ?? DEFAULT_MODE_ID,
       });
 
       /*
@@ -1202,6 +1256,9 @@ export class Game {
           `This match is on ${getMap(welcome.mapId).name}. Loading it…`);
         this.setMap(welcome.mapId);
       }
+      // The room's mode is equally not ours to choose — flags and bases have
+      // to appear or disappear to match it.
+      this._applyModeVisibility();
       this.menus.inviteLink = inviteUrl(welcome.r);
       this.menus.showInvite(welcome.r);
       this.menus.setLobbyStatus(

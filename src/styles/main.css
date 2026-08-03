@@ -903,3 +903,92 @@ kbd {
 .map-card .map-art { overflow: hidden; }
 /* Keep the scale badge legible over a photograph. */
 .map-scale { z-index: 2; }
+
+/* ================================================== capture the flag =====
+ * One strip across the top-centre: both scores and both flag states, mirrored
+ * around a divider so RED reads left-to-right and BLUE right-to-left. A player
+ * has to be able to answer "are we winning, and where are the flags" in a
+ * glance taken during a firefight.
+ */
+#ctf-bar {
+  position: absolute; top: 14px; left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 14px;
+  padding: 6px 18px;
+  background: rgba(8, 14, 20, 0.62);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(3px);
+}
+#ctf-bar[hidden] { display: none; }
+.ctf-side { display: flex; align-items: center; gap: 10px; }
+.ctf-label { font-size: 11px; letter-spacing: 3px; }
+#ctf-red .ctf-label, #ctf-red .ctf-score { color: #e1553f; }
+#ctf-blue .ctf-label, #ctf-blue .ctf-score { color: #4a90d9; }
+.ctf-score { font-size: 26px; font-weight: 700; line-height: 1; letter-spacing: 1px; }
+.ctf-sep { color: var(--ink-dim); font-size: 18px; }
+/* The flag state is the part that changes mid-fight, so it is the part that
+   gets the colour change rather than a static label. */
+.ctf-flag {
+  font-size: 10px; letter-spacing: 2px; padding: 2px 7px;
+  border: 1px solid rgba(255,255,255,0.18); color: var(--ink-dim);
+}
+.ctf-flag.taken { color: #06090d; background: var(--warn); border-color: var(--warn); }
+.ctf-flag.dropped { color: var(--warn); border-color: var(--warn); }
+
+#ctf-carrying {
+  position: absolute; top: 74px; left: 50%; transform: translateX(-50%);
+  font-size: 13px; letter-spacing: 3px;
+  padding: 5px 16px;
+  color: #06090d; background: var(--warn);
+  animation: ctf-carry-pulse 1.1s ease-in-out infinite;
+}
+#ctf-carrying[hidden] { display: none; }
+@keyframes ctf-carry-pulse { 0%,100% { opacity: 0.82; } 50% { opacity: 1; } }
+
+/* A team header inside the scoreboard. Reads as a divider, not a player. */
+#sb-rows tr.sb-team td {
+  padding-top: 12px; padding-bottom: 3px;
+  font-size: 11px; letter-spacing: 3px; font-weight: 700;
+  border-bottom: 1px solid rgba(255,255,255,0.12);
+}
+#sb-rows tr.sb-team:first-child td { padding-top: 2px; }
+
+/* ------------------------------------------------------------ mode select
+ * Two big cards, same skeleton as the map cards so the two steps of the same
+ * flow feel like one screen — but with a drawn diagram instead of a photo,
+ * because what distinguishes a mode is its shape, not its scenery.
+ */
+.mode-grid {
+  display: grid; gap: 18px;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  width: min(880px, 92vw); margin: 0 auto;
+}
+.mode-card {
+  display: flex; flex-direction: column;
+  background: var(--surface-2);
+  border: 1px solid rgba(255,255,255,0.10);
+  border-top: 3px solid var(--mode-accent, var(--accent));
+  padding: 0; margin: 0; text-align: left; color: var(--ink);
+  font-family: var(--font-ui); cursor: pointer;
+  transition: transform 0.18s var(--ease), border-color 0.18s, box-shadow 0.18s;
+}
+.mode-card:hover { transform: translateY(-3px); box-shadow: 0 10px 26px rgba(0,0,0,0.45); }
+.mode-card.selected { border-color: var(--mode-accent, var(--accent)); }
+.mode-art {
+  height: 120px; display: grid; place-items: center;
+  color: var(--mode-accent, var(--accent));
+  background:
+    radial-gradient(ellipse at 50% 120%, rgba(255,255,255,0.07), transparent 70%),
+    rgba(0,0,0,0.25);
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+.mode-art svg { width: 78%; height: auto; }
+.mode-body { padding: 12px 16px 4px; flex: 1; }
+.mode-body h3 { margin: 0; font-size: 19px; letter-spacing: 2px; }
+.mode-tagline { margin: 2px 0 6px; font-size: 12px; letter-spacing: 1px; color: var(--mode-accent, var(--accent)); }
+.mode-desc { margin: 0 0 10px; font-size: 13px; line-height: 1.45; color: var(--ink-dim); }
+.mode-stats { display: flex; gap: 18px; font-size: 11px; letter-spacing: 1px; color: var(--ink-dim); }
+.mode-stats b { display: block; font-size: 15px; color: var(--ink); letter-spacing: 1px; }
+.mode-cta {
+  display: block; padding: 9px 16px; font-size: 12px; letter-spacing: 3px;
+  background: var(--mode-accent, var(--accent)); color: #06090d; font-weight: 700;
+}

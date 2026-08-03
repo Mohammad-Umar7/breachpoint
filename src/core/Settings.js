@@ -71,6 +71,12 @@ export const DEFAULT_SETTINGS = Object.freeze({
    * the game with nothing to build. See world/maps/index.js.
    */
   mapId: 'warehouse',
+  /**
+   * The mode to ASK for. Not necessarily the one being played — joining a
+   * room by code puts you in that room's mode, and the room decides. Same
+   * fallback rule as mapId. See net/modes.js.
+   */
+  modeId: 'ffa',
   loadoutPrimary: 'rifle',
   loadoutSecondary: 'pistol',
   // Scales every weapon's recoil pattern. The authored patterns are the

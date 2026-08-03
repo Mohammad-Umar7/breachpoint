@@ -26,6 +26,8 @@
  * a second reader of a stream that already exists.
  */
 
+import { TEAM_CSS, FLAG_STATE } from '../net/modes.js';
+
 /** How long a player stays on the map after firing. */
 const BLIP_SECONDS = 2.4;
 
@@ -49,6 +51,14 @@ export class Minimap {
    * @param {HTMLCanvasElement} canvas
    * @param {object} level  needs `mapShapes` and `pickupSpots`
    */
+  /**
+   * The flags, or null outside a team mode.
+   *
+   * Set by Game rather than passed per frame: it is one object whose contents
+   * change, not a value. @type {import('../net/FlagObjects.js').FlagObjects|null}
+   */
+  flags = null;
+
   constructor(canvas, level) {
     this.canvas = canvas;
     this.level = level;
@@ -187,6 +197,31 @@ export class Minimap {
       ctx.fillRect(x - 1.5, z - 1.5, 3, 3);
     }
 
+    /*
+     * Flags and bases.
+     *
+     * A marker that falls outside the window is PINNED TO THE RIM instead of
+     * being dropped. In a mode whose objective is a place, "your flag is being
+     * carried that way" is the single most useful thing the map can say, and
+     * it is useful exactly when the flag is too far away to draw honestly. The
+     * pinned ones are hollow so they are never mistaken for a true position.
+     */
+    for (const f of this.flags?.flags?.values() ?? []) {
+      const colour = TEAM_CSS[f.team];
+
+      // The base: a hollow diamond, always at a true position or the rim.
+      drawMarker(ctx, f.home.x - player.position.x, f.home.z - player.position.z,
+        scale, r, colour, 'base');
+
+      // The flag itself, wherever it currently is. Skipped when it is sitting
+      // on its own stand, because the base marker is already there.
+      if (f.state !== FLAG_STATE.AT_BASE) {
+        const at = f.group.position;
+        drawMarker(ctx, at.x - player.position.x, at.z - player.position.z,
+          scale, r, colour, f.state === FLAG_STATE.CARRIED ? 'carried' : 'dropped');
+      }
+    }
+
     // Anyone who has fired recently.
     for (const [id, left] of this.blips) {
       const p = sample?.get(id);
@@ -228,4 +263,60 @@ export class Minimap {
     ctx.arc(r, r, r - 1, 0, Math.PI * 2);
     ctx.stroke();
   }
+}
+
+/**
+ * One objective marker, pinned to the rim when it falls outside the window.
+ *
+ * @param {number} dx,dz  metres from the player
+ * @param {'base'|'carried'|'dropped'} kind
+ */
+function drawMarker(ctx, dx, dz, scale, r, colour, kind) {
+  let x = dx * scale;
+  let z = dz * scale;
+  const dist = Math.hypot(x, z);
+  /*
+   * Bases pin a little further in than flags.
+   *
+   * A base and the flag that belongs to it are usually in the same direction,
+   * so pinning both to the same arc drew one on top of the other and the pair
+   * read as a single unidentifiable smudge. Two rings keeps them apart without
+   * lying about which way either one is.
+   */
+  const edge = r - (kind === 'base' ? 13 : 7);
+  const offMap = dist > edge;
+  if (offMap && dist > 0) {
+    x = (x / dist) * edge;
+    z = (z / dist) * edge;
+  }
+
+  ctx.save();
+  ctx.translate(x, z);
+  ctx.strokeStyle = colour;
+  ctx.fillStyle = colour;
+  ctx.lineWidth = 1.5;
+
+  if (kind === 'base') {
+    // A diamond: the place the flag belongs.
+    ctx.beginPath();
+    ctx.moveTo(0, -5); ctx.lineTo(4.5, 0); ctx.lineTo(0, 5); ctx.lineTo(-4.5, 0);
+    ctx.closePath();
+    ctx.stroke();
+  } else {
+    // The flag: a pennant, filled when carried and hollow when lying loose,
+    // so "someone is running with it" reads differently from "it is on the
+    // floor somewhere".
+    ctx.beginPath();
+    ctx.moveTo(-2, 5.5); ctx.lineTo(-2, -5.5); ctx.lineTo(5, -3); ctx.lineTo(-2, -0.5);
+    if (kind === 'carried') { ctx.fill(); } else { ctx.stroke(); }
+  }
+  // Off-map markers get a small tick towards the edge so the direction is
+  // unmistakable even when several markers pile up on the same arc.
+  if (offMap) {
+    ctx.globalAlpha = 0.6;
+    ctx.beginPath();
+    ctx.arc(0, 0, 7.5, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.restore();
 }

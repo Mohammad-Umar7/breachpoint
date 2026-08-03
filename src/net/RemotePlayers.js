@@ -20,6 +20,7 @@ import * as THREE from 'three';
 import { damp } from '../core/MathUtils.js';
 import { getWeaponDef } from '../weapons/WeaponDefinitions.js';
 import { FLAG, PLAYER_MAX_HEALTH } from './protocol.js';
+import { TEAM, TEAM_COLOR } from './modes.js';
 
 /** Parts that make up a body, and which material role each takes. */
 const BODY_PARTS = [
@@ -181,6 +182,24 @@ export class RemotePlayers {
       body.group.rotation.y = s.yaw;
       // Head follows aim, clamped so a straight-up look does not snap the neck.
       body.head.rotation.x = THREE.MathUtils.clamp(-s.pitch, -0.7, 0.7);
+
+      /*
+       * In a team mode, a body wears its TEAM's colour rather than its own.
+       *
+       * Telling friend from enemy at a glance matters more than telling one
+       * teammate from another, and per-player tints actively fight that: eight
+       * slightly different greys is exactly the situation team colours exist to
+       * replace. Applied only on a CHANGE, because this runs per body per frame
+       * and setting a colour dirties the material.
+       */
+      const team = roster.get(id)?.team ?? TEAM.NONE;
+      if (team !== body.team) {
+        body.team = team;
+        body.mats.body.color.setHex(
+          team === TEAM.NONE ? body.tint : TEAM_COLOR[team]);
+        // The tag is drawn into a canvas, so it has to be repainted to change.
+        this._drawTag(body, s.hp);
+      }
 
       this._setWeapon(body, s.weapon);
       this._animate(body, s, dt);
@@ -353,6 +372,8 @@ export class RemotePlayers {
     if (!this._available) return null;
 
     const tint = PLAYER_TINTS[(id - 1) % PLAYER_TINTS.length];
+    // Held so a body can go back to its own colour if the mode is not
+    // team-based — see the team block in sync().
     const mats = {
       body: this.assets.getMaterial('soldierFatigues').clone(),
       gear: this.assets.getMaterial('darkGear').clone(),
@@ -386,7 +407,8 @@ export class RemotePlayers {
     group.name = `remote_${id}`;
 
     const record = {
-      id, name, group, mats, flashMats: flashable, flash: 0, phase: Math.random() * 6.28,
+      id, name, tint, team: TEAM.NONE,
+      group, mats, flashMats: flashable, flash: 0, phase: Math.random() * 6.28,
       head: null, legL: null, legR: null, armL: null, armR: null,
       // The model stands with its feet at y=0, but the server reports the
       // player's CAPSULE CENTRE. Without this offset every body floats.

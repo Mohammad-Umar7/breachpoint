@@ -271,12 +271,24 @@ check('every name imported from protocol.js is exported by it',
  * nothing was watching.
  *
  * Comment lines are stripped first: a name mentioned in prose is explaining
- * the code, not calling it.
+ * the code, not calling it. So are string literals — CTF's banner text reads
+ * 'YOUR FLAG HAS BEEN TAKEN', and FLAG happens to be a protocol export, so a
+ * check that treats quoted prose as code reports two files for a word nobody
+ * ever called.
+ *
+ * Template literals keep their ${...} interpolations, which ARE code, and lose
+ * the prose around them. Nesting is handled one level deep; a use buried two
+ * levels into a template would be missed, which errs towards a quiet check
+ * rather than a false alarm.
  */
 const strip = (text) => text
   .split(/\r?\n/)
   .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
-  .join('\n');
+  .join('\n')
+  .replace(/'(?:[^'\\\n]|\\.)*'/g, "''")
+  .replace(/"(?:[^"\\\n]|\\.)*"/g, '""')
+  .replace(/`(?:[^`\\]|\\.)*`/g, (lit) =>
+    [...lit.matchAll(/\$\{((?:[^{}]|\{[^{}]*\})*)\}/g)].map((m) => m[1]).join(';'));
 
 const undeclaredUses = [];
 for (const { file, text } of protoImporters) {

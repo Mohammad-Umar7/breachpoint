@@ -19,15 +19,56 @@ import { effectiveAimSpeed } from '../core/SensitivityManager.js';
 import { clamp } from '../core/MathUtils.js';
 import { sanitizeName, hasRealName, DEFAULT_NAME } from '../net/protocol.js';
 import { MAPS, getMap, DEFAULT_MAP_ID } from '../world/maps/index.js';
+import { MODES, getMode, DEFAULT_MODE_ID } from '../net/modes.js';
 import { getThumbnail } from '../world/MapThumbnail.js';
 
 const SCREENS = [
-  'screen-loading', 'screen-menu', 'screen-maps', 'screen-lobby', 'screen-loadout',
+  'screen-loading', 'screen-menu', 'screen-modes', 'screen-maps', 'screen-lobby', 'screen-loadout',
   'screen-controls', 'screen-credits', 'screen-pause', 'screen-settings',
   'screen-gameover', 'screen-error',
 ];
 
 /** Percentage formatter for 0..1 volume-style values. */
+/*
+ * A drawn diagram per mode.
+ *
+ * Drawn rather than photographed because a mode is not a place — a screenshot
+ * of CTF and a screenshot of FFA on the same map look identical. What differs
+ * is the SHAPE of the game: everybody against everybody, or two sides and two
+ * objectives. Keyed by mode id, so a mode without art still gets a card.
+ */
+const MODE_ART = Object.freeze({
+  ffa: `<svg viewBox="0 0 120 72" aria-hidden="true">
+    <g fill="none" stroke="currentColor" stroke-width="1.6">
+      <circle cx="60" cy="36" r="11"/><path d="M60 19v-7M60 60v-7M43 36h-7M84 36h-7"/>
+    </g>
+    <g fill="currentColor">
+      <circle cx="21" cy="18" r="4"/><circle cx="99" cy="20" r="4"/>
+      <circle cx="17" cy="55" r="4"/><circle cx="103" cy="54" r="4"/>
+      <circle cx="60" cy="8"  r="4"/><circle cx="60" cy="64" r="4"/>
+    </g>
+    <g stroke="currentColor" stroke-width="1" opacity="0.4">
+      <path d="M25 21 55 33M95 23 65 33M21 52 55 40M99 51 65 40M60 12v13M60 60V47"/>
+    </g>
+  </svg>`,
+  ctf: `<svg viewBox="0 0 120 72" aria-hidden="true">
+    <g stroke="#e1553f" stroke-width="1.6" fill="none">
+      <path d="M18 56V20"/><path d="M18 20h16l-4 6 4 6H18z" fill="#e1553f"/>
+      <ellipse cx="18" cy="57" rx="12" ry="4"/>
+    </g>
+    <g stroke="#4a90d9" stroke-width="1.6" fill="none">
+      <path d="M102 56V20"/><path d="M102 20H86l4 6-4 6h16z" fill="#4a90d9"/>
+      <ellipse cx="102" cy="57" rx="12" ry="4"/>
+    </g>
+    <g fill="none" stroke="currentColor" stroke-width="1.4" opacity="0.75">
+      <path d="M34 34c14-10 38-10 52 0" stroke-dasharray="4 3"/>
+      <path d="M86 34l-6-3M86 34l-5 5"/>
+      <path d="M86 48c-14 10-38 10-52 0" stroke-dasharray="4 3"/>
+      <path d="M34 48l6 3M34 48l5-5"/>
+    </g>
+  </svg>`,
+});
+
 const pct = (v) => `${Math.round(v * 100)}`;
 const two = (v) => v.toFixed(2);
 const int = (v) => `${Math.round(v)}`;
@@ -277,6 +318,8 @@ export class MenuManager {
       menuMapTag: id('menu-map-tag'),
       mapGrid: id('map-grid'),
       mapsSub: id('maps-sub'),
+      modeGrid: id('mode-grid'),
+      modesSub: id('modes-sub'),
       menuPrimaryTag: id('menu-primary-tag'),
       menuSecondaryTag: id('menu-secondary-tag'),
       loadoutPrimaryTag: id('loadout-primary-tag'),
@@ -362,8 +405,8 @@ export class MenuManager {
      * is playing, so offering a choice would be a lie the server overrides a
      * second later.
      */
-    click('btn-play', () => this.openMapPicker('quick'));
-    click('btn-create', () => this.openMapPicker('create'));
+    click('btn-play', () => this.openModePicker('quick'));
+    click('btn-create', () => this.openModePicker('create'));
     click('btn-join', () => this.openLobby('join'));
     click('btn-lobby-go', () => this._lobbyGo());
     click('btn-copy-invite', () => this._copyInvite());
@@ -744,6 +787,69 @@ export class MenuManager {
    *
    * @param {'quick'|'create'|'browse'} intent  what selecting a map does next
    */
+  /**
+   * Choose the mode, then the map.
+   *
+   * Mode first because it is the bigger decision: it changes the objective,
+   * whether there are teams at all, and what winning means. A player who picks
+   * a map first has chosen scenery before knowing the game.
+   */
+  openModePicker(intent = 'browse') {
+    this._mapIntent = intent;
+    if (this.el.modesSub) {
+      this.el.modesSub.textContent = intent === 'create'
+        ? 'Pick a mode, then a map — your friends join with the code.'
+        : 'Pick a mode, then a map.';
+    }
+    this._renderModeCards();
+    this.showScreen('screen-modes');
+  }
+
+  _renderModeCards() {
+    const grid = this.el.modeGrid;
+    if (!grid) return;
+    const current = this.settings.get('modeId') ?? DEFAULT_MODE_ID;
+    grid.innerHTML = '';
+
+    for (const mode of Object.values(MODES)) {
+      const card = document.createElement('button');
+      card.type = 'button';
+      card.className = 'mode-card' + (mode.id === current ? ' selected' : '');
+      card.style.setProperty('--mode-accent', mode.accent);
+      card.dataset.modeId = mode.id;
+
+      const art = document.createElement('div');
+      art.className = 'mode-art';
+      art.innerHTML = MODE_ART[mode.id] ?? '';
+
+      const body = document.createElement('div');
+      body.className = 'mode-body';
+      body.innerHTML =
+        `<h3>${escapeHtml(mode.name)}</h3>`
+        + `<p class="mode-tagline">${escapeHtml(mode.tagline)}</p>`
+        + `<p class="mode-desc">${escapeHtml(mode.description)}</p>`
+        + `<div class="mode-stats">`
+        + `<span><b>${mode.teamBased ? 'TEAMS' : 'SOLO'}</b>sides</span>`
+        + `<span><b>${mode.scoreTarget}</b>to win</span>`
+        + `</div>`;
+
+      const cta = document.createElement('span');
+      cta.className = 'mode-cta';
+      cta.textContent = mode.id === current ? 'SELECTED' : 'SELECT';
+
+      card.append(art, body, cta);
+      card.addEventListener('click', () => this._chooseMode(mode.id));
+      grid.appendChild(card);
+    }
+  }
+
+  _chooseMode(modeId) {
+    this.settings.set('modeId', getMode(modeId).id);
+    this.audio?.play?.('menuSelect', { volume: 0.6 });
+    this.refreshTags();
+    this.openMapPicker(this._mapIntent);
+  }
+
   openMapPicker(intent = 'browse') {
     this._mapIntent = intent;
     if (this.el.mapsSub) {
@@ -755,6 +861,9 @@ export class MenuManager {
     }
     this._renderMapCards();
     this.showScreen('screen-maps');
+    // Going back from the map picker should undo one step, not all of them.
+    const back = document.querySelector('#screen-maps [data-back]');
+    if (back) back.dataset.back = intent === 'browse' ? 'screen-menu' : 'screen-modes';
   }
 
   _renderMapCards() {

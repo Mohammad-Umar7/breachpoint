@@ -36,6 +36,13 @@ const URL = process.env.URL || 'ws://localhost:8787';
 const ROOM = (process.argv[2] || 'BUDDY').toUpperCase();
 const COUNT = Math.max(1, Math.min(8, Number(process.argv[3] || 1)));
 const HUNT = process.argv.includes('hunt');
+/*
+ * Which mode to ASK for, if this bot is the one that creates the room.
+ *
+ * Only has an effect on an empty room — joining an existing one adopts that
+ * room's mode, same as a real client. `npm run bot -- ROOM 3 ctf`.
+ */
+const MODE = process.argv.includes('ctf') ? 'ctf' : 'ffa';
 
 /** Metres per 50 ms tick while hunting — about 5 m/s, inside the move budget. */
 const CHASE_STEP = 0.25;
@@ -61,7 +68,7 @@ function spawnBot(name, index) {
   let t = index * 3.7;
 
   ws.on('open', () => ws.send(JSON.stringify({
-    t: MSG.JOIN, v: PROTOCOL_VERSION, n: name, r: ROOM,
+    t: MSG.JOIN, v: PROTOCOL_VERSION, n: name, r: ROOM, g: MODE,
   })));
 
   ws.on('message', (raw) => {

@@ -69,6 +69,25 @@
         <div id="hitmarker"><span></span><span></span><span></span><span></span></div>
       </div>
 
+      <!-- Capture the Flag: both team scores and both flag states, in one
+           strip. Hidden entirely in a free-for-all. -->
+      <div id="ctf-bar" hidden>
+        <div class="ctf-side" id="ctf-red">
+          <span class="ctf-label">RED</span>
+          <span class="ctf-score" id="ctf-red-score">0</span>
+          <span class="ctf-flag" id="ctf-red-flag">HOME</span>
+        </div>
+        <span class="ctf-sep">/</span>
+        <div class="ctf-side" id="ctf-blue">
+          <span class="ctf-flag" id="ctf-blue-flag">HOME</span>
+          <span class="ctf-score" id="ctf-blue-score">0</span>
+          <span class="ctf-label">BLUE</span>
+        </div>
+      </div>
+      <!-- Shown only while YOU are carrying, because your own flag is not
+           drawn in the world — the camera is inside the body holding it. -->
+      <div id="ctf-carrying" hidden>YOU HAVE THE ENEMY FLAG &middot; GET TO YOUR BASE</div>
+
       <!-- Top-left: match state -->
       <div id="hud-top-left">
         <div class="panel">
@@ -238,6 +257,19 @@
           <div class="chip"><span>SECONDARY</span><b id="menu-secondary-tag">M9</b></div>
         </div>
         <p class="hint">Move the mouse to look &middot; <kbd>Esc</kbd> to pause at any time</p>
+      </section>
+
+      <!-- ---------- Mode select ----------
+           Comes BEFORE the map: what you are playing decides whether a map
+           even makes sense. Cards are GENERATED from the mode registry — see
+           src/net/modes.js — so a third mode needs no markup here. -->
+      <section id="screen-modes" class="screen wide">
+        <h2>SELECT MODE</h2>
+        <p class="maps-sub" id="modes-sub">How do you want to play?</p>
+        <div class="mode-grid" id="mode-grid"></div>
+        <nav class="menu-nav">
+          <button class="nav-btn" data-back="screen-menu">BACK</button>
+        </nav>
       </section>
 
       <!-- ---------- Map select ----------

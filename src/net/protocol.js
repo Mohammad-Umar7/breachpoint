@@ -57,7 +57,7 @@ export const MSG = Object.freeze({
   // ---- client -> server ----
   // `m` is the map the client WANTS. A room that already exists keeps its
   // own — see WELCOME's `mp`, which is the one that counts.
-  JOIN: 'j',      // { n, r: room|null, q: quickMatch?, m: mapId, v: PROTOCOL_VERSION }
+  JOIN: 'j',      // { n, r: room|null, q, m: mapId, g: modeId, v: PROTOCOL_VERSION }
   INPUT: 'i',     // { q: seq, p: [x,y,z], y: yaw, a: pitch, f: flagBits, w: weaponId }
   SHOT: 's',      // { q: seq, o: [x,y,z], d: [x,y,z], w: weaponId, h: [hits] }
   RESPAWN: 'r',   // {}
@@ -80,7 +80,7 @@ export const MSG = Object.freeze({
   // `mp` is the ROOM's map, and is authoritative. Joining a friend's code
   // means playing their map, so the client may have to rebuild the world it
   // had already built for the one it picked.
-  WELCOME: 'W',   // { id, r, you, ps, mt, sp: [x,y,z], mp: mapId }
+  WELCOME: 'W',   // { id, r, you, ps, mt, sp: [x,y,z], mp: mapId, gm: modeId }
   // NOTE `ts`, not `t`, for the timestamp. The envelope is built as
   // `{ t: type, ...payload }`, so a payload field called `t` silently
   // overwrites the message type and every snapshot goes out unlabelled —
@@ -128,8 +128,21 @@ export const MSG = Object.freeze({
    * of a player who cannot yet defend it.
    */
   SPAWNPOINT: 'sx', // { sp: [x, y, z] }
-  SCORE: 'C',     // { ps: [[id, kills, deaths, ping]] }
-  MATCH: 'M',     // { st: state, tl: timeLeftSec, kt: killTarget, w: winnerId|null }
+  SCORE: 'C',     // { ps: [[id, name, kills, deaths, ping, team, captures]], ts: teamScores }
+  /**
+   * Where both flags are, and what just happened to one.
+   *
+   * Sent whenever a flag changes hands rather than every tick: a flag is
+   * stationary at a base most of the match, and a carried one rides its
+   * carrier, whose position is already in the snapshot. Streaming it would be
+   * paying thirty times a second for something that changes twice a minute.
+   *
+   *   f  [{ t: team, s: FLAG_STATE, x, y, z, c: carrierId|null }]
+   *   ev what just happened, for the banner and the feed — see FLAG_EVENT
+   *   by whose doing
+   */
+  FLAG: 'G',      // { f: [flagState], ev: FLAG_EVENT|null, by: playerId|null, tm: team }
+  MATCH: 'M',     // { st, tl, kt: scoreTarget, w: winnerId|null, gm: modeId, ts: teamScores }
   PONG: 'P',      // { c: echoedClientClock, s: serverTimeMs }
   DENIED: 'E',    // { why: string }
 });

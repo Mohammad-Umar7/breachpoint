@@ -38,8 +38,12 @@ import {
   isValidRoomCode, sanitizeName, damageFor,
 } from '../src/net/protocol.js';
 import {
-  pickSpawn, isInsideArena, isValidMapId, DEFAULT_MAP_ID,
+  pickSpawn, isInsideArena, isValidMapId, DEFAULT_MAP_ID, arenaFor,
 } from '../src/net/arena.js';
+import {
+  TEAM, PLAYING_TEAMS, TEAM_NAME, opposingTeam, sameTeam,
+  FLAG_STATE, FLAG_EVENT, DEFAULT_MODE_ID, isValidModeId, getMode,
+} from '../src/net/modes.js';
 import { WEAPON_DEFS, HAZARD_DEFS } from '../src/weapons/WeaponDefinitions.js';
 
 const PORT = Number(process.env.PORT || 8787);
@@ -55,6 +59,10 @@ const WEAPON_BY_ID = new Map(
 
 /** The subset a player may actually be holding — hazards are not carryable. */
 const HELD_WEAPON_IDS = new Set(WEAPON_DEFS.map((w) => w.id));
+
+/** Centimetre rounding. Beyond this is noise nobody can see, and it is sent
+ *  thirty times a second per player. */
+const r2 = (v) => Math.round(v * 100) / 100;
 
 /** Shortest interval between shots this weapon could legitimately produce. */
 function minFireInterval(weapon) {
@@ -94,7 +102,16 @@ class Player {
     this.forceRespawnAt = 0;
     this.kills = 0;
     this.deaths = 0;
+    /** Flags carried home. Zero in a mode without flags, and reported anyway
+     *  so the scoreboard never has to ask which mode it is in. */
+    this.captures = 0;
     this.ping = 0;
+    /**
+     * TEAM.NONE in a free-for-all, and that is a value rather than a gap —
+     * see the note on TEAM. Assigned once on join and kept for the session, so
+     * a player is not shuffled between sides mid-match.
+     */
+    this.team = TEAM.NONE;
     /**
      * Server time until which this player cannot be hurt. Set on spawn, and
      * cleared the moment they pull a trigger. See MATCH_RULES.spawnProtectSec.
@@ -131,7 +148,7 @@ class Player {
   summary() {
     return {
       id: this.id, n: this.name, k: this.kills, d: this.deaths,
-      hp: this.hp, a: this.alive, w: this.weapon,
+      hp: this.hp, a: this.alive, w: this.weapon, tm: this.team,
     };
   }
 
@@ -185,7 +202,7 @@ class Player {
 // Room
 // ---------------------------------------------------------------------------
 class Room {
-  constructor(code, mapId = DEFAULT_MAP_ID) {
+  constructor(code, mapId = DEFAULT_MAP_ID, modeId = DEFAULT_MODE_ID) {
     this.code = code;
     /**
      * Which map this room is playing.
@@ -200,6 +217,20 @@ class Room {
      * MATCH stay private, so sharing a code still means only the people you
      * gave it to can turn up.
      */
+    /**
+     * What winning means here. Fixed for the life of the room, like the map:
+     * changing it mid-match would rescore a game already in progress.
+     */
+    this.modeId = isValidModeId(modeId) ? modeId : DEFAULT_MODE_ID;
+    this.mode = getMode(this.modeId);
+    /** team -> captures. Only meaningful in a team mode. */
+    this.teamScores = { [TEAM.RED]: 0, [TEAM.BLUE]: 0 };
+    /**
+     * team -> flag. Keyed by the team that OWNS it, so `flags.get(TEAM.RED)`
+     * is the flag Red defends and Blue is trying to take.
+     */
+    this.flags = new Map();
+
     this.isPublic = false;
     this.players = new Map();
     this.state = MATCH_STATE.WARMUP;
@@ -213,9 +244,57 @@ class Room {
 
   get size() { return this.players.size; }
 
+  /**
+   * Put a joiner on the smaller side, breaking ties toward RED.
+   *
+   * Balanced by HEAD COUNT rather than by score: a team that is losing badly
+   * is not helped by being handed the next arrival, and shuffling people to
+   * even out a scoreline is how you end up switching somebody's team while
+   * they are carrying a flag.
+   */
+  assignTeam(player) {
+    if (!this.mode.teamBased) { player.team = TEAM.NONE; return; }
+    const count = { [TEAM.RED]: 0, [TEAM.BLUE]: 0 };
+    for (const p of this.players.values()) {
+      if (p !== player && count[p.team] !== undefined) count[p.team]++;
+    }
+    player.team = count[TEAM.BLUE] < count[TEAM.RED] ? TEAM.BLUE : TEAM.RED;
+  }
+
+  /** Put both flags on their stands. Called at match start and on restart. */
+  resetFlags() {
+    this.flags.clear();
+    if (!this.mode.teamBased) return;
+    const bases = arenaFor(this.mapId).ctf?.bases;
+    if (!bases) return;
+    for (const team of PLAYING_TEAMS) {
+      const [x, z] = bases[team];
+      this.flags.set(team, {
+        team,
+        state: FLAG_STATE.AT_BASE,
+        x, y: arenaFor(this.mapId).spawnY, z,
+        carrier: null,
+        returnAt: 0,
+      });
+    }
+  }
+
+  flagPayload() {
+    return [...this.flags.values()].map((f) => ({
+      t: f.team, s: f.state, x: r2(f.x), y: r2(f.y), z: r2(f.z), c: f.carrier,
+    }));
+  }
+
+  broadcastFlags(ev = null, by = null, tm = TEAM.NONE) {
+    if (!this.mode.teamBased) return;
+    this.broadcast(MSG.FLAG, { f: this.flagPayload(), ev, by, tm });
+  }
+
   add(player) {
     player.room = this;
     this.players.set(player.id, player);
+    this.assignTeam(player);
+    if (this.mode.teamBased && !this.flags.size) this.resetFlags();
     // Spawn quietly: WELCOME carries the position itself. Emitting a separate
     // MATCH before WELCOME meant a joining client received its spawn point
     // before it even knew its own id, and had nowhere to put it.
@@ -229,9 +308,11 @@ class Room {
       mt: this.matchPayload(),
       sp: [player.x, player.y, player.z],
       hz: 1000 / TICK_MS,
-      // The ROOM's map, which is not necessarily the one this client asked
-      // for: joining a code means playing whatever that room is playing.
+      // The ROOM's map and mode, which are not necessarily the ones this
+      // client asked for: joining a code means playing what that room plays.
       mp: this.mapId,
+      gm: this.modeId,
+      fl: this.mode.teamBased ? this.flagPayload() : null,
     });
     this.broadcast(MSG.JOINED, { p: player.summary() }, player);
     this.evaluateMatchState();
@@ -239,6 +320,9 @@ class Room {
   }
 
   remove(player) {
+    // Drop first: a carrier who disconnects while holding a flag would
+    // otherwise take it out of the world entirely, and no one could score.
+    this.dropFlagFrom(player);
     if (!this.players.delete(player.id)) return;
     player.room = null;
     this.broadcast(MSG.LEFT, { id: player.id });
@@ -264,12 +348,22 @@ class Room {
     const tl = this.state === MATCH_STATE.LIVE
       ? Math.max(0, Math.ceil((this.endsAt - Date.now()) / 1000))
       : MATCH_RULES.timeLimitSec;
-    return { st: this.state, tl, kt: MATCH_RULES.killTarget, w: this.winnerId };
+    return {
+      st: this.state, tl, kt: this.mode.scoreTarget, w: this.winnerId,
+      gm: this.modeId,
+      ts: this.mode.teamBased
+        ? { [TEAM.RED]: this.teamScores[TEAM.RED], [TEAM.BLUE]: this.teamScores[TEAM.BLUE] }
+        : null,
+    };
   }
 
   broadcastScore() {
     this.broadcast(MSG.SCORE, {
-      ps: [...this.players.values()].map((p) => [p.id, p.name, p.kills, p.deaths, p.ping]),
+      ps: [...this.players.values()].map((p) =>
+        [p.id, p.name, p.kills, p.deaths, p.ping, p.team, p.captures]),
+      ts: this.mode.teamBased
+        ? { [TEAM.RED]: this.teamScores[TEAM.RED], [TEAM.BLUE]: this.teamScores[TEAM.BLUE] }
+        : null,
     });
   }
 
@@ -280,7 +374,13 @@ class Room {
     if (this.state === MATCH_STATE.WARMUP && live) {
       this.state = MATCH_STATE.LIVE;
       this.endsAt = Date.now() + MATCH_RULES.timeLimitSec * 1000;
-      for (const p of this.players.values()) { p.kills = 0; p.deaths = 0; }
+      for (const p of this.players.values()) { p.kills = 0; p.deaths = 0; p.captures = 0; }
+      // Warmup is a sandbox — flags can be carried and captured there so a
+      // lone player can see how the mode works. Everything it did is wiped
+      // here, so nothing done before the match counts towards it.
+      this.teamScores[TEAM.RED] = 0;
+      this.teamScores[TEAM.BLUE] = 0;
+      this.resetFlags();
       this.broadcast(MSG.MATCH, this.matchPayload());
     } else if (this.state === MATCH_STATE.LIVE && !live) {
       this.state = MATCH_STATE.WARMUP;
@@ -302,6 +402,7 @@ class Room {
         .map((p) => ({ x: p.x, z: p.z, alive: p.alive })),
       Math.random,
       this.mapId,
+      player.team,
     );
     player.reservedSpawn = at;
     return at;
@@ -368,6 +469,16 @@ class Room {
      */
     if (!selfInflicted && now < victim.protectedUntil) return;
 
+    /*
+     * You cannot shoot your own team.
+     *
+     * Refused outright rather than reduced: with friendly fire on, one player
+     * can hand the match to the other side, and in Capture the Flag they can
+     * do it by killing their own carrier. `sameTeam` is false for two players
+     * on TEAM.NONE, so a free-for-all is untouched by this.
+     */
+    if (!selfInflicted && sameTeam(victim.team, attacker.team)) return;
+
     const raw = damageFor(weapon, part, distance);
     const dmg = Math.min(raw, LIMITS.maxDamagePerHit);
 
@@ -397,6 +508,13 @@ class Room {
     // corpse stays flagged through the whole countdown, and the body draws its
     // shield while lying dead.
     victim.protectedUntil = 0;
+    /*
+     * A carrier who dies DROPS the flag where they fell.
+     *
+     * Not destroyed and not sent home: the scramble over the body is most of
+     * what the mode is, and either alternative removes it.
+     */
+    this.dropFlagFrom(victim);
     // Blowing yourself up costs a death and earns nothing. Without this guard
     // the suicide would credit a kill to the person who committed it.
     if (this.state === MATCH_STATE.LIVE && !selfInflicted) attacker.kills++;
@@ -466,6 +584,120 @@ class Room {
     }
   }
 
+  /** The flag this player is carrying, if any. */
+  carriedBy(player) {
+    for (const f of this.flags.values()) if (f.carrier === player.id) return f;
+    return null;
+  }
+
+  /** Put a carried flag on the ground where its carrier is. */
+  dropFlagFrom(player) {
+    const flag = this.carriedBy(player);
+    if (!flag) return;
+    flag.state = FLAG_STATE.DROPPED;
+    flag.carrier = null;
+    flag.x = player.x; flag.y = player.y; flag.z = player.z;
+    flag.returnAt = Date.now() + this.mode.flagReturnSec * 1000;
+    this.broadcastFlags(FLAG_EVENT.DROPPED, player.id, flag.team);
+  }
+
+  sendFlagHome(flag, by = null) {
+    const [x, z] = arenaFor(this.mapId).ctf.bases[flag.team];
+    flag.state = FLAG_STATE.AT_BASE;
+    flag.carrier = null;
+    flag.x = x; flag.y = arenaFor(this.mapId).spawnY; flag.z = z;
+    flag.returnAt = 0;
+    this.broadcastFlags(FLAG_EVENT.RETURNED, by, flag.team);
+  }
+
+  /**
+   * Capture the Flag, once per tick.
+   *
+   * Everything here is proximity: the server never trusts a client to say it
+   * touched anything, it just checks where everyone is against where the flags
+   * are. That is the same bounded trust the rest of this server uses, and it
+   * means a modified client cannot capture from across the map.
+   */
+  tickCTF(now) {
+    /*
+     * Runs in WARMUP as well as LIVE.
+     *
+     * A room needs two people before a match starts, so gating this on LIVE
+     * meant the first player to arrive walked over both flags and nothing
+     * whatsoever happened — the mode looked broken to everybody testing it
+     * alone, which is how most people first see it. evaluateMatchState wipes
+     * anything done in warmup the moment the match begins.
+     */
+    if (!this.mode.teamBased || this.state === MATCH_STATE.OVER) return;
+    const arena = arenaFor(this.mapId);
+    if (!arena.ctf) return;
+    const touch = this.mode.flagTouchRadius;
+    const near = (p, o) => Math.hypot(p.x - o.x, p.z - o.z) < touch;
+
+    for (const flag of this.flags.values()) {
+      // A flag nobody has touched goes home, so one punted into a corner
+      // cannot freeze the match.
+      if (flag.state === FLAG_STATE.DROPPED && now >= flag.returnAt) {
+        this.sendFlagHome(flag, null);
+        continue;
+      }
+      if (flag.state === FLAG_STATE.CARRIED) continue;
+
+      for (const p of this.players.values()) {
+        if (!p.alive || p.team === TEAM.NONE) continue;
+        if (!near(p, flag)) continue;
+
+        if (p.team === flag.team) {
+          // Your own flag. On the ground it is RETURNED by touching it; on its
+          // stand there is nothing to do, which is what stops a defender
+          // picking up their own flag and walking off with it.
+          if (flag.state === FLAG_STATE.DROPPED) this.sendFlagHome(flag, p.id);
+        } else if (!this.carriedBy(p)) {
+          // The enemy takes it, from the stand or off the ground. One flag per
+          // player: without that check a single runner could hold both and end
+          // the match by walking home.
+          flag.state = FLAG_STATE.CARRIED;
+          flag.carrier = p.id;
+          flag.returnAt = 0;
+          this.broadcastFlags(FLAG_EVENT.TAKEN, p.id, flag.team);
+        }
+        break;
+      }
+    }
+
+    // --- captures -----------------------------------------------------------
+    for (const p of this.players.values()) {
+      if (!p.alive) continue;
+      const carried = this.carriedBy(p);
+      if (!carried) continue;
+
+      const [bx, bz] = arena.ctf.bases[p.team];
+      if (Math.hypot(p.x - bx, p.z - bz) > this.mode.captureRadius) continue;
+
+      /*
+       * YOUR OWN FLAG MUST BE HOME.
+       *
+       * This one clause is the mode. Without it both teams simply run past
+       * each other and the game is a footrace; with it, a team that has lost
+       * its flag cannot score until it wins it back, which is what turns
+       * Capture the Flag into a game about defending as well as running.
+       */
+      const own = this.flags.get(p.team);
+      if (!own || own.state !== FLAG_STATE.AT_BASE) continue;
+
+      this.teamScores[p.team]++;
+      p.captures = (p.captures ?? 0) + 1;
+      this.sendFlagHome(carried, null);
+      this.broadcastFlags(FLAG_EVENT.CAPTURED, p.id, carried.team);
+      this.broadcastScore();
+
+      if (this.teamScores[p.team] >= this.mode.scoreTarget) {
+        this.endMatch(p.id);
+        return;
+      }
+    }
+  }
+
   endMatch(winnerId) {
     this.state = MATCH_STATE.OVER;
     this.winnerId = winnerId;
@@ -476,13 +708,17 @@ class Room {
   restartMatch() {
     this.winnerId = null;
     this.state = MATCH_STATE.WARMUP;
+    this.teamScores[TEAM.RED] = 0;
+    this.teamScores[TEAM.BLUE] = 0;
+    this.resetFlags();
     for (const p of this.players.values()) {
-      p.kills = 0; p.deaths = 0;
+      p.kills = 0; p.deaths = 0; p.captures = 0;
       // Streaks belong to a match. Carrying one across a restart would have
       // somebody announced as UNSTOPPABLE on the first kill of a fresh game.
       p.streak = 0; p.multiKill = 0; p.lastKillAt = 0;
       this.spawn(p);
     }
+    this.broadcastFlags();
     this.evaluateMatchState();
     this.broadcastScore();
   }
@@ -509,6 +745,8 @@ class Room {
     }
     if (windowElapsed) this.rateWindowAt = now;
 
+    this.tickCTF(now);
+
     if (this.state === MATCH_STATE.LIVE && now >= this.endsAt) {
       let best = null;
       for (const p of this.players.values()) {
@@ -524,7 +762,6 @@ class Room {
     // Snapshot. Positions are rounded to centimetres and angles to ~0.06 deg:
     // beyond that is noise the player cannot see, and it costs bandwidth 30
     // times a second per player.
-    const r2 = (v) => Math.round(v * 100) / 100;
     const r3 = (v) => Math.round(v * 1000) / 1000;
     this.broadcast(MSG.SNAPSHOT, {
       ts: now,
@@ -582,11 +819,15 @@ function makeRoomCode() {
  * public room happened to be busiest — somewhere else entirely, with the
  * client having already built the wrong world.
  */
-function findPublicRoom(mapId) {
+function findPublicRoom(mapId, modeId) {
   let best = null;
   for (const room of rooms.values()) {
     if (!room.isPublic) continue;
     if (room.mapId !== mapId) continue;
+    // A mode is as much "which game is this" as the map is. Dropping a player
+    // who picked Capture the Flag into a deathmatch would be arriving in a
+    // different game entirely.
+    if (room.modeId !== modeId) continue;
     if (room.size >= MATCH_RULES.maxPlayers) continue;
     if (room.state === MATCH_STATE.OVER) continue;
     if (!best || room.size > best.size) best = room;
@@ -594,7 +835,8 @@ function findPublicRoom(mapId) {
   return best;
 }
 
-function getOrCreateRoom(requested, quick = false, mapId = DEFAULT_MAP_ID) {
+function getOrCreateRoom(requested, quick = false, mapId = DEFAULT_MAP_ID,
+  modeId = DEFAULT_MODE_ID) {
   if (requested) {
     const code = requested.toUpperCase();
     if (!isValidRoomCode(code)) return { error: 'that room code is not valid' };
@@ -607,17 +849,17 @@ function getOrCreateRoom(requested, quick = false, mapId = DEFAULT_MAP_ID) {
     }
     // Joining a code that does not exist yet creates it, so an invite link
     // works whether or not the host got there first.
-    const room = new Room(code, mapId);
+    const room = new Room(code, mapId, modeId);
     rooms.set(code, room);
     return { room };
   }
 
   if (quick) {
-    const open = findPublicRoom(mapId);
+    const open = findPublicRoom(mapId, modeId);
     if (open) return { room: open };
     // Nobody to join — open a public one so the next person to press Play
     // lands here rather than starting yet another empty match.
-    const room = new Room(makeRoomCode(), mapId);
+    const room = new Room(makeRoomCode(), mapId, modeId);
     room.isPublic = true;
     rooms.set(room.code, room);
     return { room };
@@ -625,7 +867,7 @@ function getOrCreateRoom(requested, quick = false, mapId = DEFAULT_MAP_ID) {
 
   // CREATE MATCH: private by definition — you get a code to share, and quick
   // match will never drop a stranger into it.
-  const room = new Room(makeRoomCode(), mapId);
+  const room = new Room(makeRoomCode(), mapId, modeId);
   rooms.set(room.code, room);
   return { room };
 }
@@ -967,6 +1209,7 @@ wss.on('connection', (socket) => {
           typeof msg.r === 'string' && msg.r ? msg.r : null,
           msg.q === true,          // quick match
           isValidMapId(msg.m) ? msg.m : DEFAULT_MAP_ID,
+          isValidModeId(msg.g) ? msg.g : DEFAULT_MODE_ID,
         );
         if (error) {
           socket.send(JSON.stringify({ t: MSG.DENIED, why: error }));

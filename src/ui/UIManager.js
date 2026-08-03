@@ -12,6 +12,10 @@
  */
 
 import { clamp } from '../core/MathUtils.js';
+import {
+  TEAM, TEAM_CSS, TEAM_NAME, PLAYING_TEAMS, FLAG_STATE,
+  DEFAULT_MODE_ID, getMode,
+} from '../net/modes.js';
 
 const SLOT_KEYS = ['1', '2', '3', '4'];
 
@@ -28,6 +32,8 @@ export class UIManager {
     this.statsVisible = false;
     this._slotEls = [];
     this._slotSignature = '';
+    this._mode = getMode(DEFAULT_MODE_ID);
+    this._teamScores = { [TEAM.RED]: 0, [TEAM.BLUE]: 0 };
 
     this._cache();
   }
@@ -60,6 +66,10 @@ export class UIManager {
       statsPanel: id('hud-stats'),
       drawCalls: id('hud-draws'),
       killFeed: id('kill-feed'),
+      ctfBar: id('ctf-bar'),
+      ctfCarrying: id('ctf-carrying'),
+      ctfScore: { 1: id('ctf-red-score'), 2: id('ctf-blue-score') },
+      ctfFlag: { 1: id('ctf-red-flag'), 2: id('ctf-blue-flag') },
       banner: id('banner'),
       bannerText: id('banner-text'),
       callsign: id('hud-callsign'),
@@ -480,7 +490,9 @@ export class UIManager {
     this._roster = roster;
     this._selfId = selfId;
     if (match) {
-      this.el.sbSub.textContent = match.killTarget ? 'FIRST TO ' + match.killTarget : '';
+      this.el.sbSub.textContent = match.killTarget
+        ? `FIRST TO ${match.killTarget} ${this._mode.scoreLabel}` : '';
+      this.el.sbTitle.textContent = this._mode.name;
     }
     if (!this.el.scoreboard.classList.contains('hidden')) this._renderScoreboard();
   }
@@ -493,17 +505,38 @@ export class UIManager {
   _renderScoreboard() {
     const rows = this._roster ?? [];
     this.el.sbRows.innerHTML = '';
-    rows.forEach((p, i) => {
-      const tr = document.createElement('tr');
-      if (p.id === this._selfId) tr.classList.add('self');
-      if (p.alive === false) tr.classList.add('dead');
-      for (const v of [i + 1, p.name, p.kills, p.deaths, p.ping || 0]) {
-        const td = document.createElement('td');
-        td.textContent = String(v);
-        tr.appendChild(td);
+
+    /*
+     * In a team mode the question a player asks the scoreboard is "how is MY
+     * SIDE doing", not "where am I in a list of eight". So the rows are split
+     * into two blocks under team headers — the ordering within a team still
+     * comes from the server, which already sorted the roster.
+     */
+    if (this._mode.teamBased) {
+      for (const team of PLAYING_TEAMS) {
+        const mine = rows.filter((p) => p.team === team);
+        const head = document.createElement('tr');
+        head.className = 'sb-team';
+        const th = document.createElement('td');
+        th.colSpan = 5;
+        th.style.color = TEAM_CSS[team];
+        th.textContent = `${TEAM_NAME[team]}  —  ${this._teamScores[team] ?? 0} ${this._mode.scoreLabel}`;
+        head.appendChild(th);
+        this.el.sbRows.appendChild(head);
+        mine.forEach((p, i) => this.el.sbRows.appendChild(this._scoreRow(p, i + 1, team)));
+        if (!mine.length) {
+          const tr = document.createElement('tr');
+          const td = document.createElement('td');
+          td.colSpan = 5;
+          td.textContent = 'No players';
+          tr.appendChild(td);
+          this.el.sbRows.appendChild(tr);
+        }
       }
-      this.el.sbRows.appendChild(tr);
-    });
+      return;
+    }
+
+    rows.forEach((p, i) => this.el.sbRows.appendChild(this._scoreRow(p, i + 1)));
     if (!rows.length) {
       const tr = document.createElement('tr');
       const td = document.createElement('td');
@@ -512,6 +545,72 @@ export class UIManager {
       tr.appendChild(td);
       this.el.sbRows.appendChild(tr);
     }
+  }
+
+  /** One scoreboard row. Shared by the flat and the team-grouped layouts. */
+  _scoreRow(p, rank, team = null) {
+    const tr = document.createElement('tr');
+    if (p.id === this._selfId) tr.classList.add('self');
+    if (p.alive === false) tr.classList.add('dead');
+    if (team) tr.style.borderLeft = `2px solid ${TEAM_CSS[team]}`;
+    const score = this._mode.teamBased ? (p.captures ?? 0) : p.kills;
+    for (const v of [rank, p.name, score, p.deaths, p.ping || 0]) {
+      const td = document.createElement('td');
+      td.textContent = String(v);
+      tr.appendChild(td);
+    }
+    return tr;
+  }
+
+  /**
+   * Switch the HUD between modes.
+   *
+   * Called once when a match is joined, not per frame: what a mode shows is
+   * fixed for the life of a room.
+   */
+  setMode(modeId) {
+    this._mode = getMode(modeId);
+    const team = this._mode.teamBased;
+    if (this.el.ctfBar) this.el.ctfBar.hidden = !team;
+    if (!team && this.el.ctfCarrying) this.el.ctfCarrying.hidden = true;
+    /*
+     * The leader panel is left alone in both modes.
+     *
+     * It is written every frame by the connected-HUD block below, so anything
+     * set here is overwritten before it is ever seen — and "who has the most
+     * kills" is worth knowing in CTF too.
+     */
+    this.el.sbTitle.textContent = this._mode.name;
+    // The KILLS column keeps its meaning in FFA and becomes CAPTURES in CTF.
+    const header = document.querySelector('#scoreboard thead th:nth-child(3)');
+    if (header) header.textContent = this._mode.scoreLabel;
+  }
+
+  /**
+   * Both flag states and both team scores, from the server's report.
+   *
+   * @param {Array} flags       flag payloads: { t, s, c }
+   * @param {object} teamScores { [team]: captures }
+   * @param {number} carryingTeam  the team whose flag WE hold, or null
+   */
+  setFlags(flags, teamScores, carryingTeam = null) {
+    this._teamScores = teamScores ?? this._teamScores;
+    for (const team of PLAYING_TEAMS) {
+      const el = this.el.ctfScore[team];
+      if (el) el.textContent = String(this._teamScores[team] ?? 0);
+    }
+    for (const f of flags ?? []) {
+      const el = this.el.ctfFlag[f.t];
+      if (!el) continue;
+      el.textContent = f.s === FLAG_STATE.CARRIED ? 'TAKEN'
+        : f.s === FLAG_STATE.DROPPED ? 'DROPPED' : 'HOME';
+      el.classList.toggle('taken', f.s === FLAG_STATE.CARRIED);
+      el.classList.toggle('dropped', f.s === FLAG_STATE.DROPPED);
+    }
+    if (this.el.ctfCarrying) {
+      this.el.ctfCarrying.hidden = !this._mode.teamBased || carryingTeam == null;
+    }
+    if (!this.el.scoreboard.classList.contains('hidden')) this._renderScoreboard();
   }
 
   showRespawn(killerName) {

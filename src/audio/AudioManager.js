@@ -1110,6 +1110,24 @@ const SYNTHS = {
       setTimeout(() => a._canPlay() && a._tone(a.musicBus, null, { type: 'sawtooth', freq: f, duration: 0.7, gain: 0.16 * volume }), i * 240)
     );
   },
+
+  // -------------------------------------------------------- capture the flag
+  /*
+   * Two flag sounds, and they are deliberately opposites.
+   *
+   * A flag event is heard before it is read — the banner takes a moment to
+   * find, the sound does not. So "something happened to OUR flag" falls, and
+   * "something happened in our favour" rises. A player learns in one match
+   * which one means run back, without ever being told.
+   */
+  flagAlert(a, { volume = 1 } = {}) {
+    a._tone(a.sfxBus, null, { type: 'square', freq: 520, freqEnd: 300, duration: 0.30, gain: 0.16 * volume, attack: 0.004 });
+    a._tone(a.sfxBus, null, { type: 'sine', freq: 190, freqEnd: 130, duration: 0.42, gain: 0.11 * volume, attack: 0.01 });
+  },
+  flagGood(a, { volume = 1 } = {}) {
+    a._tone(a.sfxBus, null, { type: 'triangle', freq: 520, freqEnd: 780, duration: 0.26, gain: 0.16 * volume, attack: 0.004 });
+    a._tone(a.sfxBus, null, { type: 'sine', freq: 1040, freqEnd: 1560, duration: 0.30, gain: 0.08 * volume, attack: 0.02 });
+  },
 };
 
 /** Maps a surface tag to its footstep sound name. */

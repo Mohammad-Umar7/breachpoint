@@ -32,6 +32,9 @@ import {
   MATCH_STATE, sanitizeName,
 } from './protocol.js';
 import { DEFAULT_MAP_ID, isValidMapId } from './arena.js';
+import {
+  TEAM, DEFAULT_MODE_ID, isValidModeId, getMode,
+} from './modes.js';
 
 /** Snapshots kept for interpolation. At 30 Hz this is ~1 s of history. */
 const SNAPSHOT_BUFFER = 32;
@@ -82,6 +85,14 @@ export class NetworkClient {
     this.room = null;
     /** The map the room we are in is playing. See _handleWelcome. */
     this.mapId = DEFAULT_MAP_ID;
+    /** And which game is being played on it. */
+    this.modeId = DEFAULT_MODE_ID;
+    /** Our own team. TEAM.NONE in a free-for-all — see modes.js. */
+    this.team = TEAM.NONE;
+    /** team -> captures, or null outside a team mode. */
+    this.teamScores = null;
+    /** Both flags, as last reported. Empty in a free-for-all. */
+    this.flags = [];
     this.name = 'OPERATOR';
     this.ping = 0;
     this.lastError = null;
@@ -126,6 +137,7 @@ export class NetworkClient {
     this.onCorrection = null;    // ([x,y,z])  server rejected our position
     this.onRespawn = null;       // ([x,y,z])
     this.onSpawnPoint = null;    // ([x,y,z])  where we will come back, sent at death
+    this.onFlags = null;         // ({ flags, event, by, byName, team, isSelf })
     this.onDenied = null;        // (reason)
     this.onProgress = null;      // (message) slow-connect progress, for the lobby
   }
@@ -191,7 +203,8 @@ export class NetworkClient {
     return best;
   }
 
-  connect({ name, room = null, quick = false, mapId = DEFAULT_MAP_ID } = {}) {
+  connect({ name, room = null, quick = false, mapId = DEFAULT_MAP_ID,
+    modeId = DEFAULT_MODE_ID } = {}) {
     this.disconnect();
     this.name = sanitizeName(name, 'OPERATOR');
     this._setState(NET_STATE.CONNECTING);
@@ -250,6 +263,7 @@ export class NetworkClient {
           // The map we WANT. An existing room keeps its own and tells us in
           // WELCOME, so this is a request, not an instruction.
           m: isValidMapId(mapId) ? mapId : DEFAULT_MAP_ID,
+          g: isValidModeId(modeId) ? modeId : DEFAULT_MODE_ID,
           v: PROTOCOL_VERSION,
         });
       };
@@ -395,6 +409,9 @@ export class NetworkClient {
      * right one — see Game._connect.
      */
     this.mapId = isValidMapId(msg.mp) ? msg.mp : DEFAULT_MAP_ID;
+    this.modeId = isValidModeId(msg.gm) ? msg.gm : DEFAULT_MODE_ID;
+    this.team = msg.you?.tm ?? TEAM.NONE;
+    if (Array.isArray(msg.fl)) this.flags = msg.fl;
     this.players.clear();
     for (const p of msg.ps ?? []) this._upsert(p);
     if (msg.you) this._upsert(msg.you);
@@ -405,6 +422,8 @@ export class NetworkClient {
       id: msg.id,
       room: msg.r,
       mapId: this.mapId,
+      modeId: this.modeId,
+      team: this.team,
       spawn: Array.isArray(msg.sp) ? msg.sp : null,
       players: [...this.players.values()],
       match: this.match,
@@ -417,6 +436,23 @@ export class NetworkClient {
 
       case MSG.JOINED:
         if (msg.p) { this._upsert(msg.p); this.onJoined?.(msg.p); }
+        break;
+
+      /*
+       * Flags moved. Only ever sent on a CHANGE — a flag on its stand is
+       * stationary and a carried one rides a body already in the snapshot, so
+       * there is nothing to stream.
+       */
+      case MSG.FLAG:
+        this.flags = Array.isArray(msg.f) ? msg.f : [];
+        this.onFlags?.({
+          flags: this.flags,
+          event: msg.ev ?? null,
+          by: msg.by ?? null,
+          byName: msg.by != null ? this.nameOf(msg.by) : null,
+          team: msg.tm ?? TEAM.NONE,
+          isSelf: msg.by != null && msg.by === this.selfId,
+        });
         break;
 
       case MSG.LEFT: {
@@ -477,10 +513,14 @@ export class NetworkClient {
       }
 
       case MSG.SCORE:
-        for (const [id, name, kills, deaths, ping] of msg.ps ?? []) {
+        for (const [id, name, kills, deaths, ping, team, captures] of msg.ps ?? []) {
           const p = this._upsert({ id, n: name });
           p.kills = kills; p.deaths = deaths; p.ping = ping;
+          p.team = team ?? TEAM.NONE;
+          p.captures = captures ?? 0;
+          if (id === this.selfId) this.team = p.team;
         }
+        this.teamScores = msg.ts ?? null;
         // Drop anyone the server no longer lists, so a missed LEFT cannot leave
         // a ghost on the scoreboard forever.
         {
@@ -680,7 +720,10 @@ export class NetworkClient {
     const id = summary.id;
     let p = this.players.get(id);
     if (!p) {
-      p = { id, name: summary.n ?? `PLAYER ${id}`, kills: 0, deaths: 0, ping: 0, hp: 100, alive: true };
+      p = {
+        id, name: summary.n ?? `PLAYER ${id}`,
+        kills: 0, deaths: 0, ping: 0, hp: 100, alive: true, team: TEAM.NONE,
+      };
       this.players.set(id, p);
     }
     if (summary.n) p.name = summary.n;
@@ -689,6 +732,7 @@ export class NetworkClient {
     if (typeof summary.hp === 'number') p.hp = summary.hp;
     if (typeof summary.a === 'boolean') p.alive = summary.a;
     if (summary.w) p.weapon = summary.w;
+    if (typeof summary.tm === 'number') p.team = summary.tm;
     return p;
   }
 
@@ -708,7 +752,17 @@ export class NetworkClient {
     if (typeof m.tl === 'number') this.match.timeLeft = m.tl;
     if (typeof m.kt === 'number') this.match.killTarget = m.kt;
     this.match.winnerId = m.w ?? null;
+    if (m.gm && isValidModeId(m.gm)) this.modeId = m.gm;
+    if (m.ts !== undefined) this.teamScores = m.ts;
+    this.match.modeId = this.modeId;
+    this.match.teamScores = this.teamScores;
   }
+
+  /** The mode definition for the room we are in. Never null. */
+  get mode() { return getMode(this.modeId); }
+
+  /** The flag a given team DEFENDS, or null outside a team mode. */
+  flagOf(team) { return this.flags.find((f) => f.t === team) ?? null; }
 
   _setState(state, detail = null) {
     if (this.state === state) return;

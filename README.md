@@ -40,6 +40,40 @@ Requirements: a WebGL 2 browser (Chrome, Edge, Firefox, Safari 16+) and Node 18+
 
 ---
 
+## Game modes
+
+Picked before the map — a mode changes the objective, the sides and what
+winning means, so it is the first choice, not a variant of a map. Both are
+defined in one place, `src/net/modes.js`, which the client and the server both
+import; adding a third needs no new markup and no second copy of the rules.
+
+**Free-for-all** — no teams, no objective. First to 25 eliminations, or the
+most when the clock runs out.
+
+**Capture the Flag** — red against blue, first to 3 captures. Each side has a
+flag on a stand at its base:
+
+- Walk onto the enemy flag to pick it up, carry it to your own base, and touch
+  your own flag to score.
+- **Your flag must be home for a capture to count.** With both flags out,
+  neither side can score until one is recovered — the standoff every CTF match
+  turns on. Without it the mode is two teams running past each other.
+- Kill the carrier and the flag drops *where they fell*. It is not destroyed
+  and it does not go home.
+- A dropped flag is returned instantly by anyone on the team that owns it, and
+  picked straight back up by anyone on the team that wants it. The rule is
+  about teams, never about who was carrying it.
+- A flag nobody touches goes home after 30 seconds, so one punted into a corner
+  cannot freeze the match.
+
+Friendly fire is off; a base is marked by a ring, a plinth and a light column
+you can see from across the map, and both flags are drawn on the minimap —
+pinned to the rim with their bearing when they are out of range.
+
+The rules live on the server (`server/index.js`, `tickCTF`) and are proven by
+`server/ctf-test.js`, which plays a full match over real sockets: taking,
+capturing, dying with the flag, a teammate recovering it, and the standoff.
+
 ## Controls
 
 | Input | Action |
@@ -445,7 +479,9 @@ src/
 │   ├── RemoteAudio.js          Other players' footsteps, landings, reloads
 │   ├── KillCam.js              Records the world; replays it from anyone's eyes
 │   ├── wireNetwork.js          Every multiplayer callback, wired to the game
-│   └── arena.js                Bounds and spawn points
+│   ├── FlagObjects.js          CTF flags and bases — presentation only
+│   ├── modes.js                Game modes and teams — SHARED with the server
+│   └── arena.js                Bounds, spawn points, flag bases
 ├── fx/
 │   ├── ParticleManager.js      Sparks, smoke, debris, tracers, shells, decals
 │   ├── ScopeRenderer.js        Scope camera, RTT, circular mask, reticles
