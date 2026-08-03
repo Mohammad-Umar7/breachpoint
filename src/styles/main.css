@@ -891,3 +891,15 @@ kbd {
   .map-grid { grid-template-columns: 1fr; max-width: 340px; }
   .map-art { height: 108px; }
 }
+
+/* The map card's photograph, taken by the game itself. Covers the gradient
+   entirely; the gradient is only ever seen behind the drawn-plan fallback. */
+.map-shot {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.map-card .map-art { overflow: hidden; }
+/* Keep the scale badge legible over a photograph. */
+.map-scale { z-index: 2; }

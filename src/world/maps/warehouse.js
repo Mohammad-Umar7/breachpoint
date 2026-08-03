@@ -531,6 +531,15 @@ export const warehouseMap = Object.freeze({
     [-18, -2, 6, 2.5], [18, -2, 6, 2.5],   // container lanes
     [-8, 20, 4, 4], [8, 20, 4, 4],         // yard cover
   ],
+  /**
+   * Where the map card's photograph is taken from.
+   *
+   * A real render beats any drawing of a plan: it shows the materials, the
+   * light and the scale all at once, which is most of what a player is
+   * choosing between. Regenerate with `npm run thumbs` after changing a
+   * layout — see scripts/thumbs.mjs.
+   */
+  thumbCam: { pos: [34, 24, 46], look: [0, 3, -4], fov: 52 },
   playerSpawn: [0, 1.1, 26],
   playerSpawnYaw: 0,          // looking down -Z, toward the warehouse
   bounds: { min: [-35, 0, -35], max: [35, 20, 35] },

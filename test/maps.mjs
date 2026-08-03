@@ -107,8 +107,30 @@ function buildMap(map) {
   // No renderer: the environment map generation is wrapped in a try/catch for
   // exactly this reason, and everything else has to work without one.
   const level = new Level(scene, physics, assets, stubSettings, null, map);
+
+  /*
+   * Record EVERY box, not just the ones that end up in `mapShapes`.
+   *
+   * `mapShapes` exists for the minimap, so `_box` only files things that
+   * collide and stand at least 0.7 m tall. Decorative trim is neither — and
+   * trim is precisely what causes visible seams, because it is thin, it hugs
+   * the surface it decorates, and it is a different colour. The reported
+   * shimmer along the outpost's roofline was a 0.5 m terracotta lip, which
+   * mapShapes never saw and this check therefore could not test.
+   */
+  const boxes = [];
+  const realBox = level._box.bind(level);
+  level._box = (material, pos, size, opts = {}) => {
+    boxes.push({
+      mat: material, x: pos[0], y: pos[1], z: pos[2],
+      hx: size[0] / 2, hy: size[1] / 2, hz: size[2] / 2, rotY: opts.rotY || 0,
+    });
+    return realBox(material, pos, size, opts);
+  };
   level.build();
-  return { level, physics, assets, scene };
+  level._box = realBox;
+
+  return { level, physics, assets, scene, boxes };
 }
 
 console.log('--- the registries agree ---');
@@ -273,15 +295,31 @@ console.log('\n--- surfaces that would shimmer ---');
  * NEARLY coincident pair that has no winner.
  */
 const FACE_EPS = 0.035;      // closer than this and the depth buffer gives up
-const COINCIDENT = 0.0005;   // exactly flush: fine, and extremely common
+/*
+ * EXACT coincidence is flagged too, and this is the subtle part.
+ *
+ * A crate resting on the floor shares a plane with it and is fine — but that
+ * is the crate's BOTTOM against the floor's TOP: opposite-facing normals, one
+ * of which is culled. The test below only ever compares the SAME side of two
+ * boxes (both minima, or both maxima), which means both faces point the same
+ * way and both are drawn. At the same depth there is no winner, exactly as
+ * with a near miss.
+ *
+ * Allowing exact matches is why the outpost's roofline still shimmered after
+ * the first two fixes: the terracotta lip's outer face sat on precisely the
+ * same plane as the roof slab's edge, overlapping through a 15 cm band along
+ * the whole building.
+ */
+const COINCIDENT = -1;
 // Ignore true slivers, but no higher: the roof lip and parapet shared only
 // 0.45 m of height, and at 0.6 this check passed while they visibly shimmered.
-const MIN_SHARED = 0.2;
+// The parapet and slab shared only 0.1 m of height and fought visibly.
+const MIN_SHARED = 0.06;
 
 function shimmerPairs(shapes) {
   const boxes = shapes.map((s) => ({
     x0: s.x - s.hx, x1: s.x + s.hx,
-    y0: s.y - s.height / 2, y1: s.y + s.height / 2,
+    y0: s.y - s.hy, y1: s.y + s.hy,
     z0: s.z - s.hz, z1: s.z + s.hz,
     rotY: s.rotY || 0,
   }));
@@ -291,6 +329,14 @@ function shimmerPairs(shapes) {
   for (let i = 0; i < boxes.length; i++) {
     for (let j = i + 1; j < boxes.length; j++) {
       const a = boxes[i], b = boxes[j];
+      /*
+       * Two surfaces of the SAME material on one plane are invisible: the
+       * seam has nothing to flicker between. Perpendicular walls meeting at a
+       * corner do this everywhere and always have. It is the material
+       * BOUNDARY that shows — terracotta against sandstone, which is exactly
+       * the flickering orange roofline that was reported.
+       */
+      if (shapes[i].mat === shapes[j].mat) continue;
       // Rotated boxes need a different test. Both maps' rotated pieces are
       // scattered cover that never stacks, so they are skipped rather than
       // approximated wrongly.
@@ -306,9 +352,17 @@ function shimmerPairs(shapes) {
         const d = Math.abs(p - q);
         return d > COINCIDENT && d < FACE_EPS;
       };
+      /*
+       * Only faces anybody can LOOK at.
+       *
+       * Underside pairs are excluded: nearly every solid on a map has its
+       * bottom on the ground, so their minima all coincide, and not one of
+       * those seams is ever visible. Top faces and all four sides are fair
+       * game — those are what the player sees.
+       */
       const axis =
         (near(a.x0, b.x0) || near(a.x1, b.x1)) && oy > MIN_SHARED && oz > MIN_SHARED ? 'x'
-          : (near(a.y0, b.y0) || near(a.y1, b.y1)) && ox > MIN_SHARED && oz > MIN_SHARED ? 'y'
+          : near(a.y1, b.y1) && ox > MIN_SHARED && oz > MIN_SHARED ? 'y'
             : (near(a.z0, b.z0) || near(a.z1, b.z1)) && ox > MIN_SHARED && oy > MIN_SHARED ? 'z'
               : null;
       if (axis) {
@@ -321,12 +375,12 @@ function shimmerPairs(shapes) {
 }
 
 for (const map of MAPS) {
-  const { level } = buildMap(map);
-  const pairs = shimmerPairs(level.mapShapes);
+  const { boxes } = buildMap(map);
+  const pairs = shimmerPairs(boxes);
   check(`${map.name} has no near-coincident surfaces to shimmer`,
     pairs.length === 0,
     pairs.length ? `${pairs.length} pairs: ${[...new Set(pairs)].slice(0, 5).join('; ')}`
-      : `${level.mapShapes.length} footprints, none within ${FACE_EPS * 1000} mm`);
+      : `${boxes.length} boxes, no material seam within ${FACE_EPS * 1000} mm`);
 }
 
 console.log('\n--- the maps are actually different ---');

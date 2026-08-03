@@ -19,6 +19,7 @@ import { effectiveAimSpeed } from '../core/SensitivityManager.js';
 import { clamp } from '../core/MathUtils.js';
 import { sanitizeName, hasRealName, DEFAULT_NAME } from '../net/protocol.js';
 import { MAPS, getMap, DEFAULT_MAP_ID } from '../world/maps/index.js';
+import { getThumbnail } from '../world/MapThumbnail.js';
 
 const SCREENS = [
   'screen-loading', 'screen-menu', 'screen-maps', 'screen-lobby', 'screen-loadout',
@@ -351,16 +352,19 @@ export class MenuManager {
     });
 
     /*
-     * PLAY and CREATE go through the map picker; JOIN does not.
+     * Choosing a map is a STEP OF STARTING A MATCH, not a menu of its own.
      *
-     * Joining a code means playing whatever that room is playing, so offering
-     * a choice there would be a lie — the server would override it a second
-     * later and the player would arrive somewhere they did not pick.
+     * PLAY and CREATE open the picker; picking a card goes straight in. There
+     * is deliberately no way to sit on the picker doing nothing, because a
+     * screen you can reach and then have to back out of is a dead end.
+     *
+     * JOIN skips it entirely: joining a code means playing whatever that room
+     * is playing, so offering a choice would be a lie the server overrides a
+     * second later.
      */
     click('btn-play', () => this.openMapPicker('quick'));
     click('btn-create', () => this.openMapPicker('create'));
     click('btn-join', () => this.openLobby('join'));
-    click('btn-maps', () => this.openMapPicker('browse'));
     click('btn-lobby-go', () => this._lobbyGo());
     click('btn-copy-invite', () => this._copyInvite());
     click('btn-credits', () => this.showScreen('screen-credits'));
@@ -773,12 +777,29 @@ export class MenuManager {
       art.style.background =
         `linear-gradient(135deg, ${map.swatch[0]} 0%, ${map.swatch[1]} 55%, ${map.swatch[2]} 100%)`;
 
-      const plan = document.createElement('canvas');
-      plan.className = 'map-plan';
-      plan.width = 200;
-      plan.height = 200;
-      drawPlan(plan, map);
-      art.appendChild(plan);
+      /*
+       * A real photograph of the map if the game has taken one, otherwise the
+       * drawn plan.
+       *
+       * The photo is far more use — it shows materials, light and scale, not
+       * just footprints — but it only exists once that map has been built at
+       * least once in this browser. See world/MapThumbnail.js.
+       */
+      const shot = getThumbnail(map.id);
+      if (shot) {
+        const img = document.createElement('img');
+        img.className = 'map-shot';
+        img.src = shot;
+        img.alt = `${map.name} seen from above`;
+        art.appendChild(img);
+      } else {
+        const plan = document.createElement('canvas');
+        plan.className = 'map-plan';
+        plan.width = 200;
+        plan.height = 200;
+        drawPlan(plan, map);
+        art.appendChild(plan);
+      }
 
       const scale = document.createElement('span');
       scale.className = 'map-scale';

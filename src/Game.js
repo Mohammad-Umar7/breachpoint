@@ -46,7 +46,8 @@ import { UIManager } from './ui/UIManager.js';
 import { MenuManager } from './ui/MenuManager.js';
 import { Minimap } from './ui/Minimap.js';
 import { NetworkClient, inviteUrl, roomFromUrl } from './net/NetworkClient.js';
-import { getMap, DEFAULT_MAP_ID } from './world/maps/index.js';
+import { MAPS, getMap, DEFAULT_MAP_ID } from './world/maps/index.js';
+import { ensureThumbnail, getThumbnail } from './world/MapThumbnail.js';
 import { RemotePlayers } from './net/RemotePlayers.js';
 import { RemoteAudio } from './net/RemoteAudio.js';
 import { KillCam } from './net/KillCam.js';
@@ -283,6 +284,15 @@ export class Game {
       this.clock.last = performance.now() / 1000;
       this._loop = this._loop.bind(this);
       this.rafId = requestAnimationFrame(this._loop);
+
+      /*
+       * Photograph the maps nobody has played yet, now, while the menu is up.
+       *
+       * Deliberately not awaited: the game is already interactive and this is
+       * a background nicety. A failure costs nothing but a drawn plan on a
+       * card.
+       */
+      this.primeMapThumbnails().catch(() => { /* the cards fall back to plans */ });
 
       if (this.assets.loadErrors.length) {
         console.warn('[Game] Some assets fell back to defaults:', this.assets.loadErrors);
@@ -1071,12 +1081,42 @@ export class Game {
     // Game builds the level before it builds them.
     this.pickups?.buildFromLevel?.(this.level);
 
+    /*
+     * Photograph the map the first time it is ever built.
+     *
+     * One render into a small offscreen target, cached in localStorage, so it
+     * costs about five milliseconds once per map per browser and the card
+     * shows the real place rather than a sketch of it.
+     */
+    ensureThumbnail(this.renderer, this.scene, map);
+
     this.player?.spawn(this.level.playerSpawn, this.level.playerSpawnYaw);
     return this.level;
   }
 
   /** The map currently built. */
   get mapId() { return this.level?.mapId ?? DEFAULT_MAP_ID; }
+
+  /**
+   * Make sure every map has a photograph, once, while the player reads the menu.
+   *
+   * Building a map takes about a second, so this would be unacceptable at any
+   * other moment — but at boot nothing is running, and doing it here is what
+   * lets the picker show a real render of a map you have never played. It
+   * happens once per build per browser; afterwards every photo is cached and
+   * this returns immediately.
+   */
+  async primeMapThumbnails() {
+    const missing = MAPS.filter((m) => !getThumbnail(m.id) && m.id !== this.mapId);
+    if (!missing.length) return;
+    const restore = this.mapId;
+    for (const m of missing) {
+      this._buildLevel(m.id);
+      // Yield so the menu keeps painting rather than freezing mid-photograph.
+      await new Promise((r) => setTimeout(r, 0));
+    }
+    this._buildLevel(restore);
+  }
 
   /**
    * Switch maps, doing nothing if it is already the one standing.

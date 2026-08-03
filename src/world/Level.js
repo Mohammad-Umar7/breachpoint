@@ -271,7 +271,11 @@ export class Level {
       // indistinguishable — both are "something solid at these coordinates" —
       // and a check for "is this spawn inside geometry" says yes to every
       // point on the map, because they are all above the floor.
-      this.mapShapes.push({ x, y, z, hx: sx / 2, hz: sz / 2, rotY, height: sy });
+      // `mat` is carried so a tool can tell a visible seam from an invisible
+      // one: two identical surfaces meeting on a plane look like one surface,
+      // whereas terracotta meeting sandstone on that plane flickers between
+      // two colours. See the shimmer check in test/maps.mjs.
+      this.mapShapes.push({ x, y, z, hx: sx / 2, hz: sz / 2, rotY, height: sy, mat: material });
     }
 
     if (collide) {
@@ -328,7 +332,7 @@ export class Level {
      */
     this.mapShapes.push({
       x: pos[0], y: pos[1], z: pos[2],
-      hx: width / 2, hz: length / 2, rotY, height: rise,
+      hx: width / 2, hz: length / 2, rotY, height: rise, mat: material,
     });
     return this;
   }

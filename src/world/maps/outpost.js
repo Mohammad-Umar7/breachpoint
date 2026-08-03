@@ -112,12 +112,21 @@ function buildPerimeter(level) {
     level._box('terracotta', [x, H + 0.2, z], [sx, 0.4, sz], { collide: false, tile: 2 });
   }
 
-  // Buttresses, breaking up the long runs and giving the wall some depth.
-  for (let i = -2; i <= 2; i++) {
-    if (i === 0) continue;
-    const o = i * 8.5;
+  /*
+   * Buttresses, breaking up the long runs and giving the wall some depth.
+   *
+   * The two axes use DIFFERENT offsets. The blocks' outside stair runs climb
+   * alongside the east and west walls, between 14.5 m and 20.5 m out from the
+   * centre, so a buttress at 17 there stood in the middle of a staircase —
+   * geometry intersecting geometry, not merely a seam.
+   */
+  const ALONG_X = [-17, -8.5, 8.5, 17];
+  const ALONG_Z = [-11, -5.5, 5.5, 11];
+  for (const o of ALONG_X) {
     level._box('adobe', [o, 2.6, -R + T], [1.4, 5.2, 1.0], { tile: 1.5 });
     level._box('adobe', [o, 2.6, R - T], [1.4, 5.2, 1.0], { tile: 1.5 });
+  }
+  for (const o of ALONG_Z) {
     level._box('adobe', [-R + T, 2.6, o], [1.0, 5.2, 1.4], { tile: 1.5 });
     level._box('adobe', [R - T, 2.6, o], [1.0, 5.2, 1.4], { tile: 1.5 });
   }
@@ -183,10 +192,23 @@ function buildBlock(level, sx, sz) {
    * Overlapping solids never fight; only near-parallel faces do.
    */
   const CORNER_PROUD = 0.1;
-  const outZ = cz + sz * (d / 2);
-  const outX = cx + sx * (w / 2 + CORNER_PROUD);
-  const inZ = cz - sz * (d / 2);
-  const inX = cx - sx * (w / 2 + CORNER_PROUD);
+
+  /*
+   * Trim stands PROUD of the slab, never flush with it.
+   *
+   * The roof slab overhangs the walls by OVERHANG. Sizing the lip so its outer
+   * face landed exactly on that overhang put two different materials on one
+   * plane, overlapping through a 15 cm band along the whole building — which
+   * is the flickering orange roofline that was reported. Standing the trim a
+   * little further out makes the ordering unambiguous and reads as a moulding
+   * rather than a seam.
+   */
+  const OVERHANG = 0.25;
+  const PROUD = 0.14;
+  const outEdgeZ = cz + sz * (d / 2 + OVERHANG);
+  const outEdgeX = cx + sx * (w / 2 + OVERHANG);
+  const inEdgeZ = cz - sz * (d / 2 + OVERHANG);
+  const inEdgeX = cx - sx * (w / 2 + OVERHANG);
 
   /*
    * At each corner one run passes THROUGH and the other butts into it.
@@ -197,13 +219,47 @@ function buildBlock(level, sx, sz) {
    * apart, which is the same shimmer in a different axis — and it appeared the
    * moment the first one was fixed.
    */
+  /*
+   * Both runs are LONGER than the slab as well as standing proud of it, so no
+   * face of the trim shares a plane with any face of the slab — not the front,
+   * and not the ends either. Aligning the ends was the last seam left: the
+   * lip's x-extent matched the slab's exactly, so the two flickered along the
+   * short edges after the front faces had been fixed.
+   *
+   * The two runs of the same material overlap each other at the corners, which
+   * is fine and invisible: identical surfaces on one plane have nothing to
+   * flicker between.
+   */
   const py = ROOF_Y + 0.9;   // sunk 0.1 into the slab, so the two intersect
-  level._box('sandstone', [cx, py, outZ], [w + 0.5, 1.2, 0.45], { tile: 1.5 });
-  level._box('sandstone', [outX, py, cz - sz * 0.125], [0.45, 1.2, d + 0.25], { tile: 1.5 });
+  const pT = 0.45;
+  // Parapet and lip overhang by DIFFERENT amounts. Both were 2 * PROUD, which
+  // fixed them against the slab and then aligned their ends with each other —
+  // a seam simply moves if every piece is offset by the same figure.
+  const overP = 0.48;
+  const overL = 0.28;
+  level._box('sandstone', [cx, py, outEdgeZ + sz * (PROUD - pT / 2)],
+    [w + 0.5 + overP, 1.2, pT], { tile: 1.5 });
+  level._box('sandstone', [outEdgeX + sx * (PROUD - pT / 2), py, cz],
+    [pT, 1.2, d + 0.5 + overP], { tile: 1.5 });
 
-  // Lip on the two open edges, jointed the same way.
-  level._box('terracotta', [cx, ROOF_Y + 0.5, inZ], [w + 0.5, 0.5, 0.5], { tile: 1.5 });
-  level._box('terracotta', [inX, ROOF_Y + 0.5, cz + sz * 0.125], [0.5, 0.5, d + 0.25], { tile: 1.5 });
+  /*
+   * The lip runs the OPEN edges and stops well short of the parapet.
+   *
+   * Running it the full length put its end cap exactly on the parapet's outer
+   * face — the seam had simply moved from the slab to the parapet. It also
+   * makes more sense: the lip marks the edges you can walk off, so it has no
+   * business continuing behind a wall you cannot.
+   */
+  const lT = 0.5;
+  const STOP = 0.8;                      // clearance from the parapet
+  const lLen = w + 0.5 + overL - STOP;
+  const lOff = (STOP + overL) / 2;
+  level._box('terracotta',
+    [cx - sx * lOff, ROOF_Y + 0.5, inEdgeZ + sz * (lT / 2 - PROUD)],
+    [lLen, lT, lT], { tile: 1.5 });
+  level._box('terracotta',
+    [inEdgeX + sx * (lT / 2 - PROUD), ROOF_Y + 0.5, cz - sz * lOff],
+    [lT, lT, lLen], { tile: 1.5 });
 
   // Interior pillar, so the ground floor is a room to fight in and not a box.
   level._box('adobe', [cx, ROOF_Y / 2, cz], [1.6, ROOF_Y, 1.6], { tile: 1.5 });
@@ -478,6 +534,8 @@ export const outpostMap = Object.freeze({
     [0, -6.6, 4.2, 1.4], [0, 6.6, 4.2, 1.4],
   ],
 
+  /** Where the map card's photograph is taken from. See warehouse.js. */
+  thumbCam: { pos: [26, 19, 32], look: [0, 3, 0], fov: 52 },
   playerSpawn: [0, 1.1, 19],
   playerSpawnYaw: 0,
   bounds: { min: [-25, 0, -25], max: [25, 16, 25] },
