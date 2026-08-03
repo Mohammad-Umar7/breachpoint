@@ -60,6 +60,7 @@ export class UIManager {
       killFeed: id('kill-feed'),
       banner: id('banner'),
       bannerText: id('banner-text'),
+      callsign: id('hud-callsign'),
       healthFill: id('health-fill'),
       healthNum: id('health-num'),
       armorFill: id('armor-fill'),
@@ -126,6 +127,20 @@ export class UIManager {
     this.el.healthFill.style.width = `${hp * 100}%`;
     this.el.healthFill.classList.toggle('low', hp < 0.3);
     this.el.healthNum.textContent = Math.ceil(s.health);
+
+    /*
+     * Your own callsign, so you can see what the rest of the room sees you
+     * as. Names hang over every OTHER player and appeared nowhere for
+     * yourself, so there was no way to tell whether your own had taken.
+     *
+     * Only written when it changes: updateHud runs every frame and setting
+     * textContent unconditionally would dirty the layout 60 times a second
+     * for a string that changes about once a session.
+     */
+    if (this.el.callsign && s.callsign && this._shownCallsign !== s.callsign) {
+      this._shownCallsign = s.callsign;
+      this.el.callsign.textContent = s.callsign;
+    }
 
     const ap = clamp(s.armor / s.maxArmor, 0, 1);
     this.el.armorFill.style.width = `${ap * 100}%`;
@@ -206,7 +221,10 @@ export class UIManager {
       this.el.time.textContent = s.match.state === 'warmup' ? '--:--' : mm + ':' + ss;
       if (s.leader) {
         this.el.leaderLabel.textContent = 'LEADER';
-        this.el.leader.textContent = s.leader.name + '  ' + s.leader.kills;
+        // 'YOU' when it is you, so the panel reads as a standing rather than
+        // as a name badge — which is how it read when it showed a stranger.
+        this.el.leader.textContent =
+          (s.leader.isSelf ? 'YOU' : s.leader.name) + '  ' + s.leader.kills;
       } else {
         this.el.leaderLabel.textContent = 'STATUS';
         this.el.leader.textContent = 'WAITING';

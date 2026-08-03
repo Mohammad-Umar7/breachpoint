@@ -199,6 +199,15 @@ html, body {
 
 /* Vitals ----------------------------------------------------------------- */
 #hud-bottom-left { position: absolute; bottom: 24px; left: 24px; width: 330px; }
+
+/* Sits above the vitals: it is about YOU, like the bars under it. Quiet
+   enough not to compete with health, which is the thing you actually read
+   under fire. */
+#hud-callsign {
+  font-size: 12px; letter-spacing: 3px; text-transform: uppercase;
+  color: var(--accent); opacity: 0.75; margin-bottom: 6px;
+  text-shadow: 0 1px 3px rgba(0,0,0,0.8);
+}
 .bar-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
 .bar-icon { width: 18px; text-align: center; font-size: 16px; color: var(--accent); }
 .bar {

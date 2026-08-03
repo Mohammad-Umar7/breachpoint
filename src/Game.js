@@ -1109,19 +1109,41 @@ export class Game {
     this.ui.hideNetWarning?.();
   }
 
+  /** The player actually in front, or null while the match is still scoreless. */
+  _currentLeader() {
+    if (!this.net?.connected) return null;
+    const top = this.net.roster()[0];
+    if (!top || !(top.kills > 0)) return null;
+    return { ...top, isSelf: top.id === this.net.selfId };
+  }
+
   _pushHud(dt) {
     this.ui.updateHud(
       {
         health: this.player.health,
         maxHealth: this.player.maxHealth,
         armor: this.player.armor,
+        // What everybody else sees over your head. In a match that is the
+        // server's copy, which is the one that actually counts.
+        callsign: this.net?.connected
+          ? this.net.nameOf(this.net.selfId)
+          : (this.settings.get('playerName') || DEFAULT_NAME),
         maxArmor: this.player.maxArmor,
         weapon: this.weapons.hudState(),
         lean: this.lean.amount,
         match: this.net?.connected ? this.net.match : null,
         room: this.net?.room ?? null,
         ping: this.net?.ping ?? 0,
-        leader: this.net?.connected ? (this.net.roster()[0] ?? null) : null,
+        /*
+         * Nobody leads a match nobody has scored in.
+         *
+         * roster() sorts by kills, then deaths, then NAME — so before anyone
+         * had a kill the top entry was just whoever came first in the
+         * alphabet, and every player in the room was shown that same stranger
+         * labelled LEADER. It read as a name badge that had somehow got the
+         * wrong name on it.
+         */
+        leader: this._currentLeader(),
         score: this.stats.kills,
         fps: this.clock.fps,
         netDebug: this.net?.connected ? {
