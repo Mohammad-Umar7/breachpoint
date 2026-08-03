@@ -101,6 +101,11 @@ export class ParticleManager {
     this._v3 = new THREE.Vector3();
     this._c = new THREE.Color();
     this._basis = new THREE.Matrix4();
+    // Scratch for keeping a decal glued to a body that moves. See addDecal.
+    this._bodyMat = new THREE.Matrix4();
+    this._bodyQuat = new THREE.Quaternion();
+    this._unitScale = new THREE.Vector3(1, 1, 1);
+    this._impactBody = null;
 
     this._buildSparks();
     this._buildSmoke();
@@ -272,7 +277,14 @@ export class ParticleManager {
     const mkDecals = (n) => {
       const arr = [];
       for (let i = 0; i < n; i++) {
-        arr.push({ idx: i, alive: false, life: 0, maxLife: 26, matrix: new THREE.Matrix4(), alpha: 1 });
+        arr.push({
+          idx: i, alive: false, life: 0, maxLife: 26,
+          matrix: new THREE.Matrix4(), alpha: 1,
+          // Set when the decal landed on something that can MOVE. See
+          // _fadeDecalList: the mark rides the object instead of hanging in
+          // the air where the object used to be.
+          body: null, local: new THREE.Matrix4(),
+        });
       }
       return arr;
     };
@@ -450,7 +462,14 @@ export class ParticleManager {
    * @param {string} surface  one of SURFACE.*
    * @param {number} [intensity] 1 = a rifle round
    */
-  spawnImpact(point, normal, surface, intensity = 1) {
+  /**
+   * @param {object} [attachTo] the rigid body that was hit, when it is one
+   *   that can move. A bullet hole on a crate has to travel with the crate:
+   *   shoot one, knock it over, and the holes used to stay hanging in mid-air
+   *   exactly where the crate had been.
+   */
+  spawnImpact(point, normal, surface, intensity = 1, attachTo = null) {
+    this._impactBody = attachTo;
     const d = this.density * intensity;
 
     switch (surface) {
@@ -703,6 +722,23 @@ export class ParticleManager {
 
     this._v2.copy(point).addScaledVector(this._v, 0.014);
     entry.matrix.compose(this._v2, this._q, this._tmpScale(size));
+
+    /*
+     * If it landed on something movable, remember WHERE ON THAT THING it
+     * landed rather than where it was in the world, and rebuild the world
+     * matrix each frame from wherever the object has got to.
+     */
+    entry.body = this._impactBody ?? null;
+    if (entry.body) {
+      const t = entry.body.translation();
+      const r = entry.body.rotation();
+      this._bodyMat.compose(
+        this._v3.set(t.x, t.y, t.z),
+        this._bodyQuat.set(r.x, r.y, r.z, r.w),
+        this._unitScale,
+      );
+      entry.local.copy(this._bodyMat).invert().multiply(entry.matrix);
+    }
     mesh.setMatrixAt(entry.idx, entry.matrix);
     mesh.instanceMatrix.needsUpdate = true;
     this._setInstanceAlpha(mesh, entry.idx, 1);
@@ -1058,6 +1094,21 @@ export class ParticleManager {
         dirty = true;
         continue;
       }
+      // A mark stuck to something that moves has to move with it.
+      if (d.body) {
+        const bt = d.body.translation();
+        const br = d.body.rotation();
+        this._bodyMat.compose(
+          this._v3.set(bt.x, bt.y, bt.z),
+          this._bodyQuat.set(br.x, br.y, br.z, br.w),
+          this._unitScale,
+        );
+        d.matrix.multiplyMatrices(this._bodyMat, d.local);
+        mesh.setMatrixAt(d.idx, d.matrix);
+        mesh.instanceMatrix.needsUpdate = true;
+        dirty = true;
+      }
+
       // Only fade over the last 25% of the lifetime.
       const t = d.life / d.maxLife;
       const a = t > 0.75 ? 1 - (t - 0.75) / 0.25 : 1;

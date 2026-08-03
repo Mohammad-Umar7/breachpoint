@@ -84,6 +84,7 @@ export function wireNetwork(game) {
   };
 
   net.onRespawn = (pos) => {
+    game.viewModel.holder.visible = true;      // gun back in hand
     game._pendingSpawn = pos;
     game._placePlayer(pos);
     game.player.velocity.set(0, 0, 0);
@@ -239,10 +240,19 @@ export function wireNetwork(game) {
       if (k.headshot) game.stats.headshots++;
       // 'killConfirm' — there is no synth called 'hitConfirm', so this was
       // silently warning to the console and playing nothing on every kill.
-      game.audio.play('killConfirm', { volume: 0.9 });
+      game.audio.play('killConfirm', { volume: 1 });
+      // A headshot gets a second, higher note stacked on top, so the two read
+      // differently without needing a separate sound.
+      if (k.headshot) {
+        setTimeout(() => game.audio.play('hitmarkerHead', { volume: 0.9 }), 70);
+      }
       // The kill marker is a distinct shape and colour from a hit, because
       // "they are dead" is the one piece of information you must not miss.
       game.ui.showHitmarker(true, k.headshot);
+      // Says who, and that the kill put you back on your feet — the health
+      // arrives separately as a HEAL from the server.
+      game.ui.showBanner?.(
+        `${k.headshot ? 'HEADSHOT' : 'ELIMINATED'}  ${k.victimName}`, 1.6);
     }
     if (k.isSelfVictim) {
       game.stats.deaths++;
@@ -250,6 +260,15 @@ export function wireNetwork(game) {
       game.player.health = 0;
       game._respawnAt = performance.now() + 2500;
       game.ui.showRespawn?.(k.attackerName);
+      /*
+       * Put the gun away while you are dead.
+       *
+       * The view model kept running its idle and walk sway through the whole
+       * countdown, so a corpse stood at the spawn point jogging on the spot
+       * with a rifle bobbing in front of it. Nothing else says 'you are dead'
+       * as loudly as the weapon simply not being there.
+       */
+      game.viewModel.holder.visible = false;
       // Anything still in flight belongs to the life that just ended.
       game.weapons?.clearGrenades?.();
       // Deliberately does NOT release pointer lock. Doing so fires

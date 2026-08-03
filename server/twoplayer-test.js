@@ -181,6 +181,24 @@ async function main() {
   check('and the scoreboard lists us both',
     (score?.ps ?? []).length === 2, `${(score?.ps ?? []).length} players listed`);
 
+  /*
+   * --- a kill puts the winner back on their feet ---------------------------
+   *
+   * Winning a fight on a sliver of health and then dying to whoever walks
+   * round the corner next rewards arriving second rather than shooting
+   * better. The server sends the restore as a HEAL, the same negative-damage
+   * HIT the pickups use, so health keeps flowing through one path.
+   */
+  const reward = me.hits.filter((h) => h.v === me.id && h.d < 0).at(-1);
+  check('killing someone restores the killer', !!reward,
+    reward ? `+${-reward.d}, now ${reward.hp} hp` : 'no restore sent');
+  check('and it is a full heal, not a token one',
+    !!reward && reward.hp >= PLAYER_MAX_HEALTH,
+    reward ? `${reward.hp} of ${PLAYER_MAX_HEALTH}` : '');
+  check('and the plates come back too',
+    !!reward && reward.ar >= PLAYER_START_ARMOR,
+    reward ? `armour ${reward.ar}` : '');
+
   // --- and they come back whole ---------------------------------------------
   await sleep(3200);
   friend.hits.length = 0;

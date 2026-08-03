@@ -54,6 +54,13 @@ const CHEST_Y = 1.05;
  */
 const SHADOW_CUTOFF_SQ = 28 * 28;
 
+/**
+ * Past this range a player's WEAPON stops drawing — nine of their twenty-four
+ * meshes. 38 m is far beyond any range at which the gun is more than a few
+ * pixels, and the body, the name tag and the hitbox are all untouched.
+ */
+const WEAPON_CUTOFF_SQ = 38 * 38;
+
 /*
  * How far a peek moves the body, split between a roll and a sideways shift.
  *
@@ -166,10 +173,28 @@ export class RemotePlayers {
    * barely make out. The body itself keeps drawing — only the shadow goes.
    */
   _cullShadow(body, viewer) {
-    const far = body.group.position.distanceToSquared(viewer) > SHADOW_CUTOFF_SQ;
-    if (far === body.shadowCulled) return;      // only walk the tree on a change
-    body.shadowCulled = far;
-    for (const mesh of body.shadowCasters) mesh.castShadow = !far;
+    const d2 = body.group.position.distanceToSquared(viewer);
+
+    const far = d2 > SHADOW_CUTOFF_SQ;
+    if (far !== body.shadowCulled) {           // only walk the tree on a change
+      body.shadowCulled = far;
+      for (const mesh of body.shadowCasters) mesh.castShadow = !far;
+    }
+
+    /*
+     * Past WEAPON_CUTOFF the gun itself stops drawing.
+     *
+     * A weapon model is nine meshes — more than a third of everything a player
+     * costs — and at this range it covers a couple of pixels. The BODY keeps
+     * drawing, so the silhouette you aim at is unchanged, and hit registration
+     * never looked at these meshes anyway: RemotePlayers.raycast tests the
+     * interpolated capsule, not the geometry.
+     */
+    const gunGone = d2 > WEAPON_CUTOFF_SQ;
+    if (gunGone !== body.weaponCulled) {
+      body.weaponCulled = gunGone;
+      body.weaponGroup.visible = !gunGone;
+    }
   }
 
   /**
@@ -332,7 +357,7 @@ export class RemotePlayers {
       tag: null, tagCanvas: null, tagTexture: null,
       // Gathered once at build so distance culling can flip them without
       // walking the object tree every frame. See _cullShadow.
-      shadowCasters: [], shadowCulled: false,
+      shadowCasters: [], shadowCulled: false, weaponCulled: false,
     };
 
     const limb = (partName, role) => {

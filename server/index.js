@@ -338,6 +338,31 @@ class Room {
       v: victim.id, a: attacker.id, w: weapon.id, hs: headshot,
     });
 
+    /*
+     * A kill puts you back on your feet.
+     *
+     * Winning a fight on 20 health and then dying to the next person who
+     * walks round the corner is the least satisfying way to play, and it
+     * rewards whoever arrives second rather than whoever shot better. Full
+     * health, and the plates back to their starting level.
+     *
+     * Sent as a HEAL — the same negative-damage HIT the pickups use — so the
+     * client's health flows through exactly one authoritative path.
+     */
+    if (!selfInflicted && attacker.alive) {
+      const healed = PLAYER_MAX_HEALTH - attacker.hp;
+      const plated = Math.max(0, PLAYER_START_ARMOR - attacker.armor);
+      if (healed > 0 || plated > 0) {
+        attacker.hp = PLAYER_MAX_HEALTH;
+        attacker.armor = Math.max(attacker.armor, PLAYER_START_ARMOR);
+        this.broadcast(MSG.HIT, {
+          v: attacker.id, a: attacker.id,
+          d: -Math.round(healed || plated), pt: 'killreward',
+          hp: Math.round(attacker.hp), ar: Math.round(attacker.armor),
+        });
+      }
+    }
+
     // Tell the victim — and only the victim — where they will come back, so
     // they can wait out the countdown standing at their spawn instead of at
     // the place they were shot. See MSG.SPAWNPOINT.

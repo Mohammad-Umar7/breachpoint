@@ -664,7 +664,7 @@ export class WeaponSystem {
     // ------------------------------------------------- explosive barrels
     if (tag?.kind === TAG_KIND.EXPLOSIVE && tag.prop) {
       this.onPropHit?.(tag.prop, weapon.damageAtRange(distance), hit.point, direction);
-      this.fx.spawnImpact(hit.point, hit.normal, SURFACE.METAL, 1);
+      this.fx.spawnImpact(hit.point, hit.normal, SURFACE.METAL, 1, tag?.prop?.body ?? null);
       this.audio.play(impactSoundFor(SURFACE.METAL), { position: hit.point, volume: 0.75 });
       this._pushBody(hit, def, direction);
       return { hitPlayer: false };
@@ -674,7 +674,7 @@ export class WeaponSystem {
     if (tag?.kind === TAG_KIND.PROP) this._pushBody(hit, def, direction);
 
     // ------------------------------------------------------------- world
-    this.fx.spawnImpact(hit.point, hit.normal, surface, 1);
+    this.fx.spawnImpact(hit.point, hit.normal, surface, 1, tag?.prop?.body ?? null);
     this.audio.play(impactSoundFor(surface), { position: hit.point, volume: 0.7 });
     if (surface !== SURFACE.GLASS && Math.random() < 0.22) {
       this.audio.play('ricochet', { position: hit.point, volume: 0.5 });
@@ -989,7 +989,8 @@ export class WeaponSystem {
       if (!hit) continue;
 
       if (hit.distance < def.range * 0.8) {
-        this.fx.spawnImpact(hit.point, hit.normal, hit.tag?.surface ?? SURFACE.CONCRETE, 0.5);
+        this.fx.spawnImpact(hit.point, hit.normal, hit.tag?.surface ?? SURFACE.CONCRETE, 0.5,
+          hit.tag?.prop?.body ?? null);
         this.audio.play('knifeHitWall', { position: hit.point, volume: 0.6 });
         return;
       }
