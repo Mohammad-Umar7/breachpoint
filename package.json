@@ -10,6 +10,7 @@
     "build": "vite build",
     "test": "node scripts/test.mjs",
     "deps": "node scripts/deps.mjs",
+    "loadtest": "node scripts/loadtest.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
