@@ -46,6 +46,7 @@ import { UIManager } from './ui/UIManager.js';
 import { MenuManager } from './ui/MenuManager.js';
 import { Minimap } from './ui/Minimap.js';
 import { NetworkClient, inviteUrl, roomFromUrl } from './net/NetworkClient.js';
+import { getMap, DEFAULT_MAP_ID } from './world/maps/index.js';
 import { RemotePlayers } from './net/RemotePlayers.js';
 import { RemoteAudio } from './net/RemoteAudio.js';
 import { KillCam } from './net/KillCam.js';
@@ -184,14 +185,7 @@ export class Game {
       this._applyTextureQuality();
 
       this.menus.setLoadingProgress(0.58, 'Building arena');
-      this.level = new Level(this.scene, this.physics, this.assets, this.settings, this.renderer);
-      this.level.build();
-      this.level.captureResetState();
-
-      // Drawn from the level's own footprints, so the map cannot drift out of
-      // agreement with the arena. See src/ui/Minimap.js.
-      const mapCanvas = document.getElementById('minimap');
-      if (mapCanvas) this.minimap = new Minimap(mapCanvas, this.level);
+      this._buildLevel(this.settings.get('mapId') ?? DEFAULT_MAP_ID);
 
       // Multiplayer. The client is created but idle until a match is joined,
       // so a failed or absent server never blocks the game from booting.
@@ -419,6 +413,15 @@ export class Game {
     this.menus.onResume = () => this.resume();
     this.menus.onRestart = () => this.restart();
     this.menus.onQuitToMenu = () => this.quitToMenu();
+    /*
+     * The player picked a map. Build it now, before any connecting happens.
+     *
+     * Building the world is the slow part of starting a match, and doing it
+     * after the socket is up means arriving in a live game and then freezing
+     * for a second while the arena appears around you.
+     */
+    this.menus.onMapChosen = (mapId) => this.setMap(mapId);
+
     this.menus.onLoadoutChanged = () => {
       if (!this.weapons) return;
       /*
@@ -1028,6 +1031,66 @@ export class Game {
    *
    * @returns {string|null} a SURFACE tag, or null to fall back to concrete
    */
+  // ================================================================== maps
+  /**
+   * Build a map, replacing whatever is standing.
+   *
+   * Everything downstream of the level is rebuilt with it, because everything
+   * downstream of the level is ABOUT it: the minimap draws the level's own
+   * footprints, the pickups sit at its spots, and the player starts at its
+   * spawn. Rebuilding the world and leaving those pointed at the last one is
+   * how you get a map that reads as the wrong place.
+   *
+   * @param {string} mapId
+   */
+  _buildLevel(mapId) {
+    const map = getMap(mapId);
+
+    // Out with the old — meshes, lights AND collision. See Level.dispose.
+    if (this.level) {
+      this.pickups?.clear?.();
+      this.level.dispose();
+    }
+
+    this.level = new Level(
+      this.scene, this.physics, this.assets, this.settings, this.renderer, map);
+    this.level.build();
+    this.level.captureResetState();
+
+    /*
+     * The minimap is rebuilt rather than told to refresh.
+     *
+     * It draws the static level ONCE into an offscreen canvas at construction,
+     * which is the whole reason it is cheap. Keeping the old instance would
+     * leave the previous arena's outline under the new one's players.
+     */
+    const mapCanvas = document.getElementById('minimap');
+    if (mapCanvas) this.minimap = new Minimap(mapCanvas, this.level);
+
+    // Pickups exist by the time a map is SWAPPED, but not on first boot —
+    // Game builds the level before it builds them.
+    this.pickups?.buildFromLevel?.(this.level);
+
+    this.player?.spawn(this.level.playerSpawn, this.level.playerSpawnYaw);
+    return this.level;
+  }
+
+  /** The map currently built. */
+  get mapId() { return this.level?.mapId ?? DEFAULT_MAP_ID; }
+
+  /**
+   * Switch maps, doing nothing if it is already the one standing.
+   *
+   * Called from the menu when the player picks one, and from `_connect` when
+   * the server says the room is playing something else.
+   */
+  setMap(mapId) {
+    const wanted = getMap(mapId).id;
+    if (this.level && this.level.mapId === wanted) return false;
+    this._buildLevel(wanted);
+    return true;
+  }
+
   /**
    * How far a camera can travel from a point before it hits the world.
    *
@@ -1083,7 +1146,22 @@ export class Game {
         name: name || this.settings.get('playerName') || DEFAULT_NAME,
         room,
         quick,
+        mapId: this.mapId,
       });
+
+      /*
+       * The ROOM decides which map, not us.
+       *
+       * Joining a friend's code means playing their map, and quick match can
+       * legitimately put us in a room that already exists. Rebuilding here is
+       * the difference between arriving in the right place and walking around
+       * an arena whose collision belongs to a different one.
+       */
+      if (welcome.mapId && welcome.mapId !== this.mapId) {
+        this.menus.setLobbyStatus(
+          `This match is on ${getMap(welcome.mapId).name}. Loading it…`);
+        this.setMap(welcome.mapId);
+      }
       this.menus.inviteLink = inviteUrl(welcome.r);
       this.menus.showInvite(welcome.r);
       this.menus.setLobbyStatus(

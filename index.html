@@ -222,10 +222,11 @@
           <button class="nav-btn" id="btn-create"><span class="k">02</span>CREATE MATCH</button>
           <button class="nav-btn" id="btn-join"><span class="k">03</span>JOIN MATCH</button>
           <button class="nav-btn hidden" id="btn-continue"><span class="k">04</span>CONTINUE</button>
-          <button class="nav-btn" id="btn-loadout"><span class="k">05</span>LOADOUT</button>
-          <button class="nav-btn" id="btn-settings-menu"><span class="k">06</span>SETTINGS</button>
-          <button class="nav-btn" id="btn-controls"><span class="k">07</span>CONTROLS</button>
-          <button class="nav-btn" id="btn-credits"><span class="k">08</span>CREDITS</button>
+          <button class="nav-btn" id="btn-maps"><span class="k">05</span>SELECT MAP</button>
+          <button class="nav-btn" id="btn-loadout"><span class="k">06</span>LOADOUT</button>
+          <button class="nav-btn" id="btn-settings-menu"><span class="k">07</span>SETTINGS</button>
+          <button class="nav-btn" id="btn-controls"><span class="k">08</span>CONTROLS</button>
+          <button class="nav-btn" id="btn-credits"><span class="k">09</span>CREDITS</button>
         </nav>
         <div class="menu-footer">
           <!-- Editable: PLAY reads the saved callsign, and the only place to
@@ -233,10 +234,23 @@
                pressed PLAY was called OPERATOR to everybody else, forever. -->
           <label class="chip chip-input" for="menu-name-input"><span>CALLSIGN</span><input id="menu-name-input" maxlength="16" autocomplete="off" spellcheck="false"
                    placeholder="OPERATOR" aria-label="Your callsign" /></label>
+          <div class="chip"><span>MAP</span><b id="menu-map-tag">WAREHOUSE</b></div>
           <div class="chip"><span>PRIMARY</span><b id="menu-primary-tag">AR-15</b></div>
           <div class="chip"><span>SECONDARY</span><b id="menu-secondary-tag">M9</b></div>
         </div>
         <p class="hint">Move the mouse to look &middot; <kbd>Esc</kbd> to pause at any time</p>
+      </section>
+
+      <!-- ---------- Map select ----------
+           Cards are GENERATED from the map registry, never written here. A
+           third map must not need a line of markup. See MenuManager. -->
+      <section id="screen-maps" class="screen wide">
+        <h2>SELECT MAP</h2>
+        <p class="maps-sub" id="maps-sub">Choose where to fight.</p>
+        <div class="map-grid" id="map-grid"></div>
+        <nav class="menu-nav">
+          <button class="nav-btn" data-back="screen-menu">BACK</button>
+        </nav>
       </section>
 
       <!-- ---------- Multiplayer lobby ---------- -->

@@ -210,8 +210,19 @@ export class PickupManager {
     }
   }
 
-  dispose() {
+  /**
+   * Remove every pickup, keeping the manager usable.
+   *
+   * Distinct from dispose(), which also throws away the shared geometry. A map
+   * swap needs the pickups gone and the manager still able to build the next
+   * map's — disposing here would leave it holding freed buffers.
+   */
+  clear() {
     for (let i = this.pickups.length - 1; i >= 0; i--) this._destroy(i);
+  }
+
+  dispose() {
+    this.clear();
     this.scene.remove(this.group);
     this.geoHealth.dispose();
     this.geoAmmo.dispose();

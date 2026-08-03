@@ -37,7 +37,9 @@ import {
   MULTIKILL_WINDOW_MS, STREAK_ANNOUNCE_AT,
   isValidRoomCode, sanitizeName, damageFor,
 } from '../src/net/protocol.js';
-import { pickSpawn, isInsideArena } from '../src/net/arena.js';
+import {
+  pickSpawn, isInsideArena, isValidMapId, DEFAULT_MAP_ID,
+} from '../src/net/arena.js';
 import { WEAPON_DEFS, HAZARD_DEFS } from '../src/weapons/WeaponDefinitions.js';
 
 const PORT = Number(process.env.PORT || 8787);
@@ -183,8 +185,16 @@ class Player {
 // Room
 // ---------------------------------------------------------------------------
 class Room {
-  constructor(code) {
+  constructor(code, mapId = DEFAULT_MAP_ID) {
     this.code = code;
+    /**
+     * Which map this room is playing.
+     *
+     * Fixed for the life of the room and set by whoever opened it. Spawn
+     * points and arena bounds both come from it, so it cannot change under a
+     * match in progress without teleporting everybody into geometry.
+     */
+    this.mapId = isValidMapId(mapId) ? mapId : DEFAULT_MAP_ID;
     /**
      * Public rooms are the pool Quick Match draws from. Rooms made by CREATE
      * MATCH stay private, so sharing a code still means only the people you
@@ -219,6 +229,9 @@ class Room {
       mt: this.matchPayload(),
       sp: [player.x, player.y, player.z],
       hz: 1000 / TICK_MS,
+      // The ROOM's map, which is not necessarily the one this client asked
+      // for: joining a code means playing whatever that room is playing.
+      mp: this.mapId,
     });
     this.broadcast(MSG.JOINED, { p: player.summary() }, player);
     this.evaluateMatchState();
@@ -287,6 +300,8 @@ class Room {
       [...this.players.values()]
         .filter((p) => p !== player)
         .map((p) => ({ x: p.x, z: p.z, alive: p.alive })),
+      Math.random,
+      this.mapId,
     );
     player.reservedSpawn = at;
     return at;
@@ -559,10 +574,19 @@ function makeRoomCode() {
  * A room is only a candidate while it is worth joining: not full, not over,
  * and not already deep into its round.
  */
-function findPublicRoom() {
+/**
+ * The fullest open public room ON THE REQUESTED MAP.
+ *
+ * Filtering by map is what makes quick match honour the choice made in the
+ * menu. Without it, pressing PLAY on one map would drop you into whichever
+ * public room happened to be busiest — somewhere else entirely, with the
+ * client having already built the wrong world.
+ */
+function findPublicRoom(mapId) {
   let best = null;
   for (const room of rooms.values()) {
     if (!room.isPublic) continue;
+    if (room.mapId !== mapId) continue;
     if (room.size >= MATCH_RULES.maxPlayers) continue;
     if (room.state === MATCH_STATE.OVER) continue;
     if (!best || room.size > best.size) best = room;
@@ -570,28 +594,30 @@ function findPublicRoom() {
   return best;
 }
 
-function getOrCreateRoom(requested, quick = false) {
+function getOrCreateRoom(requested, quick = false, mapId = DEFAULT_MAP_ID) {
   if (requested) {
     const code = requested.toUpperCase();
     if (!isValidRoomCode(code)) return { error: 'that room code is not valid' };
     const existing = rooms.get(code);
     if (existing) {
       if (existing.size >= MATCH_RULES.maxPlayers) return { error: 'that match is full' };
+      // An existing room keeps its own map: whoever opened it chose, everyone
+      // arriving on the code plays that, and WELCOME says which.
       return { room: existing };
     }
     // Joining a code that does not exist yet creates it, so an invite link
     // works whether or not the host got there first.
-    const room = new Room(code);
+    const room = new Room(code, mapId);
     rooms.set(code, room);
     return { room };
   }
 
   if (quick) {
-    const open = findPublicRoom();
+    const open = findPublicRoom(mapId);
     if (open) return { room: open };
     // Nobody to join — open a public one so the next person to press Play
     // lands here rather than starting yet another empty match.
-    const room = new Room(makeRoomCode());
+    const room = new Room(makeRoomCode(), mapId);
     room.isPublic = true;
     rooms.set(room.code, room);
     return { room };
@@ -599,7 +625,7 @@ function getOrCreateRoom(requested, quick = false) {
 
   // CREATE MATCH: private by definition — you get a code to share, and quick
   // match will never drop a stranger into it.
-  const room = new Room(makeRoomCode());
+  const room = new Room(makeRoomCode(), mapId);
   rooms.set(room.code, room);
   return { room };
 }
@@ -641,7 +667,7 @@ function handleInput(player, msg) {
   };
 
   // Outside the arena by a wide margin — impossible through normal play.
-  if (!isInsideArena(x, y, z)) { reject(); return; }
+  if (!isInsideArena(x, y, z, room.mapId)) { reject(); return; }
 
   const now = Date.now();
   if (player.alive && player.lastInputAt) {
@@ -940,6 +966,7 @@ wss.on('connection', (socket) => {
         const { room, error } = getOrCreateRoom(
           typeof msg.r === 'string' && msg.r ? msg.r : null,
           msg.q === true,          // quick match
+          isValidMapId(msg.m) ? msg.m : DEFAULT_MAP_ID,
         );
         if (error) {
           socket.send(JSON.stringify({ t: MSG.DENIED, why: error }));

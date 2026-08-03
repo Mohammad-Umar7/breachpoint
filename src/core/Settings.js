@@ -63,6 +63,14 @@ export const DEFAULT_SETTINGS = Object.freeze({
   // -------------------------------------------------------------- gameplay
   /** Shown above your body to other players, and on the scoreboard. */
   playerName: '',            // empty => 'OPERATOR'
+  /**
+   * Which arena to play. Remembered, so PLAY goes where you last went.
+   *
+   * Validated on use rather than on load — an id saved by a newer build, or
+   * one whose map was removed, falls back to the default instead of leaving
+   * the game with nothing to build. See world/maps/index.js.
+   */
+  mapId: 'warehouse',
   loadoutPrimary: 'rifle',
   loadoutSecondary: 'pistol',
   // Scales every weapon's recoil pattern. The authored patterns are the

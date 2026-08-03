@@ -361,10 +361,47 @@ check('every body field RemoteAudio reads is one RemotePlayers sets',
   absentFields.length === 0,
   absentFields.join(', ') || `${audioReadsFields.length} fields: ${audioReadsFields.join(', ')}`);
 
+console.log('\n--- maps ---');
+
+/*
+ * A map is only real if BOTH registries know about it.
+ *
+ * Geometry lives in `world/maps/`; spawn points and bounds live in
+ * `net/arena.js`, because the server needs them and must not import THREE. A
+ * map in one and not the other is not a build error — it is players spawning
+ * at the origin, inside whatever is built there. `test/maps.mjs` proves this
+ * by building every map for real; this catches it in a second without one.
+ */
+const mapsIndexSrc = read('src/world/maps/index.js');
+const arenaSrc = read('src/net/arena.js');
+const geometryIds = [...mapsIndexSrc.matchAll(/from '\.\/(\w+)\.js'/g)].map((m) => m[1]);
+const arenaBlock = arenaSrc.match(/export const ARENAS = Object\.freeze\(\{([\s\S]*?)\n\}\);/)?.[1] ?? '';
+const arenaIds = [...arenaBlock.matchAll(/^ {2}(\w+): Object\.freeze\(\{/gm)].map((m) => m[1]);
+const lonely = [
+  ...geometryIds.filter((id) => !arenaIds.includes(id)).map((id) => `${id} has geometry but no arena`),
+  ...arenaIds.filter((id) => !geometryIds.includes(id)).map((id) => `${id} has an arena but no geometry`),
+];
+check('every map has both geometry and spawn points',
+  lonely.length === 0 && geometryIds.length > 0,
+  lonely.join(', ') || `${geometryIds.length} maps: ${geometryIds.join(', ')}`);
+
+/*
+ * And the picker has to be GENERATED.
+ *
+ * The whole point of the registry is that a third map needs no UI work. A card
+ * written by hand in the markup would work for the two that exist and silently
+ * not appear for the next one.
+ */
+const hardCoded = geometryIds.filter((id) => new RegExp(`data-map-id="${id}"`, 'i').test(HTML));
+check('the map picker is built from the registry, not written in HTML',
+  hardCoded.length === 0 && /id="map-grid"/.test(HTML),
+  hardCoded.length ? `hard-coded: ${hardCoded.join(', ')}`
+                   : 'one empty grid, filled from MAPS');
+
 console.log('\n--- the world ---');
 
 // Pickup types the level places must be types the manager knows how to grant.
-const levelSrc = read('src/world/Level.js');
+const levelSrc = read('src/world/maps/warehouse.js') + read('src/world/maps/outpost.js');
 const pickupSrc = read('src/world/PickupManager.js');
 const knownTypes = new Set([...pickupSrc.matchAll(/^  ([a-z]+): \{ material:/gm)].map((m) => m[1]));
 const placedTypes = new Set([...levelSrc.matchAll(/\{ type: '([a-z]+)'/g)].map((m) => m[1]));

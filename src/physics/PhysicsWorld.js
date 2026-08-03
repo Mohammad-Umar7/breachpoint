@@ -38,6 +38,33 @@ export function initRapier() {
   return rapierReady;
 }
 
+/**
+ * Refuse to build a collider out of numbers that are not numbers.
+ *
+ * ONE non-finite value is enough to take the whole map down with it. Rapier
+ * puts every collider's AABB into a shared broad-phase, a NaN bound poisons
+ * the structure, and from then on EVERY raycast on that map returns nothing —
+ * no ground under the player, no walls, no hit registration. Nothing throws
+ * and nothing is logged; the map simply stops existing to queries while
+ * continuing to render perfectly.
+ *
+ * That cost an afternoon. Six barrels were built with `{x, y, z}` half-extents
+ * where a cylinder wanted `{y, r}`, so the radius was `undefined`, and the
+ * symptom was a player falling through a floor that was visibly there.
+ *
+ * Loud and immediate, because a collider that cannot be built correctly must
+ * never reach the broad phase.
+ */
+function assertFinite(where, values) {
+  for (const [key, v] of Object.entries(values)) {
+    if (!Number.isFinite(v)) {
+      throw new Error(
+        `[Physics] ${where}: "${key}" is ${v}. A non-finite collider dimension `
+        + 'poisons the broad phase and silently disables every raycast on the map.');
+    }
+  }
+}
+
 export class PhysicsWorld {
   constructor() {
     this.RAPIER = RAPIER;
@@ -124,6 +151,9 @@ export class PhysicsWorld {
    * @param {THREE.Quaternion} [quat]
    */
   createStaticBox(pos, half, quat = null, tag = null, friction = 0.9) {
+    assertFinite('createStaticBox', {
+      x: pos.x, y: pos.y, z: pos.z, hx: half.x, hy: half.y, hz: half.z,
+    });
     const bodyDesc = RAPIER.RigidBodyDesc.fixed().setTranslation(pos.x, pos.y, pos.z);
     if (quat) bodyDesc.setRotation({ x: quat.x, y: quat.y, z: quat.z, w: quat.w });
     const body = this.world.createRigidBody(bodyDesc);
@@ -137,6 +167,9 @@ export class PhysicsWorld {
 
   /** Pushable crate / debris. */
   createDynamicBox(pos, half, opts = {}) {
+    assertFinite('createDynamicBox', {
+      x: pos.x, y: pos.y, z: pos.z, hx: half.x, hy: half.y, hz: half.z,
+    });
     const {
       mass = 24,
       friction = 0.7,
@@ -170,6 +203,11 @@ export class PhysicsWorld {
 
   /** Barrel-shaped dynamic body. */
   createDynamicCylinder(pos, halfHeight, radius, opts = {}) {
+    // `radius` is the one that has actually been undefined in practice: a
+    // cylinder takes {y, r}, and a caller copying the box call passes {x,y,z}.
+    assertFinite('createDynamicCylinder', {
+      x: pos.x, y: pos.y, z: pos.z, halfHeight, radius,
+    });
     const {
       mass = 30,
       friction = 0.6,

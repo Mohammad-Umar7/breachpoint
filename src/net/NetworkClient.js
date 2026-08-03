@@ -31,6 +31,7 @@ import {
   MSG, FLAG, PROTOCOL_VERSION, INTERP_DELAY_MS, INPUT_HZ,
   MATCH_STATE, sanitizeName,
 } from './protocol.js';
+import { DEFAULT_MAP_ID, isValidMapId } from './arena.js';
 
 /** Snapshots kept for interpolation. At 30 Hz this is ~1 s of history. */
 const SNAPSHOT_BUFFER = 32;
@@ -79,6 +80,8 @@ export class NetworkClient {
     this.socket = null;
     this.selfId = null;
     this.room = null;
+    /** The map the room we are in is playing. See _handleWelcome. */
+    this.mapId = DEFAULT_MAP_ID;
     this.name = 'OPERATOR';
     this.ping = 0;
     this.lastError = null;
@@ -188,7 +191,7 @@ export class NetworkClient {
     return best;
   }
 
-  connect({ name, room = null, quick = false } = {}) {
+  connect({ name, room = null, quick = false, mapId = DEFAULT_MAP_ID } = {}) {
     this.disconnect();
     this.name = sanitizeName(name, 'OPERATOR');
     this._setState(NET_STATE.CONNECTING);
@@ -244,6 +247,9 @@ export class NetworkClient {
           // Quick match: let the server pick a public game with people in it,
           // rather than opening yet another empty private one.
           q: quick || undefined,
+          // The map we WANT. An existing room keeps its own and tells us in
+          // WELCOME, so this is a request, not an instruction.
+          m: isValidMapId(mapId) ? mapId : DEFAULT_MAP_ID,
           v: PROTOCOL_VERSION,
         });
       };
@@ -381,6 +387,14 @@ export class NetworkClient {
   _handleWelcome(msg) {
     this.selfId = msg.id;
     this.room = msg.r;
+    /*
+     * The map the ROOM is playing, which may not be the one we asked for.
+     *
+     * Joining a friend's code means playing their map. The client has usually
+     * built a world by now, so this is what tells it whether that world is the
+     * right one — see Game._connect.
+     */
+    this.mapId = isValidMapId(msg.mp) ? msg.mp : DEFAULT_MAP_ID;
     this.players.clear();
     for (const p of msg.ps ?? []) this._upsert(p);
     if (msg.you) this._upsert(msg.you);
@@ -390,6 +404,7 @@ export class NetworkClient {
     this.onWelcome?.({
       id: msg.id,
       room: msg.r,
+      mapId: this.mapId,
       spawn: Array.isArray(msg.sp) ? msg.sp : null,
       players: [...this.players.values()],
       match: this.match,

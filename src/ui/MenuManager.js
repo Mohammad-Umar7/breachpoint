@@ -18,9 +18,10 @@ import { RETICLE_STYLES } from '../fx/ScopeRenderer.js';
 import { effectiveAimSpeed } from '../core/SensitivityManager.js';
 import { clamp } from '../core/MathUtils.js';
 import { sanitizeName, hasRealName, DEFAULT_NAME } from '../net/protocol.js';
+import { MAPS, getMap, DEFAULT_MAP_ID } from '../world/maps/index.js';
 
 const SCREENS = [
-  'screen-loading', 'screen-menu', 'screen-lobby', 'screen-loadout',
+  'screen-loading', 'screen-menu', 'screen-maps', 'screen-lobby', 'screen-loadout',
   'screen-controls', 'screen-credits', 'screen-pause', 'screen-settings',
   'screen-gameover', 'screen-error',
 ];
@@ -236,6 +237,14 @@ export class MenuManager {
     this.onRestart = null;
     this.onQuitToMenu = null;
     this.onLoadoutChanged = null;
+    /** (mapId) -> void — the player picked a map; Game rebuilds the world. */
+    this.onMapChosen = null;
+    /**
+     * What pressing a map card should do next: go straight into a quick match,
+     * open the create-match lobby, or nothing at all when the picker was
+     * opened from the menu just to browse.
+     */
+    this._mapIntent = 'browse';
 
     this._cache();
     this._buildSettingsTabs();
@@ -264,6 +273,9 @@ export class MenuManager {
       lobbyGoBtn: id('btn-lobby-go'),
       inputName: id('input-name'),
       inputRoom: id('input-room'),
+      menuMapTag: id('menu-map-tag'),
+      mapGrid: id('map-grid'),
+      mapsSub: id('maps-sub'),
       menuPrimaryTag: id('menu-primary-tag'),
       menuSecondaryTag: id('menu-secondary-tag'),
       loadoutPrimaryTag: id('loadout-primary-tag'),
@@ -338,9 +350,17 @@ export class MenuManager {
       this.settings.set('playerName', sanitizeName(this.el.menuNameInput.value, ''));
     });
 
-    click('btn-play', () => this._quickMatch());
-    click('btn-create', () => this.openLobby('create'));
+    /*
+     * PLAY and CREATE go through the map picker; JOIN does not.
+     *
+     * Joining a code means playing whatever that room is playing, so offering
+     * a choice there would be a lie — the server would override it a second
+     * later and the player would arrive somewhere they did not pick.
+     */
+    click('btn-play', () => this.openMapPicker('quick'));
+    click('btn-create', () => this.openMapPicker('create'));
     click('btn-join', () => this.openLobby('join'));
+    click('btn-maps', () => this.openMapPicker('browse'));
     click('btn-lobby-go', () => this._lobbyGo());
     click('btn-copy-invite', () => this._copyInvite());
     click('btn-credits', () => this.showScreen('screen-credits'));
@@ -709,6 +729,104 @@ export class MenuManager {
     finally { this.el.lobbyGoBtn.disabled = false; }
   }
 
+  // =============================================================== map picker
+  /**
+   * Show the maps and let the player choose one.
+   *
+   * The cards are BUILT FROM THE REGISTRY, never written in the markup. A
+   * third map is a file in `world/maps/` and a line in `maps/index.js`, and
+   * this screen picks it up with no changes at all — which is the whole reason
+   * the registry exists.
+   *
+   * @param {'quick'|'create'|'browse'} intent  what selecting a map does next
+   */
+  openMapPicker(intent = 'browse') {
+    this._mapIntent = intent;
+    if (this.el.mapsSub) {
+      this.el.mapsSub.textContent = intent === 'browse'
+        ? 'Choose where to fight. Your pick is remembered.'
+        : intent === 'create'
+          ? 'Pick a map, then share the code with your friends.'
+          : 'Pick a map and drop straight into a match.';
+    }
+    this._renderMapCards();
+    this.showScreen('screen-maps');
+  }
+
+  _renderMapCards() {
+    const grid = this.el.mapGrid;
+    if (!grid) return;
+    const current = this.settings.get('mapId') ?? DEFAULT_MAP_ID;
+    grid.innerHTML = '';
+
+    for (const map of MAPS) {
+      const card = document.createElement('button');
+      card.type = 'button';
+      card.className = 'map-card' + (map.id === current ? ' selected' : '');
+      // The map's own accent drives the card, so a new map brings its palette
+      // with it rather than needing a stylesheet edit.
+      card.style.setProperty('--map-accent', map.accent);
+      card.dataset.mapId = map.id;
+
+      const art = document.createElement('div');
+      art.className = 'map-art';
+      art.style.background =
+        `linear-gradient(135deg, ${map.swatch[0]} 0%, ${map.swatch[1]} 55%, ${map.swatch[2]} 100%)`;
+
+      const plan = document.createElement('canvas');
+      plan.className = 'map-plan';
+      plan.width = 200;
+      plan.height = 200;
+      drawPlan(plan, map);
+      art.appendChild(plan);
+
+      const scale = document.createElement('span');
+      scale.className = 'map-scale';
+      scale.textContent = map.scale;
+      art.appendChild(scale);
+
+      const body = document.createElement('div');
+      body.className = 'map-body';
+      body.innerHTML =
+        `<h3>${escapeHtml(map.name)}</h3>`
+        + `<p class="map-tagline">${escapeHtml(map.tagline)}</p>`
+        + `<p class="map-desc">${escapeHtml(map.description)}</p>`
+        + `<div class="map-stats">`
+        + `<span><b>${escapeHtml(map.span)}</b>across</span>`
+        + `<span><b>${escapeHtml(map.players)}</b>players</span>`
+        + `</div>`;
+
+      const cta = document.createElement('span');
+      cta.className = 'map-cta';
+      cta.textContent = this._mapIntent === 'browse'
+        ? (map.id === current ? 'SELECTED' : 'SELECT')
+        : this._mapIntent === 'create' ? 'CREATE HERE' : 'DEPLOY';
+
+      card.append(art, body, cta);
+      card.addEventListener('click', () => this._chooseMap(map.id));
+      grid.appendChild(card);
+    }
+  }
+
+  /**
+   * Commit to a map, then do whatever the picker was opened to do.
+   *
+   * The rebuild happens BEFORE connecting, on purpose. Building the world is
+   * the slow part, and doing it after the socket is up means arriving in a
+   * live match and then freezing for a second while the arena appears.
+   */
+  async _chooseMap(mapId) {
+    const map = getMap(mapId);
+    this.settings.set('mapId', map.id);
+    this.onMapChosen?.(map.id);
+    this.refreshTags();
+
+    if (this._mapIntent === 'create') { this.openLobby('create'); return; }
+    if (this._mapIntent === 'quick') { await this._quickMatch(); return; }
+    // Browsing: stay put and show the new selection.
+    this._renderMapCards();
+  }
+
   /**
    * PLAY — straight into a game with other people, no code to type.
    *
@@ -773,6 +891,9 @@ export class MenuManager {
       this.el.menuNameInput.value = hasRealName(this.settings.get('playerName'))
       ? this.settings.get('playerName') : '';
     }
+    if (this.el.menuMapTag) {
+      this.el.menuMapTag.textContent = getMap(this.settings.get('mapId')).name;
+    }
     if (this.el.menuPrimaryTag) this.el.menuPrimaryTag.textContent = shortName(this.settings.get('loadoutPrimary'));
     if (this.el.menuSecondaryTag) this.el.menuSecondaryTag.textContent = shortName(this.settings.get('loadoutSecondary'));
   }
@@ -809,3 +930,49 @@ function weaponStats(def) {
 }
 
 export { SETTINGS_SCHEMA, DEFAULT_SETTINGS };
+
+/* -------------------------------------------------------------- map cards */
+
+/** Map copy is player-authored nowhere, but escaping it costs nothing. */
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+/**
+ * A top-down sketch of a map, drawn from its own `plan` rectangles.
+ *
+ * Deliberately a HAND-DRAWN handful of boxes rather than the real geometry.
+ * The real footprints only exist once a map has been built, and building both
+ * maps to draw two thumbnails would cost more than the rest of the menu put
+ * together. A dozen rectangles gives an honest impression of the shape and the
+ * scale, and lives beside the layout so it is easy to keep truthful.
+ */
+function drawPlan(canvas, map) {
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  const S = canvas.width;
+  ctx.clearRect(0, 0, S, S);
+
+  const half = (map.bounds.max[0] - map.bounds.min[0]) / 2;
+  // Both maps are drawn to the SAME scale, so the size difference between the
+  // cards is the real size difference between the arenas.
+  const worldHalf = 36;
+  const k = (S * 0.5) / worldHalf;
+  const cx = S / 2;
+
+  // The arena footprint.
+  ctx.fillStyle = 'rgba(0,0,0,0.30)';
+  ctx.fillRect(cx - half * k, cx - half * k, half * 2 * k, half * 2 * k);
+  ctx.strokeStyle = map.accent;
+  ctx.globalAlpha = 0.75;
+  ctx.lineWidth = 2;
+  ctx.strokeRect(cx - half * k, cx - half * k, half * 2 * k, half * 2 * k);
+  ctx.globalAlpha = 1;
+
+  for (const [x, z, w, d] of map.plan ?? []) {
+    ctx.fillStyle = 'rgba(255,255,255,0.55)';
+    ctx.fillRect(cx + (x - w / 2) * k, cx + (z - d / 2) * k, w * k, d * k);
+  }
+}

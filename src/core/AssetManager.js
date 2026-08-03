@@ -113,6 +113,7 @@ export class AssetManager {
       ['Milling timber', () => this._buildWood()],
       ['Painting hazards', () => this._buildHazard()],
       ['Glazing windows', () => this._buildGlass()],
+      ['Quarrying sandstone', () => this._buildOutpost()],
       ['Rigging soldiers', () => this._buildCharacterMaterials()],
       ['Generating sprites', () => this._buildSprites()],
     ];
@@ -825,6 +826,194 @@ export class AssetManager {
       'frame',
       new THREE.MeshStandardMaterial({ color: 0x4a5057, roughness: 0.55, metalness: 0.7, name: 'frame' })
     );
+  }
+
+
+  /**
+   * The OUTPOST palette — warm sandstone, terracotta and painted teal.
+   *
+   * Its own step, sharing nothing with the industrial set above, because that
+   * is the entire point of a second map. The warehouse is grey concrete and
+   * steel under a midday sun; this is sun-bleached stone late in the
+   * afternoon. Reusing `concrete` and tinting it would have produced a
+   * recolour of the same place rather than somewhere else.
+   *
+   * The teal earns its place: it is the only cool colour here, so doors,
+   * shutters and railings read instantly against the stone. That is what makes
+   * a symmetrical map navigable — you learn a building by its doorway.
+   */
+  _buildOutpost() {
+    // Sun-bleached sandstone: the bulk of every wall.
+    this._register('sandstone', {
+      size: 256,
+      roughness: 0.92,
+      metalness: 0.0,
+      normalScale: 0.95,
+      paintColor: (ctx, s, rng) => {
+        fill(ctx, s, '#c9a878');
+        blotches(ctx, s, rng, 30, 'rgba(168, 132, 88, 0.30)', 12, 44);
+        blotches(ctx, s, rng, 16, 'rgba(226, 202, 165, 0.35)', 10, 34);
+        // Coursed joints — what makes stone read as masonry rather than beige.
+        ctx.strokeStyle = 'rgba(120, 92, 60, 0.35)';
+        ctx.lineWidth = 2;
+        for (let r = 1; r < 4; r++) {
+          const y = (s / 4) * r;
+          ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(s, y); ctx.stroke();
+          // Stagger the verticals row to row, like real coursing.
+          const off = (r % 2) * (s / 8);
+          for (let c = 0; c < 4; c++) {
+            const x = off + (s / 4) * c;
+            ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y - s / 4); ctx.stroke();
+          }
+        }
+        speckle(ctx, s, rng, 3000, ['#b89a68', '#d8bc90', '#a98d62'], 0.8, 2.2);
+      },
+      paintHeight: (ctx, s, rng) => {
+        fill(ctx, s, '#8a8a8a');
+        ctx.strokeStyle = '#4e4e4e';
+        ctx.lineWidth = 3;
+        for (let r = 1; r < 4; r++) {
+          const y = (s / 4) * r;
+          ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(s, y); ctx.stroke();
+          const off = (r % 2) * (s / 8);
+          for (let c = 0; c < 4; c++) {
+            const x = off + (s / 4) * c;
+            ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y - s / 4); ctx.stroke();
+          }
+        }
+        speckle(ctx, s, rng, 2200, ['#9a9a9a', '#787878'], 0.8, 2.4);
+      },
+    });
+
+    // Darker mud-brick, for lower storeys and shaded mass.
+    this._register('adobe', {
+      size: 256,
+      roughness: 0.96,
+      metalness: 0.0,
+      normalScale: 0.85,
+      paintColor: (ctx, s, rng) => {
+        fill(ctx, s, '#9c7550');
+        blotches(ctx, s, rng, 26, 'rgba(126, 92, 58, 0.35)', 12, 40);
+        blotches(ctx, s, rng, 12, 'rgba(190, 156, 116, 0.28)', 10, 30);
+        // Straw flecks — what separates mud-brick from plain brown.
+        ctx.strokeStyle = 'rgba(214, 186, 130, 0.35)';
+        ctx.lineWidth = 1;
+        for (let i = 0; i < 120; i++) {
+          const x = rng() * s, y = rng() * s, a = rng() * Math.PI;
+          ctx.beginPath();
+          ctx.moveTo(x, y);
+          ctx.lineTo(x + Math.cos(a) * 6, y + Math.sin(a) * 6);
+          ctx.stroke();
+        }
+        speckle(ctx, s, rng, 2000, ['#8a6544', '#ab8460'], 0.8, 2.0);
+      },
+      paintHeight: (ctx, s, rng) => {
+        fill(ctx, s, '#828282');
+        blotches(ctx, s, rng, 30, 'rgba(90,90,90,0.5)', 8, 26);
+        speckle(ctx, s, rng, 2600, ['#909090', '#707070'], 0.9, 2.6);
+      },
+    });
+
+    // Terracotta: roof edges, steps and planters.
+    this._register('terracotta', {
+      size: 256,
+      roughness: 0.78,
+      metalness: 0.0,
+      normalScale: 0.9,
+      paintColor: (ctx, s, rng) => {
+        fill(ctx, s, '#b4633c');
+        blotches(ctx, s, rng, 20, 'rgba(140, 70, 40, 0.35)', 12, 38);
+        // Barrel-tile ribbing.
+        for (let i = 0; i < 8; i++) {
+          const x = (s / 8) * i;
+          const g = ctx.createLinearGradient(x, 0, x + s / 8, 0);
+          g.addColorStop(0, 'rgba(80, 36, 20, 0.28)');
+          g.addColorStop(0.5, 'rgba(255, 180, 140, 0.16)');
+          g.addColorStop(1, 'rgba(80, 36, 20, 0.28)');
+          ctx.fillStyle = g;
+          ctx.fillRect(x, 0, s / 8, s);
+        }
+        speckle(ctx, s, rng, 1400, ['#9d5334', '#c87550'], 0.7, 2.0);
+      },
+      paintHeight: (ctx, s) => {
+        fill(ctx, s, '#808080');
+        for (let i = 0; i < 8; i++) {
+          const x = (s / 8) * i;
+          const g = ctx.createLinearGradient(x, 0, x + s / 8, 0);
+          g.addColorStop(0, '#5a5a5a');
+          g.addColorStop(0.5, '#c0c0c0');
+          g.addColorStop(1, '#5a5a5a');
+          ctx.fillStyle = g;
+          ctx.fillRect(x, 0, s / 8, s);
+        }
+      },
+    });
+
+    // Painted teal woodwork: doors, shutters, railings, beams.
+    this._register('paintedTeal', {
+      size: 128,
+      roughness: 0.55,
+      metalness: 0.05,
+      normalScale: 0.7,
+      paintColor: (ctx, s, rng) => {
+        fill(ctx, s, '#2e8b86');
+        ctx.strokeStyle = 'rgba(18, 62, 60, 0.55)';
+        ctx.lineWidth = 2;
+        for (let i = 1; i < 6; i++) {
+          const x = (s / 6) * i;
+          ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, s); ctx.stroke();
+        }
+        // Paint worn back to the wood beneath.
+        blotches(ctx, s, rng, 14, 'rgba(150, 110, 70, 0.30)', 4, 14);
+        speckle(ctx, s, rng, 700, ['#37a09a', '#256e6a'], 0.6, 1.8);
+      },
+      paintHeight: (ctx, s) => {
+        fill(ctx, s, '#8c8c8c');
+        ctx.strokeStyle = '#5a5a5a';
+        ctx.lineWidth = 3;
+        for (let i = 1; i < 6; i++) {
+          const x = (s / 6) * i;
+          ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, s); ctx.stroke();
+        }
+      },
+    });
+
+    // Market canopies: warm striped cloth, and the map's only strong colour.
+    this._register('canopy', {
+      size: 128,
+      roughness: 0.85,
+      metalness: 0.0,
+      side: THREE.DoubleSide,
+      paintColor: (ctx, s, rng) => {
+        fill(ctx, s, '#e8d5b0');
+        const stripes = ['#c4552f', '#e8d5b0', '#2e8b86', '#e8d5b0'];
+        for (let i = 0; i < 8; i++) {
+          ctx.fillStyle = stripes[i % stripes.length];
+          ctx.fillRect((s / 8) * i, 0, s / 8, s);
+        }
+        blotches(ctx, s, rng, 10, 'rgba(255, 244, 220, 0.28)', 8, 26);
+        speckle(ctx, s, rng, 900, ['rgba(0,0,0,0.06)', 'rgba(255,255,255,0.10)'], 0.6, 1.6);
+      },
+    });
+
+    // Packing crates: sun-bleached and rope-bound, not the yard's plywood.
+    this._register('outpostCrate', {
+      size: 128,
+      roughness: 0.80,
+      metalness: 0.0,
+      paintColor: (ctx, s, rng) => {
+        fill(ctx, s, '#b08b57');
+        ctx.strokeStyle = 'rgba(92, 66, 38, 0.75)';
+        ctx.lineWidth = 5;
+        ctx.strokeRect(5, 5, s - 10, s - 10);
+        // Rope banding rather than the yard's steel strapping.
+        ctx.strokeStyle = 'rgba(214, 190, 148, 0.85)';
+        ctx.lineWidth = 4;
+        ctx.beginPath(); ctx.moveTo(0, s * 0.32); ctx.lineTo(s, s * 0.32); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(0, s * 0.68); ctx.lineTo(s, s * 0.68); ctx.stroke();
+        speckle(ctx, s, rng, 500, ['#9d7a4a', '#c49c66'], 0.7, 2.0);
+      },
+    });
   }
 
   _buildCharacterMaterials() {

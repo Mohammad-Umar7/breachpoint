@@ -422,7 +422,10 @@ src/
 │   └── MathUtils.js            clamp / lerp / damp / RNG helpers
 ├── physics/PhysicsWorld.js     Rapier wrapper: fixed step, raycasts, explosions
 ├── world/
-│   ├── Level.js                Arena geometry, colliders, glazing
+│   ├── Level.js                The toolkit maps are built with, and teardown
+│   ├── maps/index.js           Map registry — add a map here and nowhere else
+│   ├── maps/warehouse.js       WAREHOUSE layout: industrial yard, 70 m
+│   ├── maps/outpost.js         OUTPOST layout: desert trading post, 50 m
 │   └── PickupManager.js        Health / armour / ammo pickups and drops
 ├── player/
 │   ├── Player.js               Character controller, camera, vitals

@@ -1,50 +1,116 @@
 /**
- * arena.js — the parts of the level that BOTH the browser and the game server
+ * arena.js — the parts of a map that BOTH the browser and the game server
  * have to agree on.
  *
  * Kept deliberately tiny and dependency-free (no THREE, no Node) because the
- * server imports it directly. The server does not need the level's geometry,
- * materials, textures or nav graph — it only needs to know where a player may
+ * server imports it directly. The server does not need a map's geometry,
+ * materials, textures or lighting — it only needs to know where a player may
  * legally appear and roughly where the world ends.
  *
- * This exists so spawn points have ONE definition. They were previously
- * literals inside Level._buildNavData(); if the server kept its own copy, the
- * two would drift the first time the arena was edited, and the symptom would
- * be players spawning inside walls on a server nobody thought to update.
+ * This exists so spawn points have ONE definition. They were once literals
+ * inside Level, and if the server kept its own copy the two would drift the
+ * first time a map was edited — the symptom being players spawning inside
+ * walls on a server nobody thought to update.
+ *
+ * ONE ENTRY PER MAP
+ * -----------------
+ * Everything here is keyed by map id. Adding a map means adding an entry here
+ * AND a geometry module under `src/world/maps/`, and `test/contracts.mjs`
+ * checks the two lists match — a map with geometry but no spawns would
+ * otherwise drop everybody at the origin, inside whatever is built there.
  */
+
+/** The map a fresh install plays, and the fallback for anything unrecognised. */
+export const DEFAULT_MAP_ID = 'warehouse';
 
 /**
- * Free-for-all spawn points, as [x, z] on the ground plane.
+ * Per-map spawn points, as [x, z] on the ground plane.
  *
- * These are the level's perimeter and interior spawns, plus the old
- * single-player start. Spread wide on purpose: the server picks whichever is
- * furthest from the nearest living player, so a well-distributed set is what
- * stops spawn-camping without any extra logic.
+ * Spread wide on purpose: the server picks whichever is furthest from the
+ * nearest living player, so a well-distributed set is what stops spawn-camping
+ * without any extra logic.
  */
-export const SPAWN_POINTS = Object.freeze([
-  [-30, -30], [30, -30], [-30, 30], [30, 30], [0, -32],
-  [-32, 0], [32, 0], [8, -14], [-8, -14], [22, 18], [-22, 18], [0, -22],
-  [0, 26], // the original single-player start
-]);
+export const ARENAS = Object.freeze({
+  /** The original industrial yard. About 70 m across. */
+  warehouse: Object.freeze({
+    spawnY: 1.1,
+    /*
+     * Two of these used to be unplayable, and had been since the map was
+     * written: [0, -32] stood inside a shipping container, and [-8, -14] sat a
+     * quarter of a metre from an interior wall — closer than the player's own
+     * radius, so you spawned clipping into it and were shoved out. Neither is
+     * visible in any way except by standing there. `test/maps.mjs` now checks
+     * every point against the map's own footprints.
+     */
+    spawnPoints: Object.freeze([
+      [-30, -30], [30, -30], [-30, 30], [30, 30], [5.5, -32],
+      [-32, 0], [32, 0], [8, -14], [-9.8, -14], [22, 18], [-22, 18], [0, -22],
+      [0, 26], // the original single-player start
+    ]),
+    /*
+     * Axis-aligned bounds with generous margin. Used only as an absurdity
+     * check on reported positions — a client claiming to be 900 m away or
+     * 200 m in the air is rejected. Not a substitute for collision, which
+     * still happens in the browser.
+     */
+    bounds: Object.freeze({
+      minX: -60, maxX: 60,
+      minY: -12, maxY: 60,
+      minZ: -60, maxZ: 60,
+    }),
+  }),
 
-/** Eye/body height a spawned player stands at. Matches Level.playerSpawn.y. */
-export const SPAWN_Y = 1.1;
-
-/**
- * Axis-aligned bounds of the playable arena, with generous margin.
- *
- * Used only as an absurdity check on reported positions — a client claiming to
- * be 900 m away or 200 m in the air is rejected. It is not a substitute for
- * collision, which still happens in the browser.
- */
-export const ARENA_BOUNDS = Object.freeze({
-  minX: -60, maxX: 60,
-  minY: -12, maxY: 60,
-  minZ: -60, maxZ: 60,
+  /**
+   * OUTPOST — a sandstone trading post, 50 m across.
+   *
+   * Spawns hug the compound wall and the four gateways, well clear of the
+   * market square in the middle: the whole map funnels inward, so putting
+   * anybody down near the centre would be dropping them into the fight rather
+   * than near it.
+   */
+  outpost: Object.freeze({
+    spawnY: 1.1,
+    /*
+     * All twelve sit in the open CROSS between the four corner blocks, never
+     * in a corner. The blocks span 10.5 to 21.5 on both axes, so anything with
+     * both coordinates in that band is inside a building — which is exactly
+     * what the first set of points did, putting players in a wall at ground
+     * level. `test/maps.mjs` now checks every spawn against the map's own
+     * footprints for this reason.
+     */
+    spawnPoints: Object.freeze([
+      [0, -21], [0, 21], [-21, 0], [21, 0],
+      [-7, -21], [7, -21], [-7, 21], [7, 21],
+      [-21, -7], [-21, 7], [21, -7], [21, 7],
+    ]),
+    bounds: Object.freeze({
+      minX: -44, maxX: 44,
+      minY: -12, maxY: 50,
+      minZ: -44, maxZ: 44,
+    }),
+  }),
 });
 
-export function isInsideArena(x, y, z) {
-  const b = ARENA_BOUNDS;
+/** Every map id, in menu order. */
+export const MAP_IDS = Object.freeze(Object.keys(ARENAS));
+
+export function isValidMapId(id) {
+  return typeof id === 'string' && Object.prototype.hasOwnProperty.call(ARENAS, id);
+}
+
+/**
+ * The arena for a map id, falling back rather than throwing.
+ *
+ * An unknown id reaching here means a client asked for a map this server does
+ * not have — an old build, or a hand-edited message. Falling back puts them
+ * somewhere real; throwing would take the whole room down with them.
+ */
+export function arenaFor(mapId) {
+  return ARENAS[mapId] ?? ARENAS[DEFAULT_MAP_ID];
+}
+
+export function isInsideArena(x, y, z, mapId = DEFAULT_MAP_ID) {
+  const b = arenaFor(mapId).bounds;
   return x >= b.minX && x <= b.maxX
     && y >= b.minY && y <= b.maxY
     && z >= b.minZ && z <= b.maxZ;
@@ -54,18 +120,23 @@ export function isInsideArena(x, y, z) {
  * Pick the spawn point furthest from every living player.
  *
  * @param {Array<{x:number,z:number,alive:boolean}>} occupied
- * @param {() => number} rand  injected so the server stays testable
+ * @param {() => number} rand   injected so the server stays testable
+ * @param {string} mapId
  */
-export function pickSpawn(occupied, rand = Math.random) {
+export function pickSpawn(occupied, rand = Math.random, mapId = DEFAULT_MAP_ID) {
+  const arena = arenaFor(mapId);
+  const points = arena.spawnPoints;
+  const y = arena.spawnY;
+
   const living = occupied.filter((p) => p.alive);
   if (!living.length) {
-    const [x, z] = SPAWN_POINTS[Math.floor(rand() * SPAWN_POINTS.length)];
-    return { x, y: SPAWN_Y, z };
+    const [x, z] = points[Math.floor(rand() * points.length)];
+    return { x, y, z };
   }
 
   let best = null;
   let bestScore = -Infinity;
-  for (const [x, z] of SPAWN_POINTS) {
+  for (const [x, z] of points) {
     let nearest = Infinity;
     for (const p of living) {
       const d = Math.hypot(p.x - x, p.z - z);
@@ -75,7 +146,7 @@ export function pickSpawn(occupied, rand = Math.random) {
     const score = nearest + rand() * 2.0;
     if (score > bestScore) {
       bestScore = score;
-      best = { x, y: SPAWN_Y, z };
+      best = { x, y, z };
     }
   }
   return best;

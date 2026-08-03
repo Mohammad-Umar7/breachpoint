@@ -55,7 +55,9 @@ export const INPUT_HZ = 30;
 
 export const MSG = Object.freeze({
   // ---- client -> server ----
-  JOIN: 'j',      // { n: name, r: room|null, q: quickMatch?, v: PROTOCOL_VERSION }
+  // `m` is the map the client WANTS. A room that already exists keeps its
+  // own — see WELCOME's `mp`, which is the one that counts.
+  JOIN: 'j',      // { n, r: room|null, q: quickMatch?, m: mapId, v: PROTOCOL_VERSION }
   INPUT: 'i',     // { q: seq, p: [x,y,z], y: yaw, a: pitch, f: flagBits, w: weaponId }
   SHOT: 's',      // { q: seq, o: [x,y,z], d: [x,y,z], w: weaponId, h: [hits] }
   RESPAWN: 'r',   // {}
@@ -75,7 +77,10 @@ export const MSG = Object.freeze({
   NAME: 'm',      // { n: name }
 
   // ---- server -> client ----
-  WELCOME: 'W',   // { id, r: room, you: {...}, ps: [players], mt: matchState, sp: [x,y,z] }
+  // `mp` is the ROOM's map, and is authoritative. Joining a friend's code
+  // means playing their map, so the client may have to rebuild the world it
+  // had already built for the one it picked.
+  WELCOME: 'W',   // { id, r, you, ps, mt, sp: [x,y,z], mp: mapId }
   // NOTE `ts`, not `t`, for the timestamp. The envelope is built as
   // `{ t: type, ...payload }`, so a payload field called `t` silently
   // overwrites the message type and every snapshot goes out unlabelled —
