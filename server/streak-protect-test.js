@@ -44,7 +44,10 @@ function join(name, room) {
         case MSG.WELCOME: s.id = m.id; s.spawn = m.sp; resolve(s); break;
         case MSG.DENIED: reject(new Error(m.why || 'denied')); break;
         case MSG.HIT: s.hits.push(m); break;
-        case MSG.KILL: s.kills.push(m); break;
+        case MSG.KILL:
+          s.kills.push(m);
+          if (m.v === s.id) askToRespawn(s);
+          break;
         case MSG.SNAPSHOT: s.snapshot = m.p; break;
         case MSG.SPAWNPOINT: s.spawn = m.sp; break;
         case MSG.MATCH: if (m.sp) s.spawn = m.sp; break;
@@ -58,6 +61,24 @@ function join(name, room) {
 }
 const send = (s, o) => s.ws.send(JSON.stringify(o));
 
+/**
+ * Come back the way a real client does — by asking.
+ *
+ * The server's own timer is only a BACKSTOP now: the kill cam runs for as long
+ * as the fight did, so the client is the only side that knows when its death
+ * sequence has finished. A test that merely waits gets the backstop many
+ * seconds later, which reads as "respawning is broken".
+ */
+function askToRespawn(s) {
+  setTimeout(() => {
+    if (s.ws.readyState === 1) send(s, { t: MSG.RESPAWN });
+  }, MATCH_RULES.respawnDelaySec * 1000 + 150);
+}
+
+/** Long enough for askToRespawn to have fired and the server to have acted. */
+const waitRespawn = () => sleep(MATCH_RULES.respawnDelaySec * 1000 + 900);
+
+
 /** Keep both players standing where they are, so neither trips the move budget. */
 function hold(a, aPos, b, bPos) {
   send(a, { t: MSG.INPUT, q: ++a.seq, p: aPos, y: 0, a: 0, f: 0, w: 'rifle' });
@@ -70,15 +91,27 @@ const isProtected = (who, id) => {
   return !!row && (row[6] & FLAG.PROTECTED) !== 0;
 };
 
-/** Hold position until `id` is out of spawn protection, or give up. */
-async function waitUnprotected(a, aPos, b, bPos, id, label) {
-  const by = Date.now() + MATCH_RULES.spawnProtectSec * 1000 + 4000;
+const isDead = (who, id) => {
+  const row = rowFor(who, id);
+  return !row || (row[6] & FLAG.DEAD) !== 0;
+};
+
+/**
+ * Hold position until `id` is alive AND out of spawn protection.
+ *
+ * Both conditions, not just the second. A DEAD player is not flagged
+ * protected, so waiting on protection alone returns immediately for a corpse
+ * — and every shot fired afterwards lands on nothing, which reads as the
+ * streak counter being broken rather than as the target not being there yet.
+ */
+async function waitShootable(a, aPos, b, bPos, id, label) {
+  const by = Date.now() + MATCH_RULES.respawnBackstopSec * 1000 + 4000;
   while (Date.now() < by) {
     hold(a, aPos, b, bPos);
-    if (rowFor(a, id) && !isProtected(a, id)) return true;
+    if (!isDead(a, id) && !isProtected(a, id)) return true;
     await sleep(80);
   }
-  console.log(`      (gave up waiting for ${label} to leave spawn protection)`);
+  console.log(`      (gave up waiting for ${label} to become shootable)`);
   return false;
 }
 
@@ -115,7 +148,7 @@ async function main() {
   });
 
   // --- it expires on its own -----------------------------------------------
-  const cleared = await waitUnprotected(a, aPos, b, bPos, b.id, 'QUARRY');
+  const cleared = await waitShootable(a, aPos, b, bPos, b.id, 'QUARRY');
   check('protection expires by itself', cleared,
     cleared ? `within ${MATCH_RULES.spawnProtectSec}s` : 'still protected');
 
@@ -186,7 +219,7 @@ async function main() {
    * each time, and read the streak straight off the KILL messages.
    */
   const killOnce = async () => {
-    await waitUnprotected(a, aPos, b, bPos, b.id, 'QUARRY');
+    await waitShootable(a, aPos, b, bPos, b.id, 'QUARRY');
     const before = a.kills.length;
     for (let i = 0; i < 16 && a.kills.length === before; i++) {
       hold(a, aPos, b, bPos);
@@ -202,7 +235,7 @@ async function main() {
     const k = await killOnce();
     if (k) streaks.push(k.st);
     // Let the respawn happen before the next round.
-    await sleep(MATCH_RULES.respawnDelaySec * 1000 + 300);
+    await waitRespawn();
   }
 
   check('a streak counts up across kills',
@@ -217,7 +250,7 @@ async function main() {
   // --- dying ends the streak, and the killer is told ------------------------
   const streakBefore = streaks.at(-1) ?? 0;
   b.kills.length = 0;
-  await waitUnprotected(a, aPos, b, bPos, a.id, 'HUNTER');
+  await waitShootable(a, aPos, b, bPos, a.id, 'HUNTER');
   for (let i = 0; i < 20 && !b.kills.some((k) => k.v === a.id); i++) {
     hold(a, aPos, b, bPos);
     send(b, { t: MSG.SHOT, o: bPos, d: [0, 0, 1], w: 'rifle', h: [{ v: a.id, pt: 'head' }] });
@@ -229,7 +262,7 @@ async function main() {
     revenge ? `es=${revenge.es}, was on ${streakBefore}` : 'never died');
 
   // And the next kill by the person whose streak was broken starts at one.
-  await sleep(MATCH_RULES.respawnDelaySec * 1000 + 400);
+  await waitRespawn();
   a.kills.length = 0;
   const fresh = await killOnce();
   check('and the streak restarts from one after dying',

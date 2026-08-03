@@ -196,10 +196,20 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   check('scoreboard records the death', rowB?.[3] === 1, `deaths=${rowB?.[3]}`);
 
   // --- respawn -------------------------------------------------------------
+  /*
+   * Asked for, not waited for.
+   *
+   * The server's own timer is a BACKSTOP: the kill cam runs for as long as the
+   * fight did, so only the client knows when its death sequence has finished
+   * and it is the client that asks. Sitting and waiting here would get the
+   * backstop many seconds later and read as "respawning is broken".
+   */
   b.clear();
-  await sleep(MATCH_RULES.respawnDelaySec * 1000 + 500);
+  await sleep(MATCH_RULES.respawnDelaySec * 1000 + 200);
+  b.send(MSG.RESPAWN, {});
+  await sleep(400);
   const respawn = b.drain(MSG.MATCH).find((m) => Array.isArray(m.sp));
-  check('victim is respawned automatically', !!respawn,
+  check('victim respawns when the client asks', !!respawn,
     respawn ? `at ${JSON.stringify(respawn.sp)}` : 'never respawned');
   const bAlive = b.drain(MSG.SNAPSHOT).at(-1)?.p?.find((r) => r[0] === b.id);
   // Against the shared constant, not a literal — client and server both read
@@ -267,10 +277,14 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
    */
   const respawnBy = Date.now() + MATCH_RULES.respawnDelaySec * 1000
     + MATCH_RULES.spawnProtectSec * 1000 + 6000;
+  const askAt = Date.now() + MATCH_RULES.respawnDelaySec * 1000 + 200;
+  let asked = false;
   let bWhole = false;
   while (Date.now() < respawnBy && !bWhole) {
     a.input(a.pos);
     b.input(b.pos);
+    // The client asks; the server's timer is only a backstop. See above.
+    if (!asked && Date.now() >= askAt) { asked = true; b.send(MSG.RESPAWN, {}); }
     await sleep(100);
     const row = a.drain(MSG.SNAPSHOT).at(-1)?.p?.find((r) => r[0] === b.id);
     bWhole = !!row && (row[6] & DEAD_FLAG) === 0 && row[8] >= PLAYER_MAX_HEALTH

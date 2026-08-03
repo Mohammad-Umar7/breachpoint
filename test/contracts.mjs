@@ -256,6 +256,53 @@ check('every name imported from protocol.js is exported by it',
   badProtoImports.join(', ') || `${protoExports.size} exports, ${protoImporters.length} files checked`);
 
 /*
+ * And the other direction: every protocol name USED is one the file imported.
+ *
+ * The check above only proves the import list is honest. It says nothing about
+ * a file that reaches for `MATCH_RULES` without importing it — which is not a
+ * build error, because to a bundler that is simply a global that might exist
+ * at runtime. It does not, so the first frame to reach that line throws a
+ * ReferenceError and takes the rest of the update loop with it.
+ *
+ * That shipped. Game.js used MATCH_RULES.respawnCountdownSec in the death
+ * sequence without importing it, and the symptom was not an error message but
+ * a respawn countdown that never appeared and a player who came back eight
+ * seconds late — the exception was thrown past the end of a frame, where
+ * nothing was watching.
+ *
+ * Comment lines are stripped first: a name mentioned in prose is explaining
+ * the code, not calling it.
+ */
+const strip = (text) => text
+  .split(/\r?\n/)
+  .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
+  .join('\n');
+
+const undeclaredUses = [];
+for (const { file, text } of protoImporters) {
+  if (file.endsWith('protocol.js')) continue;
+  const imported = new Set();
+  for (const m of text.matchAll(/import\s*\{([^}]*)\}\s*from\s*'[^']*protocol\.js'/g)) {
+    for (const raw of m[1].split(',')) {
+      const bit = raw.trim().split(/\s+as\s+/);
+      imported.add((bit[1] ?? bit[0]).trim());
+    }
+  }
+  const code = strip(text);
+  for (const name of protoExports) {
+    if (imported.has(name)) continue;
+    // A bare identifier — not `foo.NAME`, not part of a longer word, and not
+    // a key being declared in an object literal.
+    if (new RegExp(`(?<![.\\w$])${name}\\b(?!\\s*:)`).test(code)) {
+      undeclaredUses.push(`${name} (${file})`);
+    }
+  }
+}
+check('every protocol name a file uses is one it imported',
+  undeclaredUses.length === 0,
+  undeclaredUses.join(', ') || `${protoImporters.length} files checked`);
+
+/*
  * Flag bits are the other half of the wire format, and unlike MSG they are
  * read with a bitwise AND rather than a switch — so a bit that exists on one
  * side and not the other produces no error at all, just behaviour that never

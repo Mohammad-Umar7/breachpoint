@@ -51,6 +51,8 @@ export class UIManager {
       respawnOverlay: id('respawn-overlay'),
       respawnCount: id('ro-count'),
       respawnKiller: id('ro-killer'),
+      killCamTag: id('killcam-tag'),
+      killCamName: id('killcam-name'),
       netWarning: id('net-warning'),
       netWarningText: id('net-warning-text'),
       score: id('hud-score'),
@@ -506,6 +508,20 @@ export class UIManager {
   }
 
   hideRespawn() { this.el.respawnOverlay.classList.add('hidden'); }
+
+  /**
+   * Say whose eyes we are looking through, or null to take the label away.
+   *
+   * A viewport that has silently become somebody else's reads as a bug — the
+   * camera having come loose, or the game having lost track of you. The label
+   * is the difference between "why am I over here" and "oh, that is how he
+   * got me".
+   */
+  setKillCam(name) {
+    if (!this.el.killCamTag) return;
+    this.el.killCamTag.hidden = !name;
+    if (name) this.el.killCamName.textContent = name;
+  }
 
   showNetWarning(text) {
     this.el.netWarningText.textContent = text;

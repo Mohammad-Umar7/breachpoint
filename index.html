@@ -129,6 +129,13 @@
         <div class="ro-hint">RESPAWNING</div>
       </div>
 
+      <!-- Shown only while the kill cam is replaying, so it is obvious the
+           view is somebody else's and not a camera glitch. -->
+      <div id="killcam-tag" hidden>
+        <span class="kc-label">KILLCAM</span>
+        <span class="kc-name" id="killcam-name"></span>
+      </div>
+
       <!-- Connection trouble, e.g. the server went away mid-match. -->
       <div id="net-warning" class="hidden"><span id="net-warning-text"></span></div>
 

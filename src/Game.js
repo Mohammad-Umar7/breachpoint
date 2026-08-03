@@ -48,8 +48,11 @@ import { Minimap } from './ui/Minimap.js';
 import { NetworkClient, inviteUrl, roomFromUrl } from './net/NetworkClient.js';
 import { RemotePlayers } from './net/RemotePlayers.js';
 import { RemoteAudio } from './net/RemoteAudio.js';
+import { KillCam } from './net/KillCam.js';
 import { wireNetwork } from './net/wireNetwork.js';
-import { FLAG, MATCH_STATE, DEFAULT_NAME, hasRealName } from './net/protocol.js';
+import {
+  FLAG, MATCH_STATE, MATCH_RULES, DEFAULT_NAME, hasRealName,
+} from './net/protocol.js';
 import { clamp, damp, randRange } from './core/MathUtils.js';
 
 export const GAME_STATE = Object.freeze({
@@ -211,6 +214,23 @@ export class Game {
           surfaceProbe: (x, y, z) => this._surfaceUnder(x, y, z),
         }),
       });
+
+      /*
+       * Replays the run-up to your death from the killer's eyes.
+       *
+       * Knows nothing about kills — it records the world and can put the
+       * camera in any player's head at any past moment. wireNetwork is what
+       * decides to point it at whoever just shot you. See net/KillCam.js.
+       */
+      this.killcam = new KillCam({ camera: this.camera });
+      /** Our own row for the recording; reused, because it is written at 30 Hz. */
+      this._selfRow = {
+        id: 0, x: 0, y: 0, z: 0, yaw: 0, pitch: 0,
+        flags: 0, weapon: 'rifle', hp: 100,
+      };
+      /** Death sequence: who did it, and whether the countdown is up yet. */
+      this._killedBy = null;
+      this._respawnShown = false;
 
       this.menus.setLoadingProgress(0.78, 'Arming player');
       this.lean = new LeanSystem(this.input, this.settings, this.physics);
@@ -897,7 +917,7 @@ export class Game {
 
     // 6. Everything else.
     this.pickups.update(dt, this.camera);
-    this.minimap?.update(dt, this.player, this._netSample);
+    this.minimap?.update(dt, this.player, this.killcam?.sample ?? this._netSample);
     this._updatePendingExplosions(dt);
     this.fx.update(dt, this.camera);
     this._updateScope(dt);
@@ -1136,14 +1156,82 @@ export class Game {
     });
 
     this._netSample = net.sample(performance.now(), this._netSample);
+
+    /*
+     * Feed the recording, then let any replay in progress rebuild the world.
+     *
+     * Our own row goes in separately because sample() never contains us — it
+     * refuses to interpolate the player it belongs to, which is right for
+     * normal play and exactly wrong for a kill cam, where the victim is the
+     * whole point of the shot. See net/KillCam.js.
+     */
+    if (this.killcam) {
+      const me = this._selfRow;
+      me.id = net.selfId;
+      me.x = this.player.position.x;
+      me.y = this.player.position.y;
+      me.z = this.player.position.z;
+      me.yaw = this.player.yaw;
+      me.pitch = this.player.pitch;
+      me.flags = this._playerFlags();
+      me.weapon = this.weapons.current?.def?.id ?? 'rifle';
+      me.hp = this.player.health;
+      this.killcam.record(this._netSample, net.selfId == null ? null : me, performance.now());
+      // Before sync, so a replay's world state is this frame's.
+      this.killcam.update(dt);
+    }
+
+    /*
+     * A replay is drawn by exactly the same code as live play — it only
+     * changes WHICH world state goes in. Nothing in RemotePlayers, RemoteAudio
+     * or the minimap knows a kill cam exists.
+     */
+    const replay = this.killcam?.sample ?? null;
     // net.players is already a Map of exactly what sync() wants. Rebuilding it
     // here was allocating an array and a Map on every single frame for nothing.
-    this.remotes.sync(this._netSample, net.players, dt, this.player.position);
+    this.remotes.sync(
+      replay ?? this._netSample, net.players, dt,
+      // Cull against wherever the camera actually is. During a replay that is
+      // the killer's head, half the arena from our own body.
+      replay ? this.camera.position : this.player.position,
+    );
 
-    // Dead: hold still and offer a respawn once the server's timer is up.
+    /*
+     * Dead. Two phases, and the switch between them is a single comparison.
+     *
+     * The kill cam runs first and owns the camera; the countdown appears only
+     * once there is `respawnCountdownSec` left, which is exactly when the
+     * replay finishes. Deriving the handover from the clock rather than from
+     * a callback means the two cannot get out of step — and a death with NO
+     * kill cam (you blew yourself up, or your killer had just joined) gets the
+     * same countdown, starting at the same number, for free.
+     */
     if (!this.player.alive && this._respawnAt) {
       const left = Math.max(0, this._respawnAt - performance.now());
-      this.ui.updateRespawn?.(Math.ceil(left / 1000));
+      /*
+       * BOTH conditions, and the first is the load-bearing one.
+       *
+       * The replay advances on accumulated frame time while this deadline is
+       * wall-clock, so on a machine dropping frames the replay runs long and
+       * the two drift apart. Gating on the clock alone put the countdown on
+       * screen most of a second before the kill cam had finished — the exact
+       * overlap the phases exist to avoid. Asking the kill cam whether it is
+       * done cannot drift, because it is the thing being waited for.
+       *
+       * The clock half still earns its place: with no kill cam at all the
+       * first condition is true immediately, and this is what keeps the
+       * counter starting at the same number either way.
+       */
+      const replayDone = !this.killcam?.active;
+      if (replayDone && left <= MATCH_RULES.respawnCountdownSec * 1000) {
+        if (!this._respawnShown) {
+          this._respawnShown = true;
+          this.ui.showRespawn?.(this._killedBy);
+        }
+        this.ui.updateRespawn?.(Math.ceil(left / 1000));
+      }
+      // The server enforces its own floor and refuses anything earlier, so
+      // asking is safe even if a replay somehow ran short.
       if (left <= 0) net.requestRespawn();
     }
   }
@@ -1156,6 +1244,10 @@ export class Game {
     this.weapons.remoteHitTest = null;
     this.weapons.onShotResolved = null;
     this._respawnAt = 0;
+    this._respawnShown = false;
+    this._killedBy = null;
+    this.killcam?.clear();
+    this.ui.setKillCam?.(null);
     this.ui.hideRespawn?.();
     this.ui.hideNetWarning?.();
   }

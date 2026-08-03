@@ -80,7 +80,16 @@ class Player {
     this.hp = PLAYER_MAX_HEALTH;
     this.armor = PLAYER_START_ARMOR;
     this.alive = false;          // false until the first spawn
+    /** Earliest a RESPAWN request is honoured. See MATCH_RULES.respawnDelaySec. */
     this.respawnAt = 0;
+    /**
+     * And when we put them back whether they ask or not.
+     *
+     * Separate from `respawnAt` because the kill cam is as long as the fight
+     * was, so the client decides when its own death sequence is finished. This
+     * is only the backstop for a client that never says anything.
+     */
+    this.forceRespawnAt = 0;
     this.kills = 0;
     this.deaths = 0;
     this.ping = 0;
@@ -294,6 +303,7 @@ class Room {
     player.alive = true;
     player.flags = 0;
     player.respawnAt = 0;
+    player.forceRespawnAt = 0;
     player.history.length = 0;
     /*
      * A moment of grace on arrival.
@@ -367,6 +377,7 @@ class Room {
     victim.alive = false;
     victim.deaths++;
     victim.respawnAt = now + MATCH_RULES.respawnDelaySec * 1000;
+    victim.forceRespawnAt = now + MATCH_RULES.respawnBackstopSec * 1000;
     // Protection does not survive the life it was granted to. Without this a
     // corpse stays flagged through the whole countdown, and the body draws its
     // shield while lying dead.
@@ -476,7 +487,10 @@ class Room {
       }
       if (windowElapsed) { p.msgCount = 0; p.inputCount = 0; }
       if (p.alive) p.pushHistory(now);
-      if (!p.alive && p.respawnAt && now >= p.respawnAt) this.spawn(p);
+      // The BACKSTOP, not the schedule — a client that is still watching its
+      // kill cam asks for itself, and one that has gone quiet gets put back
+      // here rather than lying dead in the room forever.
+      if (!p.alive && p.forceRespawnAt && now >= p.forceRespawnAt) this.spawn(p);
     }
     if (windowElapsed) this.rateWindowAt = now;
 

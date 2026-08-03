@@ -19,7 +19,8 @@ import * as THREE from 'three';
 
 import { getWeaponDef } from '../weapons/WeaponDefinitions.js';
 import {
-  MATCH_STATE, STREAK_TIERS, STREAK_ANNOUNCE_AT, streakName, multiKillName,
+  MATCH_STATE, MATCH_RULES, STREAK_TIERS, STREAK_ANNOUNCE_AT,
+  streakName, multiKillName,
 } from './protocol.js';
 import { NET_STATE } from './NetworkClient.js';
 import { clamp } from '../core/MathUtils.js';
@@ -86,6 +87,15 @@ export function wireNetwork(game) {
   };
 
   net.onRespawn = (pos) => {
+    // Give the camera back first. Everything below moves the player, and a
+    // replay still running would keep overwriting the camera every frame —
+    // you would respawn and still be looking out of somebody else's head.
+    game.killcam?.stop();
+    // A new life: whatever fights the last one contained are no longer the
+    // anchor for the next kill cam.
+    game.killcam?.forgetEngagements();
+    game.ui.setKillCam?.(null);
+    game._respawnShown = false;
     game.viewModel.holder.visible = true;      // gun back in hand
     game._pendingSpawn = pos;
     game._placePlayer(pos);
@@ -123,6 +133,13 @@ export function wireNetwork(game) {
       game.player.health = h.hp;
       if (h.armor !== null) game.player.armor = h.armor;
       game.stats.damageTaken += h.damage;
+
+      // When this fight started, so the kill cam can replay all of it rather
+      // than a fixed few seconds off the end. Only the first round from each
+      // attacker counts — see KillCam.markAggressor.
+      if (h.attacker !== game.net.selfId) {
+        game.killcam?.markAggressor(h.attacker, performance.now());
+      }
 
       // Point the damage arc at whoever shot us. Without a direction you
       // have no idea where the fire is coming from, which is the single most
@@ -184,6 +201,26 @@ export function wireNetwork(game) {
      */
     game.minimap?.noteShot(f.shooter);
 
+    // Remembered so the kill cam can play the shooting back at the moment it
+    // happened. Without it a replay shows somebody aiming at you in silence,
+    // which is not what they saw.
+    game.killcam?.note(f, performance.now());
+
+    drawGunfire(f);
+  };
+
+  /*
+   * Somebody's gunfire, drawn.
+   *
+   * Split out from onFire because the kill cam replays these events through
+   * the SAME function — a second implementation would be a second thing to
+   * keep in agreement, and the first time they diverged the replay would
+   * quietly stop matching what everyone actually saw.
+   *
+   * Deliberately excludes the minimap blip: a replayed shot must not put a
+   * live marker on the map.
+   */
+  function drawGunfire(f) {
     const def = getWeaponDef(f.weapon);
     if (!def || !Array.isArray(f.origin)) return;
 
@@ -202,7 +239,11 @@ export function wireNetwork(game) {
      * a dozen Web Audio nodes, built and torn down. Spending that on someone
      * firing from the far corner of a 120 m arena buys nothing audible.
      */
-    const distSq = game._tmpA.distanceToSquared(game.player.position);
+    // Measured from the CAMERA, not the body. They are the same thing to
+    // within an eye height in normal play, but during a kill cam the camera is
+    // in somebody else's head across the map, and the replayed shots have to
+    // be as loud there as they were to them.
+    const distSq = game._tmpA.distanceToSquared(game.camera.position);
 
     const dir = Array.isArray(f.direction)
       ? _dir.set(f.direction[0], f.direction[1], f.direction[2])
@@ -240,7 +281,17 @@ export function wireNetwork(game) {
     if (def.fireSound && distSq < FIRE_AUDIBLE_RANGE_SQ) {
       game.audio.play(def.fireSound, { position: from, volume: 0.85 });
     }
-  };
+  }
+
+  // The kill cam replays recorded gunfire through the very same function, so
+  // a replayed shot can never look different from the live one it is a copy of.
+  if (game.killcam) {
+    game.killcam.onEvent = drawGunfire;
+    // The label goes when the replay does, not when the player respawns —
+    // otherwise "KILLCAM" sits over the countdown at your own spawn, labelling
+    // a view that is once again your own.
+    game.killcam.onEnd = () => game.ui.setKillCam?.(null);
+  }
 
   net.onKill = (k) => {
     game.ui.addKillFeed?.(
@@ -309,8 +360,47 @@ export function wireNetwork(game) {
       game.stats.deaths++;
       game.player.alive = false;
       game.player.health = 0;
-      game._respawnAt = performance.now() + 2500;
-      game.ui.showRespawn?.(k.attackerName);
+      /*
+       * Watch it happen from the other end, THEN count down at your spawn.
+       *
+       * Only for a kill by somebody else — blowing yourself up with a grenade
+       * has no other point of view to offer, and replaying your own would be
+       * showing you the thing you just did from where you were standing.
+       *
+       * watch() returns 0 when there is nothing worth showing (the killer
+       * left, or joined a moment ago and was never recorded), and the death
+       * then plays out exactly as it did before the kill cam existed. It is
+       * deliberately allowed to fail quietly: a missing replay is a small
+       * disappointment, while one that seizes the camera and has nothing to
+       * point it at is a player stuck staring at nothing until they respawn.
+       */
+      const byAnother = !k.isSelfAttacker && k.attacker != null;
+      const replaySec = byAnother ? (game.killcam?.watch(k.attacker) ?? 0) : 0;
+      game.ui.setKillCam?.(replaySec > 0 ? k.attackerName : null);
+
+      /*
+       * How long we will be dead: the replay, then the countdown.
+       *
+       * The replay is as long as the fight was, so this varies — which is why
+       * the client asks the server to respawn it rather than the server
+       * working it out. The server enforces only a floor.
+       */
+      game._killedBy = k.attackerName;
+      game._respawnShown = false;
+      /*
+       * Never earlier than the server's own floor.
+       *
+       * With no kill cam — you blew yourself up, or your killer had only just
+       * joined — the sequence is the countdown alone, which is shorter than
+       * the minimum death the server enforces. Asking then gets refused, and
+       * the player sits watching a counter that has reached zero until the
+       * floor comes round. Taking the larger of the two makes the counter
+       * land on the first moment the request will actually be honoured.
+       */
+      game._respawnAt = performance.now() + 1000 * Math.max(
+        MATCH_RULES.respawnDelaySec,
+        Math.max(replaySec, 0) + MATCH_RULES.respawnCountdownSec,
+      );
       /*
        * Put the gun away while you are dead.
        *
@@ -377,6 +467,11 @@ export function wireNetwork(game) {
        * most needs the world to make sense.
        */
       game.remotes?.clear();
+      // A recording of a match we are no longer in must not survive into the
+      // next one, and a replay running when the socket dies would hold the
+      // camera in the head of somebody who is not there.
+      game.killcam?.clear();
+      game.ui.setKillCam?.(null);
       game.weapons.remoteHitTest = null;
       game.weapons.onShotResolved = null;
     }
@@ -424,5 +519,23 @@ export function wireNetwork(game) {
       weaponId,
       hits: claims.map((c) => ({ victimId: c.victimId, part: c.part })),
     });
+
+    /*
+     * Our own shots go into the recording too.
+     *
+     * The server does not relay them back to us — we drew our own flash
+     * already — so without this the kill cam shows the killer being shot at by
+     * an invisible gun. From their side we were firing back, and "what they
+     * saw" has to include it.
+     *
+     * A plain object, because the recording keeps a reference: reusing one
+     * would leave every recorded shot pointing at the most recent one.
+     */
+    game.killcam?.note({
+      shooter: net.selfId,
+      origin: [game._tmpA.x, game._tmpA.y, game._tmpA.z],
+      direction: [game._camForward.x, game._camForward.y, game._camForward.z],
+      weapon: weaponId,
+    }, performance.now());
   };
 }

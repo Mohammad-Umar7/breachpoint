@@ -15,7 +15,9 @@
  *   node server/selfdamage-test.js
  */
 import { WebSocket } from 'ws';
-import { MSG, PROTOCOL_VERSION, PLAYER_MAX_HEALTH } from '../src/net/protocol.js';
+import {
+  MSG, PROTOCOL_VERSION, PLAYER_MAX_HEALTH, MATCH_RULES,
+} from '../src/net/protocol.js';
 
 const URL = process.env.URL || 'ws://localhost:8787';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -38,7 +40,10 @@ function join(name, room) {
       else if (m.t === MSG.MATCH && m.sp) s.spawn = m.sp;
       else if (m.t === MSG.DENIED) reject(new Error(m.why || 'denied'));
       else if (m.t === MSG.HIT) s.hits.push(m);
-      else if (m.t === MSG.KILL) s.kills.push(m);
+      else if (m.t === MSG.KILL) {
+        s.kills.push(m);
+        if (m.v === s.id) askToRespawn(s);
+      }
       else if (m.t === MSG.SCORE) s.scores.push(m);
     });
     ws.on('error', reject);
@@ -47,6 +52,24 @@ function join(name, room) {
   });
 }
 const send = (s, o) => s.ws.send(JSON.stringify(o));
+
+/**
+ * Come back the way a real client does — by asking.
+ *
+ * The server's own timer is only a BACKSTOP now: the kill cam runs for as long
+ * as the fight did, so the client is the only side that knows when its death
+ * sequence has finished. A test that merely waits gets the backstop many
+ * seconds later, which reads as "respawning is broken".
+ */
+function askToRespawn(s) {
+  setTimeout(() => {
+    if (s.ws.readyState === 1) send(s, { t: MSG.RESPAWN });
+  }, MATCH_RULES.respawnDelaySec * 1000 + 150);
+}
+
+/** Long enough for askToRespawn to have fired and the server to have acted. */
+const waitRespawn = () => sleep(MATCH_RULES.respawnDelaySec * 1000 + 900);
+
 
 /** Claim a hit on yourself with the given weapon, from your own position. */
 function blowSelfUp(s, weaponId) {
@@ -153,7 +176,7 @@ async function main() {
   // Health is server-owned, so a pickup that only healed the client was undone
   // by the next authoritative update: packs did nothing at all.
   a.hits.length = 0;
-  await sleep(3600);                                   // wait out the respawn
+  await waitRespawn();                                 // wait out the respawn
   blowSelfUp(a, 'grenade');                            // take a chunk off first
   await sleep(500);
   const hurt = a.hits.filter((h) => h.v === a.id).at(-1);
@@ -201,7 +224,7 @@ async function main() {
    * your feet while moving still takes most of the bar.
    */
   a.hits.length = 0;
-  await sleep(3600);                                   // come back alive
+  await waitRespawn();                                 // come back alive
   const at = [...a.spawn];
   for (let i = 0; i < 40; i++) {
     at[0] += 0.15;                                     // ~7.5 m/s, inside the budget

@@ -439,6 +439,7 @@ src/
 │   ├── NetworkClient.js        Socket, interpolation, prediction
 │   ├── RemotePlayers.js        Other players' bodies, IK, lean, name tags
 │   ├── RemoteAudio.js          Other players' footsteps, landings, reloads
+│   ├── KillCam.js              Records the world; replays it from anyone's eyes
 │   ├── wireNetwork.js          Every multiplayer callback, wired to the game
 │   └── arena.js                Bounds and spawn points
 ├── fx/

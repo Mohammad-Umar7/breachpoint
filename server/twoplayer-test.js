@@ -13,6 +13,7 @@
 import { WebSocket } from 'ws';
 import {
   MSG, PROTOCOL_VERSION, PLAYER_MAX_HEALTH, PLAYER_START_ARMOR, MATCH_STATE,
+  MATCH_RULES,
 } from '../src/net/protocol.js';
 
 const URL = process.env.URL || 'ws://localhost:8787';
@@ -38,7 +39,10 @@ function join(name, room) {
         case MSG.WELCOME: s.id = m.id; s.spawn = m.sp; s.welcome = m; resolve(s); break;
         case MSG.DENIED: reject(new Error(m.why || 'denied')); break;
         case MSG.HIT: s.hits.push(m); break;
-        case MSG.KILL: s.kills.push(m); break;
+        case MSG.KILL:
+          s.kills.push(m);
+          if (m.v === s.id) askToRespawn(s);
+          break;
         case MSG.FIRE: s.fires.push(m); break;
         case MSG.JOINED: s.joined.push(m); break;
         case MSG.LEFT: s.left.push(m); break;
@@ -55,6 +59,24 @@ function join(name, room) {
   });
 }
 const send = (s, o) => s.ws.send(JSON.stringify(o));
+
+/**
+ * Come back the way a real client does — by asking.
+ *
+ * The server's own timer is only a BACKSTOP now: the kill cam runs for as long
+ * as the fight did, so the client is the only side that knows when its death
+ * sequence has finished. A test that merely waits gets the backstop many
+ * seconds later, which reads as "respawning is broken".
+ */
+function askToRespawn(s) {
+  setTimeout(() => {
+    if (s.ws.readyState === 1) send(s, { t: MSG.RESPAWN });
+  }, MATCH_RULES.respawnDelaySec * 1000 + 150);
+}
+
+/** Long enough for askToRespawn to have fired and the server to have acted. */
+const waitRespawn = () => sleep(MATCH_RULES.respawnDelaySec * 1000 + 900);
+
 
 /** Hold a position until the other side's snapshot agrees, then a little longer. */
 async function stand(who, other, pos, weapon = 'rifle', ms = 700) {

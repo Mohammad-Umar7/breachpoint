@@ -20,7 +20,7 @@
 import { WebSocket } from 'ws';
 import {
   MSG, PROTOCOL_VERSION, PLAYER_MAX_HEALTH, PLAYER_MAX_ARMOR,
-  PLAYER_START_ARMOR, ARMOR_ABSORB,
+  PLAYER_START_ARMOR, ARMOR_ABSORB, MATCH_RULES,
 } from '../src/net/protocol.js';
 
 const URL = process.env.URL || 'ws://localhost:8787';
@@ -41,7 +41,7 @@ function join(name, room) {
       if (m.t === MSG.WELCOME) { s.id = m.id; s.spawn = m.sp; resolve(s); }
       else if (m.t === MSG.DENIED) reject(new Error(m.why || 'denied'));
       else if (m.t === MSG.HIT) s.hits.push(m);
-      else if (m.t === MSG.KILL && m.v === s.id) s.died = true;
+      else if (m.t === MSG.KILL && m.v === s.id) { s.died = true; askToRespawn(s); }
       else if (m.t === MSG.SNAPSHOT) s.lastSnapshot = m.p;
     });
     ws.on('error', reject);
@@ -50,6 +50,23 @@ function join(name, room) {
   });
 }
 const send = (s, o) => s.ws.send(JSON.stringify(o));
+
+/**
+ * Come back the way a real client does — by asking.
+ *
+ * The server's own timer is only a BACKSTOP now, because the kill cam runs for
+ * as long as the fight did and the client is the only side that knows when its
+ * death sequence has finished. A test that just waits gets the backstop, many
+ * seconds later, and reads as "respawning is broken".
+ */
+function askToRespawn(s) {
+  setTimeout(() => {
+    if (s.ws.readyState === 1) send(s, { t: MSG.RESPAWN });
+  }, MATCH_RULES.respawnDelaySec * 1000 + 150);
+}
+
+/** Long enough for askToRespawn to have fired and the server to have acted. */
+const waitRespawn = () => sleep(MATCH_RULES.respawnDelaySec * 1000 + 900);
 
 async function main() {
   const room = 'ARMRS';
@@ -130,7 +147,7 @@ async function main() {
     bareOk === null ? 'no consecutive unarmoured pair to compare' : '');
 
   // --- a plate is claimed through the server ------------------------------
-  await sleep(3600);                    // wait out the respawn
+  await waitRespawn();                  // wait out the respawn
   b.hits.length = 0;
   send(b, { t: MSG.HEAL, a: 25, k: 'armor' });   // a partial top-up
   await sleep(400);
@@ -155,7 +172,7 @@ async function main() {
   b.hits.length = 0;
   for (let i = 0; i < 20 && !b.died; i++) { shoot(); await sleep(140); }
   check('sustained fire still kills through armour', b.died, b.died ? '' : 'survived 20 rounds');
-  await sleep(3600);
+  await waitRespawn();
   b.hits.length = 0; b.died = false;
   shoot();
   await sleep(400);
