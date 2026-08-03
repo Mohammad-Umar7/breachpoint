@@ -47,7 +47,7 @@ import { MenuManager } from './ui/MenuManager.js';
 import { NetworkClient, inviteUrl, roomFromUrl } from './net/NetworkClient.js';
 import { RemotePlayers } from './net/RemotePlayers.js';
 import { wireNetwork } from './net/wireNetwork.js';
-import { FLAG, MATCH_STATE } from './net/protocol.js';
+import { FLAG, MATCH_STATE, DEFAULT_NAME, hasRealName } from './net/protocol.js';
 import { clamp, damp, randRange } from './core/MathUtils.js';
 
 export const GAME_STATE = Object.freeze({
@@ -960,7 +960,16 @@ export class Game {
    * rejection would leave the UI stuck on "Connecting...".
    */
   async _connect({ name, room, quick = false }) {
-    if (name) this.settings.set('playerName', name);
+    /*
+     * Only a REAL choice is remembered.
+     *
+     * This used to save whatever it was handed, and quick match handed it the
+     * 'OPERATOR' placeholder as a fallback — so the first press of PLAY wrote
+     * 'OPERATOR' into the player's settings for good. Every later 'has this
+     * person picked a name?' check then said yes, the callsign prompt never
+     * appeared again, and they were stuck with the default permanently.
+     */
+    if (hasRealName(name)) this.settings.set('playerName', name);
     this._wireNet();
     // Free hosting sleeps, so a first connection can legitimately take up to a
     // minute. Surface that instead of leaving the player staring at
@@ -968,7 +977,7 @@ export class Game {
     this.net.onProgress = (msg) => this.menus.setLobbyStatus(msg);
     try {
       const welcome = await this.net.connect({
-        name: name || this.settings.get('playerName') || 'OPERATOR',
+        name: name || this.settings.get('playerName') || DEFAULT_NAME,
         room,
         quick,
       });

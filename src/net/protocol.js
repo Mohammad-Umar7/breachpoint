@@ -319,7 +319,24 @@ export function isValidRoomCode(code) {
 }
 
 /** Strip anything that would break layout or impersonate another player. */
-export function sanitizeName(raw, fallback = 'OPERATOR') {
+/**
+ * The name shown when somebody has not chosen one.
+ *
+ * Exported so it can be recognised as 'unset' rather than as a real choice.
+ * It used to be an inline literal, and the quick-match button passed it to
+ * connect() as a fallback — which SAVED it. From then on the player had a
+ * stored name of 'OPERATOR', every 'have you picked a name yet' check said
+ * yes, and they could never be asked again.
+ */
+export const DEFAULT_NAME = 'OPERATOR';
+
+/** True when this is a real choice rather than the placeholder. */
+export function hasRealName(name) {
+  return typeof name === 'string' && name.trim().length > 0
+    && name.trim().toUpperCase() !== DEFAULT_NAME;
+}
+
+export function sanitizeName(raw, fallback = DEFAULT_NAME) {
   if (typeof raw !== 'string') return fallback;
   const cleaned = raw
     // Control characters, then zero-width and bidi-override characters.

@@ -340,6 +340,49 @@ const phantom = namedInTree.filter((n) => {
 check('the README tree names no file that was deleted',
   phantom.length === 0, phantom.join(', ') || `${namedInTree.length} named`);
 
+console.log('\n--- the callsign ---');
+
+/*
+ * Nothing may persist the placeholder as if it were a chosen name.
+ *
+ * connect() saves whatever name it is handed, and quick match used to hand it
+ * `settings.get('playerName') || 'OPERATOR'`. So the first press of PLAY wrote
+ * the literal string OPERATOR into the player's settings for good: every later
+ * 'have they picked a name?' test said yes, the prompt never appeared again,
+ * and they were stuck with the default permanently with no way to change it.
+ */
+const gameSrc = read('src/Game.js');
+const menuSrc = read('src/ui/MenuManager.js');
+
+/** Source lines, minus anything that is only a comment. */
+const codeLines = (text) => text
+  .split(/\r?\n/)
+  .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l));
+
+// The GUARD is what matters, not the set call. Checking for the set call
+// alone matched correct code too, and failed it.
+const saveLines = codeLines(gameSrc)
+  .filter((l) => l.includes("settings.set(\'playerName\', name)"));
+const unguarded = saveLines.filter((l) => !l.includes('hasRealName'));
+check('the stored callsign is only ever a real choice',
+  saveLines.length > 0 && unguarded.length === 0,
+  unguarded.length ? 'Game.js saves `name` unguarded — use hasRealName()'
+    : saveLines.length ? 'guarded by hasRealName' : 'no save found — has it moved?');
+
+// Only in CODE — the same word inside a comment is explaining the bug, not
+// repeating it.
+const literals = [gameSrc, menuSrc]
+  .flatMap(codeLines)
+  .filter((l) => l.includes("\'OPERATOR\'")).length;
+check('the default name is a shared constant, not a literal', literals === 0,
+  literals ? `${literals} hardcoded 'OPERATOR' left — import DEFAULT_NAME`
+           : 'DEFAULT_NAME used');
+
+check('quick match asks when no real name has been chosen',
+  /hasRealName\(this\.settings\.get\('playerName'\)\)/.test(menuSrc),
+  'PLAY opens the callsign step');
+
+
 console.log('\n--- hygiene ---');
 
 // A dangling import is a crash on load, and the build only catches some.

@@ -17,7 +17,7 @@ import { DEFAULT_SETTINGS } from '../core/Settings.js';
 import { RETICLE_STYLES } from '../fx/ScopeRenderer.js';
 import { effectiveAimSpeed } from '../core/SensitivityManager.js';
 import { clamp } from '../core/MathUtils.js';
-import { sanitizeName } from '../net/protocol.js';
+import { sanitizeName, hasRealName, DEFAULT_NAME } from '../net/protocol.js';
 
 const SCREENS = [
   'screen-loading', 'screen-menu', 'screen-lobby', 'screen-loadout',
@@ -651,7 +651,8 @@ export class MenuManager {
     this.el.lobbyJoinBlock.classList.toggle('hidden', mode !== 'join');
     this.el.lobbyInviteBlock.classList.add('hidden');
     this.setLobbyStatus('');
-    this.el.inputName.value = this.settings.get('playerName') || '';
+    this.el.inputName.value = hasRealName(this.settings.get('playerName'))
+      ? this.settings.get('playerName') : '';
     if (prefillCode) this.el.inputRoom.value = prefillCode;
     this.showScreen('screen-lobby');
     // Focus whichever field the player still has to fill in.
@@ -682,7 +683,7 @@ export class MenuManager {
       this.setLobbyStatus('Finding a match…');
       this.el.lobbyGoBtn.disabled = true;
       try {
-        await this.onQuickMatch?.(name || 'OPERATOR', (t) => this.setLobbyStatus(t));
+        await this.onQuickMatch?.(name || DEFAULT_NAME, (t) => this.setLobbyStatus(t));
       } catch (err) {
         this.setLobbyStatus(err?.message ? String(err.message).slice(0, 60) : 'could not connect', 'error');
       } finally { this.el.lobbyGoBtn.disabled = false; }
@@ -732,12 +733,12 @@ export class MenuManager {
      * other person in the match sees that, with no hint that a name was ever
      * an option. Anybody who has set one is never asked again.
      */
-    if (!this.settings.get('playerName')) {
+    if (!hasRealName(this.settings.get('playerName'))) {
       this.openLobby('quick');
       return;
     }
 
-    const name = this.settings.get('playerName');
+    const name = this.settings.get('playerName') || DEFAULT_NAME;
     if (btn) btn.disabled = true;
     if (sub) sub.textContent = 'finding a server…';
 
@@ -769,7 +770,8 @@ export class MenuManager {
   refreshTags() {
     // Only overwrite while it is not being typed in, or the caret jumps.
     if (this.el.menuNameInput && document.activeElement !== this.el.menuNameInput) {
-      this.el.menuNameInput.value = this.settings.get('playerName') || '';
+      this.el.menuNameInput.value = hasRealName(this.settings.get('playerName'))
+      ? this.settings.get('playerName') : '';
     }
     if (this.el.menuPrimaryTag) this.el.menuPrimaryTag.textContent = shortName(this.settings.get('loadoutPrimary'));
     if (this.el.menuSecondaryTag) this.el.menuSecondaryTag.textContent = shortName(this.settings.get('loadoutSecondary'));
