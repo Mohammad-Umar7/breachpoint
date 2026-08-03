@@ -956,8 +956,8 @@ export class AssetManager {
       const cx = s / 2, cy = s / 2;
       const rim = ctx.createRadialGradient(cx, cy, s * 0.06, cx, cy, s * 0.46);
       rim.addColorStop(0, 'rgba(20,18,16,1)');
-      rim.addColorStop(0.32, 'rgba(46,42,38,0.85)');
-      rim.addColorStop(0.62, 'rgba(120,114,105,0.34)');
+      rim.addColorStop(0.32, 'rgba(46,42,38,0.6)');
+      rim.addColorStop(0.62, 'rgba(120,114,105,0.2)');
       rim.addColorStop(1, 'rgba(140,134,126,0)');
       ctx.fillStyle = rim;
       ctx.fillRect(0, 0, s, s);

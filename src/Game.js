@@ -60,6 +60,14 @@ export const GAME_STATE = Object.freeze({
 
 const ANISOTROPY = { low: 1, medium: 4, high: 8, ultra: 16 };
 
+/**
+ * How far out of an exploding object a blast's line-of-sight test begins.
+ *
+ * Large enough to clear a grenade (14 cm) or a barrel, small enough that a
+ * wall pressed against one still blocks it.
+ */
+const BLAST_SKIP = 0.35;
+
 
 export class Game {
   /** @param {HTMLCanvasElement} canvas */
@@ -481,7 +489,15 @@ export class Game {
     this._tmpB.copy(this.player.position);
     this._tmpB.y += 0.3;
     const pd = this._tmpB.distanceTo(pos);
-    const caughtInBlast = pd < radius && this.physics.hasLineOfSight(pos, this._tmpB);
+    /*
+     * BLAST_SKIP steps the sight test past whatever produced the blast.
+     *
+     * The ray starts at the centre of the exploding object, so it hit that
+     * object's own collider at distance zero and reported no line of sight to
+     * anybody — a grenade at your feet did nothing to you at all.
+     */
+    const caughtInBlast = pd < radius
+      && this.physics.hasLineOfSight(pos, this._tmpB, null, BLAST_SKIP);
     if (caughtInBlast) {
       const falloff = 1 - pd / radius;
       /*
@@ -531,7 +547,7 @@ export class Game {
         this._tmpB.copy(body.group.position);
         this._tmpB.y += 0.9;
         if (this._tmpB.distanceTo(pos) >= radius) continue;
-        if (!this.physics.hasLineOfSight(pos, this._tmpB)) continue;
+        if (!this.physics.hasLineOfSight(pos, this._tmpB, null, BLAST_SKIP)) continue;
         claims.push({ victimId: id, part: 'torso' });
       }
 

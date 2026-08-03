@@ -87,6 +87,7 @@ export class PhysicsWorld {
     this._q = { x: 0, y: 0, z: 0, w: 1 };
     this._ray = new RAPIER.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: 1 });
     this._tmpVec = new THREE.Vector3();
+    this._tmpStart = new THREE.Vector3();
   }
 
   _makeController(offset, cfg) {
@@ -378,13 +379,26 @@ export class PhysicsWorld {
    * Cheap boolean line-of-sight test against world geometry and props only, so
    * a blast is stopped by a wall but not by the people standing in it.
    */
-  hasLineOfSight(from, to, extraFilter = null) {
+  /**
+   * @param {number} [skipNear] metres to step the ray forward before testing.
+   *   A blast asks this question from INSIDE the thing that exploded, and a
+   *   collider you are already within must not count as blocking your view
+   *   out of it — a grenade reported no line of sight to the person standing
+   *   over it because the ray hit the grenade's own body at distance zero.
+   */
+  hasLineOfSight(from, to, extraFilter = null, skipNear = 0) {
     this._tmpVec.subVectors(to, from);
     const dist = this._tmpVec.length();
     if (dist < 0.05) return true;
     this._tmpVec.divideScalar(dist);
 
-    const hit = this.raycast(from, this._tmpVec, dist - 0.05, {
+    // Start a little way along the ray, past anything the origin sits inside.
+    const start = skipNear > 0 && dist > skipNear + 0.1
+      ? this._tmpStart.copy(from).addScaledVector(this._tmpVec, skipNear)
+      : from;
+    const span = skipNear > 0 && dist > skipNear + 0.1 ? dist - skipNear : dist;
+
+    const hit = this.raycast(start, this._tmpVec, span - 0.05, {
       filter: (tag) => {
         if (!tag) return false;
         if (tag.kind === TAG_KIND.WORLD || tag.kind === TAG_KIND.PROP || tag.kind === TAG_KIND.EXPLOSIVE) {

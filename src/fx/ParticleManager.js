@@ -460,7 +460,7 @@ export class ParticleManager {
           color: [1.0, 0.85, 0.45], gravity: -16, bounce: 0.25,
         });
         this._smokePuff(point, normal, Math.round(1 * d), 0.16, 0.2, 0xb8bcc2);
-        this.addDecal(point, normal, 'bullet', randRange(0.1, 0.16));
+        this.addDecal(point, normal, 'bullet', randRange(0.04, 0.065));
         break;
       }
       case SURFACE.WOOD: {
@@ -470,13 +470,13 @@ export class ParticleManager {
         });
         this._debrisBurst(point, normal, Math.round(7 * d), 0x8a5f30, [0.015, 0.05]);
         this._smokePuff(point, normal, Math.round(2 * d), 0.26, 0.45, 0x9a7a52);
-        this.addDecal(point, normal, 'bullet', randRange(0.13, 0.2));
+        this.addDecal(point, normal, 'bullet', randRange(0.045, 0.07));
         break;
       }
       case SURFACE.DIRT: {
         this._debrisBurst(point, normal, Math.round(8 * d), 0x6b5b45, [0.015, 0.045]);
         this._smokePuff(point, normal, Math.round(3 * d), 0.4, 0.6, 0x8a7a60);
-        this.addDecal(point, normal, 'bullet', randRange(0.16, 0.24));
+        this.addDecal(point, normal, 'bullet', randRange(0.06, 0.095));
         break;
       }
       case SURFACE.GLASS: {
@@ -486,7 +486,7 @@ export class ParticleManager {
           color: [0.78, 0.94, 1.0], gravity: -20, bounce: 0.15, spreadCos: 0.4,
         });
         this._debrisBurst(point, normal, Math.round(9 * d), 0xbfe0ea, [0.012, 0.04], 8, 0.35);
-        this.addDecal(point, normal, 'bullet', randRange(0.14, 0.22));
+        this.addDecal(point, normal, 'bullet', randRange(0.05, 0.075));
         break;
       }
       case SURFACE.FLESH: {
@@ -505,7 +505,7 @@ export class ParticleManager {
         });
         this._debrisBurst(point, normal, Math.round(6 * d), 0x8b8f95, [0.012, 0.04]);
         this._smokePuff(point, normal, Math.round(3 * d), 0.34, 0.55, 0xa8adb3);
-        this.addDecal(point, normal, 'bullet', randRange(0.12, 0.2));
+        this.addDecal(point, normal, 'bullet', randRange(0.045, 0.07));
         break;
       }
     }
@@ -668,7 +668,16 @@ export class ParticleManager {
    * Add a decal quad on a surface.
    * @param {'bullet'|'blood'} type
    */
-  addDecal(point, normal, type = 'bullet', size = 0.16) {
+  /**
+   * Stamp a mark on a surface.
+   *
+   * `size` is the WHOLE sprite across, and the sprite is mostly soft halo
+   * around a small dark core. These used to be 10-24 cm each, so every round
+   * left a dark smudge the size of a saucer; a magazine of automatic fire
+   * covered the ground and the crates in overlapping black blobs. A real
+   * rifle strike marks a few centimetres.
+   */
+  addDecal(point, normal, type = 'bullet', size = 0.06) {
     const isBlood = type === 'blood';
     const list = isBlood ? this.bloods : this.decals;
     const mesh = isBlood ? this.bloodMesh : this.decalMesh;

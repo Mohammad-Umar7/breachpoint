@@ -908,9 +908,19 @@ export class WeaponSystem {
 
       const t = g.body.translation();
       this._tmp.set(t.x, t.y, t.z);
-      this.onGrenadeExplode?.(this._tmp.clone(), g.def);
 
+      /*
+       * Take the grenade OUT of the world before it goes off.
+       *
+       * The blast does a line-of-sight test from its own centre, and the
+       * grenade's collider was still there to be hit — at distance zero, by a
+       * ray starting inside it. So a frag at your feet reported no line of
+       * sight to you and did nothing at all: the one weapon that could not
+       * hurt the person holding it.
+       */
       this.physics.removeBody(g.body);
+
+      this.onGrenadeExplode?.(this._tmp.clone(), g.def);
       this.fx.scene.remove(g.mesh);
       this._disposeGrenadeMesh(g.mesh);
       this.grenades.splice(i, 1);
