@@ -673,7 +673,19 @@ export const HAZARD_DEFS = [
     // Matches Level.js, which is where the barrels themselves are configured.
     damage: 95, headMul: 1, limbMul: 1, armorPen: 0.8,
     range: 60,
-    falloffStart: 0, falloffEnd: 7.5, falloffMinScale: 0,
+    /*
+     * A barrel is dangerous at the range you actually shoot one from.
+     *
+     * This used to be the frag's curve — full damage at the centre falling
+     * linearly to ZERO at 7.5 m. That works for a grenade, which you drop at
+     * your own feet, and not at all for a barrel, which nobody stands next to
+     * while shooting it. At a normal 6-7 m it paid 6-19 damage, of which
+     * armour ate 60%, so an exploding barrel cost you two to eight health and
+     * felt like nothing at all.
+     *
+     * Full damage inside 2.5 m, still 33 at the very edge.
+     */
+    falloffStart: 2.5, falloffEnd: 7.5, falloffMinScale: 0.35,
     blastRadius: 7.5,
 
     // Standing next to one that goes off is very much your own problem.

@@ -634,11 +634,21 @@ export class MenuManager {
    * @param {'create'|'join'} mode
    * @param {string} [prefillCode] room code lifted from an invite link
    */
+  /**
+   * @param mode 'create' | 'join' | 'quick'
+   *
+   * 'quick' is the callsign step in front of PLAY, shown only to somebody who
+   * has never set one. The name field used to live exclusively on the
+   * create/join screens, so anyone who pressed PLAY — the button most people
+   * press — went into the match as OPERATOR with nowhere obvious to change it.
+   */
   openLobby(mode, prefillCode = '') {
     this.lobbyMode = mode;
-    this.el.lobbyTitle.textContent = mode === 'create' ? 'CREATE MATCH' : 'JOIN MATCH';
-    this.el.lobbyGoBtn.textContent = mode === 'create' ? 'CREATE' : 'JOIN';
-    this.el.lobbyJoinBlock.classList.toggle('hidden', mode === 'create');
+    this.el.lobbyTitle.textContent = mode === 'create' ? 'CREATE MATCH'
+      : mode === 'quick' ? 'YOUR CALLSIGN' : 'JOIN MATCH';
+    this.el.lobbyGoBtn.textContent = mode === 'create' ? 'CREATE'
+      : mode === 'quick' ? 'PLAY' : 'JOIN';
+    this.el.lobbyJoinBlock.classList.toggle('hidden', mode !== 'join');
     this.el.lobbyInviteBlock.classList.add('hidden');
     this.setLobbyStatus('');
     this.el.inputName.value = this.settings.get('playerName') || '';
@@ -667,6 +677,17 @@ export class MenuManager {
     const name = this.el.inputName.value.trim();
     if (name) this.settings.set('playerName', name);
     this.refreshTags();
+
+    if (this.lobbyMode === 'quick') {
+      this.setLobbyStatus('Finding a match…');
+      this.el.lobbyGoBtn.disabled = true;
+      try {
+        await this.onQuickMatch?.(name || 'OPERATOR', (t) => this.setLobbyStatus(t));
+      } catch (err) {
+        this.setLobbyStatus(err?.message ? String(err.message).slice(0, 60) : 'could not connect', 'error');
+      } finally { this.el.lobbyGoBtn.disabled = false; }
+      return;
+    }
 
     if (this.lobbyMode === 'join') {
       const code = this.el.inputRoom.value.trim().toUpperCase();
@@ -704,7 +725,19 @@ export class MenuManager {
       if (sub) sub.textContent = 'quick match';
     };
 
-    const name = this.settings.get('playerName') || 'OPERATOR';
+    /*
+     * Ask for a callsign once, if there is not one yet.
+     *
+     * Otherwise a first-time player goes straight in as OPERATOR and every
+     * other person in the match sees that, with no hint that a name was ever
+     * an option. Anybody who has set one is never asked again.
+     */
+    if (!this.settings.get('playerName')) {
+      this.openLobby('quick');
+      return;
+    }
+
+    const name = this.settings.get('playerName');
     if (btn) btn.disabled = true;
     if (sub) sub.textContent = 'finding a server…';
 

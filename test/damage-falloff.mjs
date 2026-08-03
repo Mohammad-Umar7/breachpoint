@@ -15,7 +15,7 @@
  *   node test/damage-falloff.mjs
  */
 import { damageFor } from '../src/net/protocol.js';
-import { WEAPON_DEFS } from '../src/weapons/WeaponDefinitions.js';
+import { WEAPON_DEFS, HAZARD_DEFS } from '../src/weapons/WeaponDefinitions.js';
 import { PLAYER_MAX_HEALTH } from '../src/net/protocol.js';
 
 let passed = 0, failed = 0;
@@ -99,6 +99,32 @@ const broken = WEAPON_DEFS.filter((w) => {
 });
 check('every weapon has a sane falloff curve', broken.length === 0,
   broken.map((w) => w.id).join(', ') || `${WEAPON_DEFS.length} checked`);
+
+// --- hazards ---------------------------------------------------------------
+console.log('');
+/*
+ * An exploding barrel has to hurt at the range you shoot one from.
+ *
+ * It used to carry the frag's curve — full damage at the centre, falling
+ * linearly to ZERO at 7.5 m. That is right for a grenade you drop at your own
+ * feet and wrong for a barrel, which nobody stands beside while shooting it.
+ * At a normal 6-7 m it paid 6-19 damage, and armour ate 60% of that, so an
+ * exploding barrel took two to eight health and read as doing nothing at all.
+ */
+const barrel = HAZARD_DEFS.find((h) => h.id === 'barrel');
+check('a barrel exists as its own hazard', !!barrel);
+if (barrel) {
+  const at = (d) => damageFor(barrel, 'torso', d);
+  check('a barrel is lethal up close', at(1) >= barrel.damage * 0.9,
+    `${at(1).toFixed(0)} at 1 m`);
+  check('and still hurts at the range you actually shoot one', at(6) >= 40,
+    `${at(6).toFixed(0)} at 6 m — it paid 19 before`);
+  check('and never falls to nothing inside its own radius', at(7.4) > 20,
+    `${at(7.4).toFixed(0)} at the edge`);
+  check('but still falls off with distance', at(1) > at(6) && at(6) > at(7.4),
+    `${at(1).toFixed(0)} -> ${at(6).toFixed(0)} -> ${at(7.4).toFixed(0)}`);
+}
+
 
 console.log(`\n${passed}/${passed + failed} passed`);
 process.exit(failed ? 1 : 0);
