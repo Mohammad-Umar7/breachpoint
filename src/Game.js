@@ -68,6 +68,21 @@ const ANISOTROPY = { low: 1, medium: 4, high: 8, ultra: 16 };
  */
 const BLAST_SKIP = 0.35;
 
+/**
+ * A barrel that has already gone off does not block anything.
+ *
+ * Disabling a Rapier body does NOT take its collider out of raycasts, so an
+ * exploding barrel was stopping its own blast: the sight test starts at the
+ * barrel's centre and hit that same collider at distance zero. BLAST_SKIP
+ * alone cannot cover it — a barrel is 0.55 m half-height, so stepping 0.35 m
+ * along the ray is still inside it, and a skip big enough to clear a barrel
+ * would let blasts see through thin walls.
+ *
+ * This is also right for chain reactions: the barrel that set this one off is
+ * invisible and gone, and should not shield anybody.
+ */
+const notAlreadyBlownUp = (tag) => !(tag.prop && tag.prop.exploded);
+
 
 export class Game {
   /** @param {HTMLCanvasElement} canvas */
@@ -497,7 +512,7 @@ export class Game {
      * anybody — a grenade at your feet did nothing to you at all.
      */
     const caughtInBlast = pd < radius
-      && this.physics.hasLineOfSight(pos, this._tmpB, null, BLAST_SKIP);
+      && this.physics.hasLineOfSight(pos, this._tmpB, notAlreadyBlownUp, BLAST_SKIP);
     if (caughtInBlast) {
       const falloff = 1 - pd / radius;
       /*
@@ -547,7 +562,7 @@ export class Game {
         this._tmpB.copy(body.group.position);
         this._tmpB.y += 0.9;
         if (this._tmpB.distanceTo(pos) >= radius) continue;
-        if (!this.physics.hasLineOfSight(pos, this._tmpB, null, BLAST_SKIP)) continue;
+        if (!this.physics.hasLineOfSight(pos, this._tmpB, notAlreadyBlownUp, BLAST_SKIP)) continue;
         claims.push({ victimId: id, part: 'torso' });
       }
 
