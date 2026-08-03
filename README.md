@@ -65,6 +65,10 @@ flag on a stand at its base:
   about teams, never about who was carrying it.
 - A flag nobody touches goes home after 30 seconds, so one punted into a corner
   cannot freeze the match.
+- **`F` drops the flag on purpose**, for handing it to someone in better shape
+  to run it. The dropper is ignored by it for two seconds — otherwise you are
+  standing on it and it comes straight back — while anyone else can take it
+  the same instant, which is what makes it a pass rather than a fumble.
 
 Friendly fire is off; a base is marked by a ring, a plinth and a light column
 you can see from across the map, and both flags are drawn on the minimap —
@@ -91,6 +95,7 @@ capturing, dying with the flag, a teammate recovering it, and the standoff.
 | Mouse wheel | Cycle weapons — **zoom** while scoped |
 | `X` | Previous weapon |
 | `V` / `G` | Quick melee / quick grenade |
+| `F` | **Drop the flag** you are carrying (Capture the Flag) |
 | `B` | Toggle scope magnification |
 | `T` | Inspect weapon |
 | `Esc` / `P` | Pause |

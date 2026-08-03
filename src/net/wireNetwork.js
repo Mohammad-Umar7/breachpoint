@@ -73,7 +73,7 @@ export function wireNetwork(game) {
      */
     game.ui.setMode?.(modeId);
     game.flagObjects?.apply(net.flags);
-    game.ui.setFlags?.(net.flags, net.teamScores, null);
+    refreshCtf();
 
     // The server owns spawn points, so adopt the one it gave us rather than
     // the single-player start.
@@ -465,7 +465,28 @@ export function wireNetwork(game) {
     }
   };
 
-  net.onScore = (roster) => game.ui.setScoreboard?.(roster, net.selfId, net.match);
+  /**
+   * Push the whole CTF strip — scores, flags, and which side is ours.
+   *
+   * One function called from three places on purpose. The team score and the
+   * flag states arrive in DIFFERENT messages (SCORE and FLAG), and a capture
+   * sends both: the flag first, then the score. Refreshing only from the flag
+   * event meant the bar was drawn with the score as it was a moment BEFORE the
+   * capture, and it stayed that way until the next flag event — which is a
+   * capture that visibly does not count.
+   */
+  const refreshCtf = () => {
+    game.ui.setFlags?.(
+      net.flags, net.teamScores,
+      game.flagObjects?.carriedBy(net.selfId) ?? null,
+      net.team,
+    );
+  };
+
+  net.onScore = (roster) => {
+    game.ui.setScoreboard?.(roster, net.selfId, net.match);
+    refreshCtf();
+  };
   net.onMatch = (match) => {
     // The mode arrives with the match, and it decides what the HUD even has
     // on it — so it is applied before anything is drawn into that HUD.
@@ -489,7 +510,7 @@ export function wireNetwork(game) {
    */
   net.onFlags = ({ flags, event, by, team }) => {
     game.flagObjects?.apply(flags);
-    game.ui.setFlags?.(flags, net.teamScores, game.flagObjects?.carriedBy(net.selfId) ?? null);
+    refreshCtf();
     if (!event) return;
 
     const who = by === net.selfId ? 'YOU' : (net.nameOf(by) || 'SOMEONE');

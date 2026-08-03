@@ -31,12 +31,24 @@ const check = (label, ok, detail = '') => {
   else { failed++; console.log(`FAIL  ${label}${detail ? `  — ${detail}` : ''}`); }
 };
 
+/**
+ * Every client that has joined, so none of them can go quiet.
+ *
+ * The server times out a socket that stops sending input, and `walk` only
+ * keeps the clients it was handed alive. Every time this test grew, some step
+ * forgot one of them — a player was silently removed from the room and the
+ * checks after it failed for a reason that had nothing to do with the rule
+ * being tested. A heartbeat over ALL of them makes that impossible.
+ */
+const live = [];
+
 function join(name, room) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(URL);
     const s = {
       ws, name, id: null, team: TEAM.NONE, spawn: null, seq: 0,
-      at: null, hits: [], kills: [], flagEvents: [], flags: [], scores: [],
+      at: null, dead: false,
+      hits: [], kills: [], flagEvents: [], flags: [], scores: [],
       matches: [], snapshot: null,
     };
     ws.on('message', (raw) => {
@@ -46,6 +58,7 @@ function join(name, room) {
           s.id = m.id; s.spawn = m.sp; s.team = m.you?.tm ?? TEAM.NONE;
           s.at = [m.sp[0], m.sp[1], m.sp[2]];
           s.flags = m.fl ?? [];
+          live.push(s);
           resolve(s);
           break;
         case MSG.DENIED: reject(new Error(m.why || 'denied')); break;
@@ -53,6 +66,7 @@ function join(name, room) {
         case MSG.KILL:
           s.kills.push(m);
           if (m.v === s.id) {
+            s.dead = true;
             setTimeout(() => { if (s.ws.readyState === 1) send(s, { t: MSG.RESPAWN }); },
               MATCH_RULES.respawnDelaySec * 1000 + 150);
           }
@@ -88,6 +102,7 @@ const input = (s) => send(s, {
  * whole time, because a client that goes quiet is timed out.
  */
 async function walk(who, others, [tx, tz], steps = 400) {
+  resync(who);
   for (let i = 0; i < steps; i++) {
     const dx = tx - who.at[0], dz = tz - who.at[2];
     const d = Math.hypot(dx, dz);
@@ -114,10 +129,47 @@ async function walk(who, others, [tx, tz], steps = 400) {
  */
 async function reborn(who, others) {
   await sleep(MATCH_RULES.respawnDelaySec * 1000 + 700);
+  /*
+   * Claim the reserved spawn first, THEN read back.
+   *
+   * Resyncing straight away reads a snapshot that can still hold the position
+   * we died at — which, when we died on a flag, put us back on top of it and
+   * had us pick up a flag a teammate was walking over to collect.
+   */
+  who.dead = false;
   who.at = [who.spawn[0], who.spawn[1], who.spawn[2]];
+  input(who);
+  await sleep(250);
+  resync(who);
   input(who);
   for (const o of others) input(o);
   await sleep(200);
+}
+
+/**
+ * Adopt the server's idea of where we are.
+ *
+ * The server clamps movement it considers too fast and simply ignores the
+ * rest, so a client that walks a long way can end up believing it is somewhere
+ * the server never put it. From then on every input reads as a teleport and is
+ * refused, and the player stands still while the test walks a ghost around —
+ * which is exactly how the pass check failed, with the client at 5,5 and the
+ * server holding them at 18,18.
+ */
+function resync(who) {
+  const row = (who.snapshot ?? []).find((r) => r[0] === who.id);
+  if (!row) return;
+  /*
+   * Only when the two have genuinely come apart.
+   *
+   * A snapshot is up to a tick old, so adopting it unconditionally drags a
+   * client backwards a few centimetres every time — and worse, a snapshot
+   * taken just before a respawn puts a player back where they died. Three
+   * metres is far larger than any honest lag and far smaller than the drift
+   * that breaks a walk.
+   */
+  if (Math.hypot(row[1] - who.at[0], row[3] - who.at[2]) < 3) return;
+  who.at = [row[1], row[2], row[3]];
 }
 
 const flagOf = (s, team) => s.flags.find((f) => f.t === team) ?? null;
@@ -154,11 +206,32 @@ async function soloWarmup() {
     flagOf(solo, enemy)?.s === FLAG_STATE.CARRIED, flagOf(solo, enemy)?.s);
 
   solo.ws.close();
+  live.length = 0;
   await sleep(200);
 }
 
 async function main() {
   await soloWarmup();
+
+  // Nobody idles out. Reports the position each client already believes it is
+  // at, so it never fights `walk` — it just stops the socket going silent.
+  const heartbeat = setInterval(() => {
+    for (const s of live) {
+      /*
+       * The dead are skipped, and that is not an optimisation.
+       *
+       * A killed client's `at` is still the spot it fell — which, for a flag
+       * carrier, is exactly where the flag now lies. Beating that position out
+       * while dead had the server put the player back there on respawn, so
+       * they picked their own dropped flag straight back up before the
+       * teammate walking over to collect it had covered half the distance.
+       * The check that failed said "a teammate picks it up"; the reason was a
+       * corpse that would not stop talking.
+       */
+      if (s.dead || s.ws.readyState !== 1 || !s.at) continue;
+      input(s);
+    }
+  }, 250);
 
   const room = 'CTFAA';
   const a = await join('ALPHA', room);
@@ -326,6 +399,7 @@ async function main() {
   where = flagOf(b, enemyOf(a));
   // Same again: get CHARLIE off the flag so BRAVO's return is BRAVO's doing.
   await reborn(c, [a, b]);
+  await walk(c, [a, b], [ownBase[0], ownBase[1]]);
 
   // --- the owning team returns its own dropped flag -------------------------
   a.flagEvents.length = 0;
@@ -366,7 +440,90 @@ async function main() {
     flagOf(a, enemyOf(a))?.s === FLAG_STATE.CARRIED,
     flagOf(a, enemyOf(a))?.s);
 
-  a.ws.close(); b.ws.close();
+  /*
+   * --- dropping it on purpose ----------------------------------------------
+   *
+   * ALPHA is still holding BRAVO's flag from the standoff above. Pressing the
+   * key has to put it down where they stand — and, crucially, LEAVE it there.
+   * The pick-up rule is proximity-based, so without a lockout on the player
+   * who asked, the flag they just dropped is handed straight back on the next
+   * tick and the key appears to do nothing at all.
+   */
+  /*
+   * Walk out to open ground first.
+   *
+   * ALPHA finished the standoff standing on their own base, where BRAVO was
+   * waiting — so the flag was dropped at the feet of one of its owners and
+   * went straight home. Correct behaviour, useless test: it proved the return
+   * rule for a third time and never exercised the drop.
+   */
+  await walk(a, [b, c], [0, 0]);
+  // CHARLIE waits a few metres off — outside the touch radius, so they cannot
+  // take it during the lockout, and close enough that the pass is a short run
+  // rather than a thirty-metre trek across a live match.
+  await walk(c, [a, b], [5, 5]);
+
+  a.flagEvents.length = 0;
+  send(a, { t: MSG.DROPFLAG });
+  await sleep(500);
+  input(a); input(b); input(c);
+
+  const putDown = a.flagEvents.find((e) => e.ev === FLAG_EVENT.DROPPED);
+  check('pressing drop puts a carried flag down',
+    !!putDown && putDown.by === a.id,
+    putDown ? `dropped by ${putDown.by}` : 'nothing happened');
+
+  const lying = flagOf(a, enemyOf(a));
+  check('and it lands where the carrier is standing',
+    !!lying && Math.hypot(lying.x - a.at[0], lying.z - a.at[2]) < 2.5,
+    lying ? `${lying.x.toFixed(1)}, ${lying.z.toFixed(1)} vs ${a.at[0].toFixed(1)}, ${a.at[2].toFixed(1)}` : '');
+
+  // Stand on it for a full second. The dropper must NOT get it back.
+  for (let i = 0; i < 8; i++) { input(a); input(b); input(c); await sleep(120); }
+  check('and standing on it does not hand it straight back',
+    flagOf(a, enemyOf(a))?.s === FLAG_STATE.DROPPED, flagOf(a, enemyOf(a))?.s);
+
+  // Then walk off it. The lockout is two seconds, not forever — standing on a
+  // flag you dropped gets it back, which is right, and is not the pass.
+  await walk(a, [b, c], [ownBase[0], ownBase[1]]);
+
+  /*
+   * ...but a teammate can take it immediately, which is the whole point: a
+   * deliberate drop is a PASS, not a fumble.
+   */
+  c.flagEvents.length = 0;
+  await walk(c, [a, b], [lying.x, lying.z]);
+  await sleep(400);
+  const passed_to = c.flagEvents.find((e) => e.ev === FLAG_EVENT.TAKEN);
+  check('while a teammate can pick it up at once',
+    !!passed_to && passed_to.by === c.id,
+    passed_to ? `taken by ${passed_to.by}` : 'not taken');
+
+  // And the lockout expires rather than lasting the match.
+  check('the flag ends up carried, not stranded',
+    flagOf(c, enemyOf(a))?.s === FLAG_STATE.CARRIED, flagOf(c, enemyOf(a))?.s);
+
+  /*
+   * --- the score reaches the client ----------------------------------------
+   *
+   * A capture sends TWO messages — the flag first, then the score — and the
+   * client's HUD was only refreshed by the first. The team score is what says
+   * a capture counted, so it has to be in a message the client actually acts
+   * on. This is the server half of that: the SCORE that follows a capture must
+   * carry the new team total.
+   */
+  const lastScore = a.scores.at(-1);
+  check('every score update carries the team totals',
+    lastScore?.ts != null && typeof lastScore.ts[TEAM.RED] === 'number',
+    JSON.stringify(lastScore?.ts));
+  check('and they match the captures actually made',
+    lastScore.ts[a.team] === 1, `${TEAM_NAME[a.team]} ${lastScore.ts[a.team]}`);
+  const alphaRow = lastScore.ps.find((r) => r[0] === a.id);
+  check('and each player carries their own capture count',
+    alphaRow?.[6] === 1, `ALPHA captures ${alphaRow?.[6]}`);
+
+  clearInterval(heartbeat);
+  a.ws.close(); b.ws.close(); c.ws.close();
   await sleep(150);
   console.log(`\n${passed}/${passed + failed} passed`);
   process.exit(failed ? 1 : 0);

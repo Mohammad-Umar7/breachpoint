@@ -919,6 +919,14 @@ export class Game {
 
     if (this.input.wasPressed('stats')) this.ui.toggleStats();
 
+    // Put the flag down, for handing it to someone in better shape to run it.
+    // Sent unconditionally in a team mode: the server decides whether there is
+    // anything to drop, and it is the only party that knows.
+    if (this.input.wasPressed('dropFlag') && this.net?.connected
+        && getMode(this.modeId).teamBased) {
+      this.net.dropFlag();
+    }
+
     // Scoreboard is held, not toggled. Forced open when the match is over so
     // everyone sees the final standings without having to reach for Tab.
     if (this.net?.connected) {

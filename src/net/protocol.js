@@ -73,6 +73,15 @@ export const MSG = Object.freeze({
    * for position and hit claims.
    */
   HEAL: 'h',      // { a: amount, k: 'health' | 'armor' }
+  /**
+   * "Put the flag down."
+   *
+   * Deliberately a request with no arguments — where it lands is the server's
+   * business, because the server is the only party that knows where the
+   * carrier actually is. A client that could name the drop point could post a
+   * flag through a wall.
+   */
+  DROPFLAG: 'd',  // {}
   PING: 'p',      // { c: clientClockMs }
   NAME: 'm',      // { n: name }
 

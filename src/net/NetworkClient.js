@@ -374,6 +374,15 @@ export class NetworkClient {
   requestRespawn() { if (this.connected) this._send(MSG.RESPAWN, {}); }
 
   /**
+   * Ask to put a carried flag down.
+   *
+   * Nothing is changed locally. The flag's state comes back as a FLAG message
+   * like every other change to it, so a refused drop — dead, not carrying,
+   * wrong mode — simply does nothing rather than desyncing the world.
+   */
+  dropFlag() { if (this.connected) this._send(MSG.DROPFLAG, {}); }
+
+  /**
    * Tell the server we picked up a health pack.
    *
    * Necessary because health is server-owned: healing only the local copy

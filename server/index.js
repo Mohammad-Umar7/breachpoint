@@ -60,6 +60,14 @@ const WEAPON_BY_ID = new Map(
 /** The subset a player may actually be holding — hazards are not carryable. */
 const HELD_WEAPON_IDS = new Set(WEAPON_DEFS.map((w) => w.id));
 
+/**
+ * How long after a DELIBERATE drop the dropper is ignored by their own flag.
+ *
+ * Long enough to walk off it, short enough that a pass that goes wrong is not
+ * a punishment. Only ever applies to the player who pressed the key.
+ */
+const FLAG_DROP_LOCKOUT_MS = 2000;
+
 /** Centimetre rounding. Beyond this is noise nobody can see, and it is sent
  *  thirty times a second per player. */
 const r2 = (v) => Math.round(v * 100) / 100;
@@ -275,6 +283,17 @@ class Room {
         x, y: arenaFor(this.mapId).spawnY, z,
         carrier: null,
         returnAt: 0,
+        /**
+         * Who may not pick this up yet, and until when.
+         *
+         * Only ever the player who just put it down deliberately, and only for
+         * a moment. Without it, dropping a flag you are standing on hands it
+         * straight back to you on the next tick and the key does nothing at
+         * all. Everybody else can take it the same instant, which is the point
+         * — a manual drop is a pass.
+         */
+        noPickupBy: 0,
+        noPickupUntil: 0,
       });
     }
   }
@@ -591,14 +610,26 @@ class Room {
   }
 
   /** Put a carried flag on the ground where its carrier is. */
-  dropFlagFrom(player) {
+  /**
+   * Put a carried flag on the ground.
+   *
+   * `deliberate` is a drop the player asked for, which is the only case that
+   * needs the brief pick-up lockout: they are standing on it. A death drop
+   * needs no lockout because the carrier is dead, and locking them out would
+   * mean the flag ignored them for two seconds after they respawned somewhere
+   * else entirely.
+   */
+  dropFlagFrom(player, deliberate = false) {
     const flag = this.carriedBy(player);
-    if (!flag) return;
+    if (!flag) return false;
     flag.state = FLAG_STATE.DROPPED;
     flag.carrier = null;
     flag.x = player.x; flag.y = player.y; flag.z = player.z;
     flag.returnAt = Date.now() + this.mode.flagReturnSec * 1000;
+    flag.noPickupBy = deliberate ? player.id : 0;
+    flag.noPickupUntil = deliberate ? Date.now() + FLAG_DROP_LOCKOUT_MS : 0;
     this.broadcastFlags(FLAG_EVENT.DROPPED, player.id, flag.team);
+    return true;
   }
 
   sendFlagHome(flag, by = null) {
@@ -607,6 +638,8 @@ class Room {
     flag.carrier = null;
     flag.x = x; flag.y = arenaFor(this.mapId).spawnY; flag.z = z;
     flag.returnAt = 0;
+    flag.noPickupBy = 0;
+    flag.noPickupUntil = 0;
     this.broadcastFlags(FLAG_EVENT.RETURNED, by, flag.team);
   }
 
@@ -652,13 +685,16 @@ class Room {
           // stand there is nothing to do, which is what stops a defender
           // picking up their own flag and walking off with it.
           if (flag.state === FLAG_STATE.DROPPED) this.sendFlagHome(flag, p.id);
-        } else if (!this.carriedBy(p)) {
+        } else if (!this.carriedBy(p)
+          && !(p.id === flag.noPickupBy && now < flag.noPickupUntil)) {
           // The enemy takes it, from the stand or off the ground. One flag per
           // player: without that check a single runner could hold both and end
           // the match by walking home.
           flag.state = FLAG_STATE.CARRIED;
           flag.carrier = p.id;
           flag.returnAt = 0;
+          flag.noPickupBy = 0;
+          flag.noPickupUntil = 0;
           this.broadcastFlags(FLAG_EVENT.TAKEN, p.id, flag.team);
         }
         break;
@@ -1234,6 +1270,17 @@ wss.on('connection', (socket) => {
       case MSG.RESPAWN:
         if (player && player.room && !player.alive && Date.now() >= player.respawnAt) {
           player.room.spawn(player);
+        }
+        break;
+
+      /*
+       * "Put the flag down." Only meaningful while alive and carrying, and
+       * both are checked here rather than trusted — a client that could drop
+       * a flag it was not holding could plant one anywhere on the map.
+       */
+      case MSG.DROPFLAG:
+        if (player?.room?.mode.teamBased && player.alive) {
+          player.room.dropFlagFrom(player, true);
         }
         break;
 

@@ -1016,3 +1016,48 @@ kbd {
   from { opacity: 0; transform: translate(-50%, -46%); }
   to   { opacity: 1; transform: translate(-50%, -50%); }
 }
+
+/* Which side is mine. A bar reading "HOME / HOME" is accurate and useless —
+   it says where both flags are and nothing about which one to defend. */
+.ctf-you {
+  font-size: 9px; letter-spacing: 2px; font-weight: 700;
+  padding: 2px 6px; border-radius: 2px;
+  background: rgba(255, 255, 255, 0.9); color: #06090d;
+}
+.ctf-you[hidden] { display: none; }
+.ctf-side { opacity: 0.62; }
+.ctf-side.mine { opacity: 1; }
+.ctf-side.mine .ctf-label { text-shadow: 0 0 10px currentColor; }
+
+.ctf-drop {
+  display: block; margin-top: 2px;
+  font-size: 10px; letter-spacing: 2px; font-weight: 400;
+  opacity: 0.75;
+}
+.ctf-drop kbd {
+  font-family: var(--font-ui); font-weight: 700;
+  padding: 0 4px; border: 1px solid rgba(0,0,0,0.45); border-radius: 2px;
+}
+
+/* ------------------------------------------------------- deploying a match
+ * The picker locks while a match is being joined. Connecting can take the
+ * better part of a minute on a server that has gone to sleep, and an
+ * unchanged, still-clickable screen during that reads as a dead button — so
+ * people click again, and every click starts another connection.
+ */
+.map-grid.busy .map-card { cursor: default; }
+.map-card:disabled { pointer-events: none; }
+.map-card.waiting { opacity: 0.28; filter: grayscale(0.7); }
+.map-card.deploying { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.map-card.deploying .map-cta {
+  background: var(--accent-deep); color: var(--accent);
+  position: relative; overflow: hidden;
+}
+/* A sweep, so a long wait still looks like something is happening. */
+.map-card.deploying .map-cta::after {
+  content: ''; position: absolute; inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(102,221,255,0.35), transparent);
+  animation: deploy-sweep 1.4s linear infinite;
+}
+@keyframes deploy-sweep { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
+#screen-maps .nav-btn:disabled { opacity: 0.3; pointer-events: none; }

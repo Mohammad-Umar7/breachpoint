@@ -71,6 +71,8 @@ export class UIManager {
       ctfCarrying: id('ctf-carrying'),
       ctfScore: { 1: id('ctf-red-score'), 2: id('ctf-blue-score') },
       ctfFlag: { 1: id('ctf-red-flag'), 2: id('ctf-blue-flag') },
+      ctfYou: { 1: id('ctf-red-you'), 2: id('ctf-blue-you') },
+      ctfSide: { 1: id('ctf-red'), 2: id('ctf-blue') },
       banner: id('banner'),
       bannerText: id('banner-text'),
       callsign: id('hud-callsign'),
@@ -595,17 +597,37 @@ export class UIManager {
   }
 
   /**
-   * Both flag states and both team scores, from the server's report.
+   * Both flag states, both team scores, and which side is ours.
+   *
+   * One call rather than three, because they are read as one thing: "we are
+   * two-one up and our flag is out" is a single decision. Called on every
+   * flag event AND on every score update — the score arrives in a separate
+   * message that lands after the flag one, so a capture that only refreshed
+   * this from the flag event showed the old score until something else
+   * happened. That was the score appearing not to count.
    *
    * @param {Array} flags       flag payloads: { t, s, c }
    * @param {object} teamScores { [team]: captures }
    * @param {number} carryingTeam  the team whose flag WE hold, or null
+   * @param {number} selfTeam   our own team
    */
-  setFlags(flags, teamScores, carryingTeam = null) {
+  setFlags(flags, teamScores, carryingTeam = null, selfTeam = TEAM.NONE) {
     this._teamScores = teamScores ?? this._teamScores;
     for (const team of PLAYING_TEAMS) {
       const el = this.el.ctfScore[team];
       if (el) el.textContent = String(this._teamScores[team] ?? 0);
+
+      /*
+       * WHICH ONE IS MINE.
+       *
+       * Without this the bar reads "HOME / HOME" — perfectly accurate, and
+       * useless: it says where both flags are and nothing about which one you
+       * are defending. The side you are on is marked and brightened, so the
+       * whole strip can be read at a glance during a fight.
+       */
+      const mine = team === selfTeam;
+      if (this.el.ctfYou[team]) this.el.ctfYou[team].hidden = !mine;
+      this.el.ctfSide[team]?.classList.toggle('mine', mine);
     }
     for (const f of flags ?? []) {
       const el = this.el.ctfFlag[f.t];

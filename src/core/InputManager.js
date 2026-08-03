@@ -37,7 +37,13 @@ export const KEY_BINDINGS = Object.freeze({
   leanRight: ['KeyE'],
 
   zoomToggle: ['KeyB'],
-  flashlight: ['KeyF'],
+  /**
+   * Put a carried flag down, for passing it to a teammate.
+   *
+   * Took over KeyF from a `flashlight` binding that nothing had ever read —
+   * the game has no flashlight. A dead binding on a good key.
+   */
+  dropFlag: ['KeyF'],
   pause: ['Escape', 'KeyP'],
   stats: ['F3'],
   /** Held, not toggled — the scoreboard shows for as long as you hold it. */

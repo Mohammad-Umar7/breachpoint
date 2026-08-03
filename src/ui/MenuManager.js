@@ -851,6 +851,7 @@ export class MenuManager {
   }
 
   openMapPicker(intent = 'browse') {
+    this._deploying = false;
     this._mapIntent = intent;
     if (this.el.mapsSub) {
       this.el.mapsSub.textContent = intent === 'browse'
@@ -946,15 +947,52 @@ export class MenuManager {
    * live match and then freezing for a second while the arena appears.
    */
   async _chooseMap(mapId) {
+    if (this._deploying) return;
     const map = getMap(mapId);
     this.settings.set('mapId', map.id);
     this.onMapChosen?.(map.id);
     this.refreshTags();
 
     if (this._mapIntent === 'create') { this.openLobby('create'); return; }
-    if (this._mapIntent === 'quick') { await this._quickMatch(); return; }
+    if (this._mapIntent === 'quick') { await this._quickMatch(map.id); return; }
     // Browsing: stay put and show the new selection.
     this._renderMapCards();
+  }
+
+  /**
+   * Lock the picker while a match is being joined, and say what is happening.
+   *
+   * Connecting is not instant and can be very slow — a free-tier server that
+   * has gone to sleep takes the better part of a minute to answer its first
+   * request. Left as it was, the map screen sat there fully interactive: the
+   * card you clicked looked unchanged, the other card was still clickable, and
+   * BACK still worked. People clicked again, or went back and forth, and every
+   * one of those started ANOTHER connection attempt behind the first.
+   *
+   * So: one card holds the status, everything else stops responding, and there
+   * is no way out until it succeeds or fails. Failure unlocks it and says why.
+   */
+  _setDeploying(mapId, busy) {
+    this._deploying = busy;
+    this.el.mapGrid?.classList.toggle('busy', busy);
+    const back = document.querySelector('#screen-maps [data-back]');
+    if (back) back.disabled = busy;
+
+    for (const card of this.el.mapGrid?.querySelectorAll('.map-card') ?? []) {
+      const chosen = card.dataset.mapId === mapId;
+      card.classList.toggle('deploying', busy && chosen);
+      card.classList.toggle('waiting', busy && !chosen);
+      // `disabled` rather than a click guard, so it is unfocusable and reads as
+      // unavailable to a screen reader too.
+      card.disabled = busy;
+    }
+  }
+
+  /** Write progress onto the card that is being deployed to. */
+  _deployStatus(mapId, text) {
+    const card = this.el.mapGrid
+      ?.querySelector(`.map-card[data-map-id="${mapId}"] .map-cta`);
+    if (card) card.textContent = text;
   }
 
   /**
@@ -965,13 +1003,30 @@ export class MenuManager {
    * seconds, and a sleeping free-tier server can take a minute to wake. A
    * button that just sits there during that reads as broken.
    */
-  async _quickMatch() {
+  async _quickMatch(mapId = null) {
     const btn = document.getElementById('btn-play');
     const sub = document.getElementById('play-sub');
-    if (btn?.disabled) return;
+    if (btn?.disabled || this._deploying) return;
     const restore = () => {
       if (btn) btn.disabled = false;
       if (sub) sub.textContent = 'quick match';
+      if (mapId) {
+        this._setDeploying(mapId, false);
+        this._renderMapCards();
+      }
+    };
+
+    /*
+     * Everything the player sees goes to BOTH places.
+     *
+     * The status used to be written only to the sub-label under the PLAY
+     * button — on the main menu, which by this point is two screens behind.
+     * The player is looking at the map card they just clicked, so that is
+     * where the progress has to appear.
+     */
+    const say = (text) => {
+      if (sub) sub.textContent = text;
+      if (mapId) this._deployStatus(mapId, text.toUpperCase());
     };
 
     /*
@@ -988,15 +1043,34 @@ export class MenuManager {
 
     const name = this.settings.get('playerName') || DEFAULT_NAME;
     if (btn) btn.disabled = true;
-    if (sub) sub.textContent = 'finding a server…';
+    if (mapId) this._setDeploying(mapId, true);
+    say('finding a server…');
+
+    /*
+     * After a few seconds, say what is probably happening.
+     *
+     * A free instance that has scaled to zero takes 30-60 s to answer its
+     * first request, and during that time there is nothing to report — no
+     * error, no progress, just a wait far longer than anyone assumes a game
+     * menu can take. Naming it is the difference between "it is broken" and
+     * "it is coming".
+     */
+    const slow = setTimeout(() => say('waking the server — up to a minute…'), 4000);
+    const slower = setTimeout(() => say('still waking it — nearly there…'), 20000);
 
     try {
-      await this.onQuickMatch?.(name, (text) => { if (sub) sub.textContent = text; });
+      await this.onQuickMatch?.(name, say);
     } catch (err) {
-      if (sub) sub.textContent = err?.message ? String(err.message).slice(0, 60) : 'could not connect';
+      clearTimeout(slow); clearTimeout(slower);
+      const why = err?.message ? String(err.message).slice(0, 60) : 'could not connect';
+      say(why);
+      // Unlocked on failure, and only on failure — otherwise a player who
+      // could not connect is stranded on a screen with no way back.
+      if (mapId) this._setDeploying(mapId, false);
       setTimeout(restore, 4000);
       return;
     }
+    clearTimeout(slow); clearTimeout(slower);
     restore();
   }
 
