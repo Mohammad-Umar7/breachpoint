@@ -232,6 +232,18 @@ export function wireNetwork(game) {
     const from = hasBody ? game._tmpB : game._tmpA;
 
     /*
+     * Never draw a flash on the lens.
+     *
+     * A muzzle sits about 0.85 m from its owner's eye, so replaying the kill
+     * cam subject's own gunfire put a world-scale flash sprite that far from
+     * the camera — twenty-two of them over one replay, each one a white blob
+     * across the whole screen. The over-the-shoulder camera puts the gun
+     * properly in frame, and this is the backstop for the cases where it
+     * cannot: pinned against a wall, or the offsets tuned back to zero.
+     */
+    if (from.distanceToSquared(game.camera.position) < 0.35 * 0.35) return;
+
+    /*
      * How far away it happened decides how much of this is worth building.
      *
      * Every shot in the room now arrives here, and a lobby of players on

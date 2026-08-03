@@ -67,6 +67,33 @@ const EVENT_CAP = 256;
 /** A replay of somebody standing still is not worth taking the camera for. */
 const MIN_REPLAY_SEC = 0.6;
 
+/*
+ * WHERE THE CAMERA SITS RELATIVE TO THE KILLER'S EYE
+ *
+ * Strictly behind and slightly above and to the right — over their shoulder.
+ * The first version put it exactly AT the eye and hid their body, which is
+ * literally their point of view and was unwatchable:
+ *
+ *   - no body and no weapon, so it read as a camera flying through the map
+ *     rather than as a person, and
+ *   - their own muzzle flashes were drawn 0.85 m from the lens, because that
+ *     is where a muzzle is relative to an eye. Twenty-two world-scale flashes
+ *     going off on the camera over one replay.
+ *
+ * Pulled back, all of that becomes the point instead of the problem: you see
+ * the man, you see his gun, you see it fire, and you see yourself walk into
+ * it. Every shipped kill cam is framed this way, and this is why.
+ *
+ * The orientation is still exactly theirs, so it remains what they were
+ * looking at. Set all three to zero for a true first-person view.
+ */
+const CAMERA_BACK = 1.5;
+const CAMERA_UP = 0.32;
+const CAMERA_RIGHT = 0.42;
+
+/** Never put the camera through a wall — see the clearance probe. */
+const CAMERA_SKIN = 0.25;
+
 export class KillCam {
   /**
    * @param {object} opts
@@ -76,11 +103,17 @@ export class KillCam {
    *   Gunfire, currently — it is what makes the replay show you being shot at
    *   rather than merely aimed at.
    * @param {() => void} [opts.onEnd]  the replay reached its end on its own
+   * @param {((ox:number, oy:number, oz:number, dx:number, dy:number, dz:number,
+   *   max:number) => number|null)} [opts.clearanceProbe]
+   *   How far the camera can be pulled back from the eye before it would be
+   *   inside something. Optional — without it the camera can end up behind a
+   *   wall when the killer had their back to one, which is most doorways.
    */
-  constructor({ camera, onEvent = null, onEnd = null }) {
+  constructor({ camera, onEvent = null, onEnd = null, clearanceProbe = null }) {
     this.camera = camera;
     this.onEvent = onEvent;
     this.onEnd = onEnd;
+    this.clearanceProbe = clearanceProbe;
     /** Off means watch() refuses and nothing is recorded. A settings toggle. */
     this.enabled = true;
 
@@ -369,13 +402,14 @@ export class KillCam {
     }
 
     /*
-     * The person whose eyes we are behind must not be drawn.
+     * The killer IS drawn, and that is the point.
      *
-     * Their body is exactly where the camera is, so leaving it in means
-     * looking at the inside of their own head — and at this range that fills
-     * the screen with whatever polygon happens to be nearest.
+     * An earlier version deleted them, because the camera sat exactly at their
+     * eye and their own head filled the screen. With the camera over their
+     * shoulder instead they are the subject of the shot: you watch the person
+     * who killed you raise a weapon you can identify and fire it at you. A
+     * replay with them missing is just a corridor.
      */
-    this._out.delete(this.subjectId);
   }
 
   /** Put the camera in the subject's head, looking where they were looking. */
@@ -398,11 +432,44 @@ export class KillCam {
     // crate and seeing the crate.
     const eye = (ra.flags & FLAG.CROUCH) !== 0
       ? EYE_ABOVE_CENTRE_CROUCH : EYE_ABOVE_CENTRE_STAND;
+    const ex = x, ey = y + eye, ez = z;
 
-    this.camera.position.set(x, y + eye, z);
+    // Orientation is exactly theirs — this is still what they were looking at.
     // Same convention as Player's own camera: (pitch, yaw, roll) in YXZ.
     this._euler.set(pitch, yaw, 0, 'YXZ');
     this.camera.quaternion.setFromEuler(this._euler);
+
+    /*
+     * Then step back along their own view direction, over their shoulder.
+     *
+     * Derived from the orientation rather than from yaw alone, so looking up
+     * or down swings the camera the way the shot is framed instead of sliding
+     * it along the floor.
+     */
+    const cy = Math.cos(yaw), sy = Math.sin(yaw);
+    const cp = Math.cos(pitch), sp = Math.sin(pitch);
+    // Forward for a YXZ (pitch, yaw) camera looking down -Z.
+    const fx = -sy * cp, fy = sp, fz = -cy * cp;
+    // Right is the horizontal perpendicular; no roll, so this is exact.
+    const rx = cy, rz = -sy;
+
+    // How far back we can actually go before hitting something behind them.
+    let back = CAMERA_BACK;
+    if (this.clearanceProbe) {
+      const hit = this.clearanceProbe(ex, ey, ez, -fx, -fy, -fz, CAMERA_BACK + CAMERA_SKIN);
+      if (typeof hit === 'number' && hit >= 0) {
+        back = Math.max(0, Math.min(CAMERA_BACK, hit - CAMERA_SKIN));
+      }
+    }
+    // Shoulder offsets scale with it, so a camera pinned against a wall
+    // collapses to their eye rather than sliding sideways into the geometry.
+    const k2 = CAMERA_BACK > 0 ? back / CAMERA_BACK : 0;
+
+    this.camera.position.set(
+      ex - fx * back + rx * CAMERA_RIGHT * k2,
+      ey - fy * back + CAMERA_UP * k2,
+      ez - fz * back + rz * CAMERA_RIGHT * k2,
+    );
   }
 
   /** Fire off anything recorded between the last frame's time and this one's. */

@@ -156,8 +156,25 @@ export class UIManager {
     this.el.armorFill.style.width = `${ap * 100}%`;
     this.el.armorNum.textContent = Math.ceil(s.armor);
 
+    /*
+     * The low-health pulse describes OUR condition, and during a kill cam the
+     * screen is not ours.
+     *
+     * Dead means zero health, which means this sat at full strength for the
+     * whole replay: the entire kill cam was watched through a throbbing red
+     * vignette at up to 0.43 opacity. It read as a broken or half-rendered
+     * picture rather than as somebody else's view — measured, not guessed.
+     */
     this.el.lowHealth.style.opacity =
-      hp < 0.3 ? String(0.25 + Math.sin(performance.now() / 240) * 0.18 * (1 - hp / 0.3)) : '0';
+      (hp < 0.3 && !s.spectating)
+        ? String(0.25 + Math.sin(performance.now() / 240) * 0.18 * (1 - hp / 0.3))
+        : '0';
+
+    // Same reasoning for the crosshair: it is aiming OUR weapon, and during a
+    // replay there is nothing of ours on screen to aim.
+    if (this.el.crosshair) {
+      this.el.crosshair.style.visibility = s.spectating ? 'hidden' : '';
+    }
 
     // --- weapon / ammo ---
     const w = s.weapon;

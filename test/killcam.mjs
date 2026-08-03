@@ -181,8 +181,17 @@ const walkTowards = (i) => ({
   const drawn = kc.sample;
   check('the replay draws the victim — the whole point of the shot',
     drawn.has(1), [...drawn.keys()].join(', '));
-  check('and NOT the person whose eyes we are behind',
-    !drawn.has(2), drawn.has(2) ? 'subject is being drawn' : 'subject omitted');
+  /*
+   * And it draws the KILLER, which is what makes it legible.
+   *
+   * The first version deleted them, because the camera sat at their eye and
+   * their own head filled the screen. The result had no body and no weapon
+   * anywhere in frame, and was reported as "I see my own POV facing the wrong
+   * way" — with nothing on screen belonging to anybody, there was no way to
+   * tell it was somebody else's view at all.
+   */
+  check('and the killer, so it reads as a person rather than a loose camera',
+    drawn.has(2), drawn.has(2) ? 'subject drawn' : 'SUBJECT MISSING');
 
   // The world state has to be the same shape live play produces, or
   // RemotePlayers would need to know a replay from the real thing.
@@ -206,19 +215,33 @@ const walkTowards = (i) => ({
   kc.watch(2, { endAtMs: end });
   kc.update(0.016);
 
-  check('the camera sits in the subject\'s head, not on the floor',
-    near(cam.position.x, 7) && near(cam.position.z, -3)
-    && near(cam.position.y, 1.1 + EYE_ABOVE_CENTRE_STAND),
-    `at ${cam.position.x.toFixed(2)}, ${cam.position.y.toFixed(2)}, ${cam.position.z.toFixed(2)}`
-    + ` (eye +${EYE_ABOVE_CENTRE_STAND.toFixed(2)})`);
-
   const e = new THREE.Euler().setFromQuaternion(cam.quaternion, 'YXZ');
-  check('and looks where they were looking',
+  check('the camera looks exactly where the killer was looking',
     near(e.y, YAW) && near(e.x, PITCH),
     `yaw ${e.y.toFixed(2)} want ${YAW}, pitch ${e.x.toFixed(2)} want ${PITCH}`);
 
-  // Crouching drops the eye by nearly 40 cm — the difference between seeing
-  // over a crate and seeing the crate.
+  const eye = new THREE.Vector3(7, 1.1 + EYE_ABOVE_CENTRE_STAND, -3);
+  const back = cam.position.distanceTo(eye);
+  check('and sits behind their head rather than inside it',
+    back > 1 && back < 2.2,
+    `${back.toFixed(2)} m from the eye`);
+  check('and above it, so the shot looks down over the shoulder',
+    cam.position.y > eye.y, `camera y ${cam.position.y.toFixed(2)} vs eye ${eye.y.toFixed(2)}`);
+
+  /*
+   * The killer must actually be ON SCREEN. This is the check that would have
+   * caught the original framing: everything else about it was correct — right
+   * position, right orientation, right world state — and the one thing that
+   * mattered, being able to see the person who killed you, was not true.
+   */
+  const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(cam.quaternion);
+  const toSubject = eye.clone().sub(cam.position).normalize();
+  const dot = fwd.dot(toSubject);
+  check('and the killer is in front of the camera, not behind it',
+    dot > 0.85, `alignment ${dot.toFixed(3)} (1.0 is dead centre)`);
+
+  // Crouching still lowers the whole rig — the difference between seeing over
+  // a crate and seeing the crate.
   const cam2 = camera();
   const kc2 = new KillCam({ camera: cam2 });
   const end2 = recorded(kc2, 120, () => ({
@@ -227,9 +250,60 @@ const walkTowards = (i) => ({
   }));
   kc2.watch(2, { endAtMs: end2 });
   kc2.update(0.016);
+
+  const cam3 = camera();
+  const kc3 = new KillCam({ camera: cam3 });
+  const end3 = recorded(kc3, 120, () => ({
+    sample: new Map([[2, row(2, 7, -3)]]),
+    self: row(1, 0, 0),
+  }));
+  kc3.watch(2, { endAtMs: end3 });
+  kc3.update(0.016);
   check('a crouching killer is watched from a crouching height',
-    near(cam2.position.y, 1.1 + EYE_ABOVE_CENTRE_CROUCH),
-    `${cam2.position.y.toFixed(2)} vs standing ${(1.1 + EYE_ABOVE_CENTRE_STAND).toFixed(2)}`);
+    near(cam2.position.y, cam3.position.y
+      - (EYE_ABOVE_CENTRE_STAND - EYE_ABOVE_CENTRE_CROUCH), 0.02),
+    `crouched ${cam2.position.y.toFixed(2)} vs standing ${cam3.position.y.toFixed(2)}`);
+}
+
+// ------------------------------------------------------- staying out of walls
+{
+  /*
+   * Pulling the camera back is only safe if something stops it going through
+   * whatever the killer had their back to — which, in a shooter, is usually a
+   * wall, because that is where people fight from.
+   */
+  const cam = camera();
+  const hits = [];
+  const kc = new KillCam({
+    camera: cam,
+    // A wall 0.6 m behind them.
+    clearanceProbe: (ox, oy, oz, dx, dy, dz, max) => { hits.push(max); return 0.6; },
+  });
+  const end = recorded(kc, 120, () => ({
+    sample: new Map([[2, row(2, 7, -3)]]),
+    self: row(1, 0, 0),
+  }));
+  kc.watch(2, { endAtMs: end });
+  kc.update(0.016);
+
+  const eye = new THREE.Vector3(7, 1.1 + EYE_ABOVE_CENTRE_STAND, -3);
+  const back = cam.position.distanceTo(eye);
+  check('a wall behind the killer pulls the camera in instead of through it',
+    hits.length > 0 && back < 0.6,
+    `probe said 0.6 m, camera sits ${back.toFixed(2)} m back`);
+
+  // With no probe at all it still works — it just cannot avoid geometry.
+  const camB = camera();
+  const kcB = new KillCam({ camera: camB });
+  const endB = recorded(kcB, 120, () => ({
+    sample: new Map([[2, row(2, 7, -3)]]),
+    self: row(1, 0, 0),
+  }));
+  kcB.watch(2, { endAtMs: endB });
+  kcB.update(0.016);
+  check('and with no probe it falls back to the full offset',
+    camB.position.distanceTo(eye) > 1,
+    `${camB.position.distanceTo(eye).toFixed(2)} m back`);
 }
 
 // ------------------------------------------------------------- interpolation

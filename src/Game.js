@@ -149,6 +149,7 @@ export class Game {
     // of remotes.sync(), and sharing a scratch across a call that deep is how
     // you get a bug that only shows up with several players on screen.
     this._probeAt = new THREE.Vector3();
+    this._probeDir = new THREE.Vector3();
     this._camForward = new THREE.Vector3();
     this._camUp = new THREE.Vector3();
     this._focusRayDir = new THREE.Vector3();
@@ -222,7 +223,13 @@ export class Game {
        * camera in any player's head at any past moment. wireNetwork is what
        * decides to point it at whoever just shot you. See net/KillCam.js.
        */
-      this.killcam = new KillCam({ camera: this.camera });
+      this.killcam = new KillCam({
+        camera: this.camera,
+        // Stops the over-the-shoulder camera being pushed through whatever the
+        // killer had their back to, which in this arena is usually a wall.
+        clearanceProbe: (ox, oy, oz, dx, dy, dz, max) =>
+          this._clearanceFrom(ox, oy, oz, dx, dy, dz, max),
+      });
       /** Our own row for the recording; reused, because it is written at 30 Hz. */
       this._selfRow = {
         id: 0, x: 0, y: 0, z: 0, yaw: 0, pitch: 0,
@@ -1021,6 +1028,24 @@ export class Game {
    *
    * @returns {string|null} a SURFACE tag, or null to fall back to concrete
    */
+  /**
+   * How far a camera can travel from a point before it hits the world.
+   *
+   * Used by the kill cam to keep its over-the-shoulder camera out of the
+   * geometry. Players are excluded — being briefly inside the killer's own
+   * shoulder is fine and expected; being inside a wall is not.
+   *
+   * @returns {number|null} distance to the obstruction, or null if clear
+   */
+  _clearanceFrom(ox, oy, oz, dx, dy, dz, max) {
+    this._probeAt.set(ox, oy, oz);
+    this._probeDir.set(dx, dy, dz).normalize();
+    const hit = this.physics.raycast(this._probeAt, this._probeDir, max, {
+      filter: (tag) => !!tag && tag.kind !== TAG_KIND.PLAYER,
+    });
+    return hit ? hit.distance : null;
+  }
+
   _surfaceUnder(x, y, z) {
     this._probeAt.set(x, y + 0.35, z);
     const hit = this.physics.raycast(this._probeAt, this._down, 1.4, {
@@ -1277,6 +1302,10 @@ export class Game {
         // taken away — which is precisely the moment it would matter.
         spawnProtected: this.net?.connected
           && (this.net.selfFlags & FLAG.PROTECTED) !== 0,
+        // While the kill cam is up the screen belongs to somebody else, so the
+        // overlays that describe OUR condition have no business on it — see
+        // UIManager.updateHud.
+        spectating: !!this.killcam?.active,
         weapon: this.weapons.hudState(),
         lean: this.lean.amount,
         match: this.net?.connected ? this.net.match : null,
