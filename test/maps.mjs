@@ -209,6 +209,34 @@ for (const map of MAPS) {
   // The same for pickups: one inside a wall is one nobody can ever take.
   const stuck = level.pickupSpots.filter((sp) =>
     level.mapShapes.some((sh) => inside(sh, sp.pos.x, sp.pos.y, sp.pos.z, -0.15)));
+  /*
+   * Every explosive must carry a COMPLETE blast configuration.
+   *
+   * A missing radius does not mean "no explosion". `dist > undefined` is
+   * false, so every dynamic body in the world counts as in range, each gets a
+   * NaN impulse, and the physics solver is poisoned for the rest of the match
+   * — the player drops through the floor. That shipped: the outpost's barrels
+   * set two of the four fields, and shooting one ended the round for whoever
+   * did it.
+   */
+  const halfArmed = level.explosives.filter((e) =>
+    !Number.isFinite(e.blastRadius) || !Number.isFinite(e.blastDamage)
+    || !Number.isFinite(e.blastForce) || !Number.isFinite(e.health));
+  check(`${map.name} explosives all carry a complete blast`,
+    level.explosives.length > 0 && halfArmed.length === 0,
+    halfArmed.length
+      ? `${halfArmed.length} of ${level.explosives.length} incomplete: `
+        + JSON.stringify(halfArmed.map((e) => ({
+          r: e.blastRadius, d: e.blastDamage, f: e.blastForce, hp: e.health })).slice(0, 2))
+      : `${level.explosives.length} barrels, all armed`);
+
+  // A blast wider than the map would catch everyone wherever they stood.
+  const tooBig = level.explosives.filter((e) => e.blastRadius > (b.max[0] - b.min[0]) / 4);
+  check(`${map.name} blast radii are sane for its size`,
+    tooBig.length === 0,
+    tooBig.length ? `${tooBig[0].blastRadius} m on a ${b.max[0] - b.min[0]} m map`
+                  : `${level.explosives[0]?.blastRadius ?? 0} m`);
+
   check(`${map.name} pickups are reachable, not inside walls`,
     stuck.length === 0,
     stuck.length ? stuck.map((p) => `${p.type} at ${p.pos.x},${p.pos.z}`).join('; ')
@@ -226,6 +254,79 @@ for (const map of MAPS) {
     missing.length === 0, missing.join(', ') || 'complete');
   check(`${map.name} has a three-colour swatch`,
     Array.isArray(map.swatch) && map.swatch.length === 3, JSON.stringify(map.swatch));
+}
+
+console.log('\n--- surfaces that would shimmer ---');
+
+/*
+ * Near-coincident parallel faces, which is what z-fighting IS.
+ *
+ * Two surfaces a couple of centimetres apart cannot be separated by the depth
+ * buffer at any distance, so the renderer picks a different winner per pixel
+ * per frame and the seam crawls. It is only findable by eye, on the right
+ * surface, at the right angle — which is how the outpost shipped with a
+ * terracotta roof lip and a sandstone parapet centred on the same edge, 25 mm
+ * apart, shimmering along every roofline.
+ *
+ * EXACTLY coincident faces are fine and everywhere: a crate resting on the
+ * floor shares a plane with it, and backface culling hides the seam. It is the
+ * NEARLY coincident pair that has no winner.
+ */
+const FACE_EPS = 0.035;      // closer than this and the depth buffer gives up
+const COINCIDENT = 0.0005;   // exactly flush: fine, and extremely common
+// Ignore true slivers, but no higher: the roof lip and parapet shared only
+// 0.45 m of height, and at 0.6 this check passed while they visibly shimmered.
+const MIN_SHARED = 0.2;
+
+function shimmerPairs(shapes) {
+  const boxes = shapes.map((s) => ({
+    x0: s.x - s.hx, x1: s.x + s.hx,
+    y0: s.y - s.height / 2, y1: s.y + s.height / 2,
+    z0: s.z - s.hz, z1: s.z + s.hz,
+    rotY: s.rotY || 0,
+  }));
+  const overlap = (a0, a1, b0, b1) => Math.min(a1, b1) - Math.max(a0, b0);
+  const found = [];
+
+  for (let i = 0; i < boxes.length; i++) {
+    for (let j = i + 1; j < boxes.length; j++) {
+      const a = boxes[i], b = boxes[j];
+      // Rotated boxes need a different test. Both maps' rotated pieces are
+      // scattered cover that never stacks, so they are skipped rather than
+      // approximated wrongly.
+      if (a.rotY !== 0 || b.rotY !== 0) continue;
+
+      const ox = overlap(a.x0, a.x1, b.x0, b.x1);
+      const oy = overlap(a.y0, a.y1, b.y0, b.y1);
+      const oz = overlap(a.z0, a.z1, b.z0, b.z1);
+      // Only pairs that actually share space can fight.
+      if (ox <= 0 || oy <= 0 || oz <= 0) continue;
+
+      const near = (p, q) => {
+        const d = Math.abs(p - q);
+        return d > COINCIDENT && d < FACE_EPS;
+      };
+      const axis =
+        (near(a.x0, b.x0) || near(a.x1, b.x1)) && oy > MIN_SHARED && oz > MIN_SHARED ? 'x'
+          : (near(a.y0, b.y0) || near(a.y1, b.y1)) && ox > MIN_SHARED && oz > MIN_SHARED ? 'y'
+            : (near(a.z0, b.z0) || near(a.z1, b.z1)) && ox > MIN_SHARED && oy > MIN_SHARED ? 'z'
+              : null;
+      if (axis) {
+        found.push(`${axis} at ${shapes[i].x.toFixed(1)},`
+          + `${shapes[i].y.toFixed(1)},${shapes[i].z.toFixed(1)}`);
+      }
+    }
+  }
+  return found;
+}
+
+for (const map of MAPS) {
+  const { level } = buildMap(map);
+  const pairs = shimmerPairs(level.mapShapes);
+  check(`${map.name} has no near-coincident surfaces to shimmer`,
+    pairs.length === 0,
+    pairs.length ? `${pairs.length} pairs: ${[...new Set(pairs)].slice(0, 5).join('; ')}`
+      : `${level.mapShapes.length} footprints, none within ${FACE_EPS * 1000} mm`);
 }
 
 console.log('\n--- the maps are actually different ---');

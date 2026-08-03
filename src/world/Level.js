@@ -208,8 +208,17 @@ export class Level {
     cam.top = half; cam.bottom = -half;
     cam.near = 1; cam.far = this.map.env.sun.shadowFar;
     cam.updateProjectionMatrix();
-    sun.shadow.bias = -0.0008;
-    sun.shadow.normalBias = 0.035;
+    /*
+     * Depth bias, per map, because it depends on the SUN ANGLE.
+     *
+     * A shallow sun spreads each shadow texel across far more surface, so the
+     * depth stored for a texel diverges further from the depth of the pixel
+     * being shaded — which is shadow acne: a shimmering stipple that crawls as
+     * the camera moves. The warehouse's figures were tuned against a 42-degree
+     * midday sun; the outpost's is at 20 and needs several times the slack.
+     */
+    sun.shadow.bias = this.map.env.sun.bias ?? -0.0008;
+    sun.shadow.normalBias = this.map.env.sun.normalBias ?? 0.035;
     sun.shadow.radius = 1.5;
     if (sun.shadow.map) {
       sun.shadow.map.dispose();
@@ -434,7 +443,23 @@ export class Level {
   }
 
 
-  _spawnProp({ geometry, material, position, shape, half, mass, surface, rotY = 0, kind = TAG_KIND.PROP }) {
+  /**
+   * A pushable prop, and optionally an explosive one.
+   *
+   * `explosive` takes the whole blast configuration at once, with defaults,
+   * rather than leaving a map to set four fields on the returned object by
+   * hand. It was by hand, and the outpost's barrels set two of the four — so
+   * `blastRadius` was undefined, `dist > undefined` was false for EVERY
+   * dynamic body in the world, and detonating one barrel applied a NaN impulse
+   * to every crate on the map. The player fell through the floor.
+   *
+   * Half-configuring it is now impossible: ask for `explosive` and you get all
+   * of it, or do not and it is inert.
+   */
+  _spawnProp({
+    geometry, material, position, shape, half, mass, surface,
+    rotY = 0, kind = TAG_KIND.PROP, explosive = null,
+  }) {
     const mesh = new THREE.Mesh(geometry, this.assets.getMaterial(material));
     mesh.castShadow = true;
     mesh.receiveShadow = true;
@@ -457,6 +482,18 @@ export class Level {
       });
       prop.body = body;
       prop.collider = collider;
+    }
+
+    if (explosive) {
+      prop.explosive = true;
+      prop.health = explosive.health ?? 45;
+      prop.blastRadius = explosive.radius ?? 7.5;
+      prop.blastDamage = explosive.damage ?? 95;
+      // Impulse in N·s — see PhysicsWorld.applyExplosion. 340 at the epicentre
+      // throws an 18 kg crate at roughly 19 m/s.
+      prop.blastForce = explosive.force ?? 340;
+      prop.exploded = false;
+      this.explosives.push(prop);
     }
 
     this.props.push(prop);

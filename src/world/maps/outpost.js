@@ -80,10 +80,17 @@ function buildGround(level) {
    * a strong centre mark is what tells you which way you are facing the moment
    * you spawn.
    */
-  level._box('terracotta', [0, 0.015, 0], [11, 0.03, 11],
-    { collide: false, tile: 3 });
-  level._box('paintedTeal', [0, 0.02, 0], [7.4, 0.04, 7.4], { collide: false, tile: 2 });
-  level._box('terracotta', [0, 0.025, 0], [4, 0.05, 4], { collide: false, tile: 1.5 });
+  /*
+   * Each ring sits clearly ABOVE the one beneath, never sharing a plane.
+   *
+   * All three originally had their underside at exactly y = 0, which is the
+   * floor's top face — three surfaces on one plane, which shimmers as the
+   * depth buffer picks a different winner per pixel per frame. Sub-centimetre
+   * steps are invisible underfoot and make the ordering unambiguous.
+   */
+  level._box('terracotta', [0, 0.035, 0], [11, 0.05, 11], { collide: false, tile: 3 });
+  level._box('paintedTeal', [0, 0.085, 0], [7.4, 0.05, 7.4], { collide: false, tile: 2 });
+  level._box('terracotta', [0, 0.135, 0], [4, 0.05, 4], { collide: false, tile: 1.5 });
 }
 
 /** The compound wall, with a gateway on each side. */
@@ -148,27 +155,55 @@ function buildBlock(level, sx, sz) {
   level._wallWithGaps('sandstone', 'x', z1, x0, x1, ROOF_Y, t,
     innerZ === z1 ? [[cx - 1.8, cx + 1.8]] : []);
 
-  // Roof slab, and a terracotta lip so the edge is readable from below.
+  // Roof slab.
   level._box('sandstone', [cx, ROOF_Y + 0.2, cz], [w + 0.5, 0.4, d + 0.5], { tile: 3 });
-  for (const [px, pz, pw, pd] of [
-    [cx, cz - d / 2, w + 0.5, 0.5], [cx, cz + d / 2, w + 0.5, 0.5],
-    [cx - w / 2, cz, 0.5, d + 0.5], [cx + w / 2, cz, 0.5, d + 0.5],
-  ]) {
-    level._box('terracotta', [px, ROOF_Y + 0.5, pz], [pw, 0.5, pd], { tile: 1.5 });
-  }
 
   /*
-   * A parapet on the OUTWARD faces only.
+   * Each roof edge gets EITHER a parapet or a lip, never both.
    *
-   * Chest-high cover facing the wall, nothing at all facing the square. So a
-   * roof gives you a commanding view of the middle and no protection while you
-   * use it — which is the trade that stops height being strictly better.
+   * The parapet goes on the two OUTWARD faces — chest-high cover facing the
+   * compound wall, nothing at all facing the square. A roof therefore gives a
+   * commanding view of the middle and no protection while you use it, which is
+   * the trade that stops height being strictly better.
+   *
+   * The other two edges get a low terracotta lip so the drop is readable from
+   * above and the roofline is readable from below.
+   *
+   * They were originally BOTH applied to all four edges: a 0.5 m lip and a
+   * 0.45 m parapet centred on the same line, overlapping in height, with their
+   * outer faces 25 mm apart. Two near-coplanar surfaces at that distance
+   * z-fight, which is the shimmer that was visible along every roof.
    */
-  const py = ROOF_Y + 0.4 + 0.55;
-  if (sz < 0) level._box('sandstone', [cx, py, cz - d / 2], [w + 0.5, 1.1, 0.45], { tile: 1.5 });
-  if (sz > 0) level._box('sandstone', [cx, py, cz + d / 2], [w + 0.5, 1.1, 0.45], { tile: 1.5 });
-  if (sx < 0) level._box('sandstone', [cx - w / 2, py, cz], [0.45, 1.1, d + 0.5], { tile: 1.5 });
-  if (sx > 0) level._box('sandstone', [cx + w / 2, py, cz], [0.45, 1.1, d + 0.5], { tile: 1.5 });
+  /*
+   * The X pieces stand 0.1 proud of the Z pieces, so the corners INTERSECT.
+   *
+   * Without the offset the two parapets meet at each corner with their outer
+   * faces 25 mm apart — two front-facing surfaces that the depth buffer cannot
+   * separate, which shimmers exactly like the lip-and-parapet overlap did.
+   * Overlapping solids never fight; only near-parallel faces do.
+   */
+  const CORNER_PROUD = 0.1;
+  const outZ = cz + sz * (d / 2);
+  const outX = cx + sx * (w / 2 + CORNER_PROUD);
+  const inZ = cz - sz * (d / 2);
+  const inX = cx - sx * (w / 2 + CORNER_PROUD);
+
+  /*
+   * At each corner one run passes THROUGH and the other butts into it.
+   *
+   * The Z run spans the full slab; the X run stops at the Z run's centre line,
+   * so it is buried 0.225 inside rather than ending flush alongside. Two runs
+   * that both reach the corner leave their end faces a couple of centimetres
+   * apart, which is the same shimmer in a different axis — and it appeared the
+   * moment the first one was fixed.
+   */
+  const py = ROOF_Y + 0.9;   // sunk 0.1 into the slab, so the two intersect
+  level._box('sandstone', [cx, py, outZ], [w + 0.5, 1.2, 0.45], { tile: 1.5 });
+  level._box('sandstone', [outX, py, cz - sz * 0.125], [0.45, 1.2, d + 0.25], { tile: 1.5 });
+
+  // Lip on the two open edges, jointed the same way.
+  level._box('terracotta', [cx, ROOF_Y + 0.5, inZ], [w + 0.5, 0.5, 0.5], { tile: 1.5 });
+  level._box('terracotta', [inX, ROOF_Y + 0.5, cz + sz * 0.125], [0.5, 0.5, d + 0.25], { tile: 1.5 });
 
   // Interior pillar, so the ground floor is a room to fight in and not a box.
   level._box('adobe', [cx, ROOF_Y / 2, cz], [1.6, ROOF_Y, 1.6], { tile: 1.5 });
@@ -373,7 +408,7 @@ function buildProps(level) {
     [-2.6, -20], [2.6, 20], [-20, 2.6], [20, -2.6],
     [-3.2, -3.2], [3.2, 3.2],
   ]) {
-    const prop = level._spawnProp({
+    level._spawnProp({
       geometry: barrelGeo,
       material: 'explosiveBarrel',
       position: new THREE.Vector3(x, 0.56, z),
@@ -382,13 +417,18 @@ function buildProps(level) {
       // {x,y,z} leaves the radius undefined, and one NaN collider disables
       // Rapier's whole query pipeline — see the guard in PhysicsWorld.
       half: { y: 0.55, r: 0.35 },
-      mass: 26,
+      mass: 40,
       surface: SURFACE.METAL,
       kind: TAG_KIND.EXPLOSIVE,
+      /*
+       * A slightly tighter blast than the yard's 7.5 m.
+       *
+       * The whole map is 50 m across and these sit in the gateways, so the
+       * warehouse radius would reach most of an arm and make pushing an
+       * entrance a coin flip rather than a decision.
+       */
+      explosive: { radius: 6.5, damage: 95, force: 340 },
     });
-    prop.explosive = true;
-    prop.health = 45;
-    level.explosives.push(prop);
   }
 }
 
@@ -456,7 +496,13 @@ export const outpostMap = Object.freeze({
            elevation: 20, azimuth: 112 },
     envIntensity: 0.60,
     fog: { color: 0xd8b184, density: 0.0105 },
-    sun: { color: 0xffd8a0, intensity: 2.9, shadowHalf: 30, shadowFar: 170 },
+    sun: {
+      color: 0xffd8a0, intensity: 2.9, shadowHalf: 30, shadowFar: 170,
+      // A 20-degree sun rakes shadows a long way across each texel, so the
+      // warehouse's midday bias leaves acne crawling over every wall. See
+      // Level._configureSunShadow.
+      bias: -0.0022, normalBias: 0.09,
+    },
     hemi: { sky: 0xdcc6a4, ground: 0x6b4a30, intensity: 0.80 },
     ambient: { color: 0x6a5540, intensity: 0.42 },
     // Cool bounce out of the shaded side, so shadows read blue against the

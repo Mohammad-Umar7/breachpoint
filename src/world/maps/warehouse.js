@@ -462,7 +462,7 @@ function buildProps(level) {
     [-20.0, -28.0],
   ];
   for (const [x, z] of explosivePositions) {
-    const prop = level._spawnProp({
+    level._spawnProp({
       geometry: barrelGeo,
       material: 'explosiveBarrel',
       position: new THREE.Vector3(x, 0.56, z),
@@ -471,16 +471,11 @@ function buildProps(level) {
       mass: 40,
       surface: SURFACE.METAL,
       kind: TAG_KIND.EXPLOSIVE,
+      // Configured in one place rather than set field by field afterwards.
+      // Doing it by hand is how the outpost's barrels ended up with no blast
+      // radius at all — see the note on _spawnProp.
+      explosive: { health: 45, radius: 7.5, damage: 95, force: 340 },
     });
-    prop.explosive = true;
-    prop.health = 45;
-    prop.blastRadius = 7.5;
-    prop.blastDamage = 95;
-    // Impulse in N·s — see PhysicsWorld.applyExplosion. At the epicentre
-    // this throws an 18 kg crate at roughly 19 m/s.
-    prop.blastForce = 340;
-    prop.exploded = false;
-    level.explosives.push(prop);
   }
 }
 

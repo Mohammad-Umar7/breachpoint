@@ -469,6 +469,19 @@ export class PhysicsWorld {
    * @returns {Array<{body:any, distance:number, falloff:number}>} affected bodies
    */
   applyExplosion(center, radius, strength) {
+    /*
+     * Refuse a blast that is not a number.
+     *
+     * `dist > undefined` is FALSE, so an undefined radius does not mean "no
+     * explosion" — it means every dynamic body in the world is in range, each
+     * gets a NaN impulse, and the solver is poisoned for the rest of the
+     * match. One barrel with a missing field dropped the player through the
+     * floor. Better to do nothing, loudly.
+     */
+    if (!Number.isFinite(radius) || !Number.isFinite(strength) || radius <= 0) {
+      console.error('[Physics] applyExplosion ignored: radius=%o strength=%o', radius, strength);
+      return [];
+    }
     const affected = [];
     for (const body of this.dynamicBodies) {
       if (!body.isDynamic()) continue;
