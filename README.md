@@ -447,7 +447,8 @@ src/
 ├── audio/AudioManager.js       Fully synthesised, positional Web Audio
 └── ui/
     ├── UIManager.js            HUD and screen effects
-    └── MenuManager.js          Every menu, schema-driven settings
+    ├── MenuManager.js          Every menu, schema-driven settings
+    └── Minimap.js              Overhead corner map, drawn as flat 2D
 server/
 ├── index.js                    Authoritative server: damage, kills, score, spawns
 └── *-test.js                   Suites that need a live server

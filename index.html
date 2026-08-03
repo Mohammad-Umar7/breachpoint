@@ -86,6 +86,11 @@
       </div>
 
       <!-- Top-right: your kills + connection + optional perf stats -->
+      <!-- Overhead map. A 2D canvas, not a second camera render: drawing the
+           scene twice to fill a corner square would be the most expensive
+           thing on screen. See src/ui/Minimap.js. -->
+      <canvas id="minimap" width="168" height="168"></canvas>
+
       <div id="hud-top-right">
         <div class="panel align-right">
           <div class="label">KILLS</div>

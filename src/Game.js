@@ -44,6 +44,7 @@ import { ScopeRenderer, LAYER_WORLD } from './fx/ScopeRenderer.js';
 import { AudioManager } from './audio/AudioManager.js';
 import { UIManager } from './ui/UIManager.js';
 import { MenuManager } from './ui/MenuManager.js';
+import { Minimap } from './ui/Minimap.js';
 import { NetworkClient, inviteUrl, roomFromUrl } from './net/NetworkClient.js';
 import { RemotePlayers } from './net/RemotePlayers.js';
 import { wireNetwork } from './net/wireNetwork.js';
@@ -175,6 +176,11 @@ export class Game {
       this.level = new Level(this.scene, this.physics, this.assets, this.settings, this.renderer);
       this.level.build();
       this.level.captureResetState();
+
+      // Drawn from the level's own footprints, so the map cannot drift out of
+      // agreement with the arena. See src/ui/Minimap.js.
+      const mapCanvas = document.getElementById('minimap');
+      if (mapCanvas) this.minimap = new Minimap(mapCanvas, this.level);
 
       // Multiplayer. The client is created but idle until a match is joined,
       // so a failed or absent server never blocks the game from booting.
@@ -857,6 +863,7 @@ export class Game {
 
     // 6. Everything else.
     this.pickups.update(dt, this.camera);
+    this.minimap?.update(dt, this.player, this._netSample);
     this._updatePendingExplosions(dt);
     this.fx.update(dt, this.camera);
     this._updateScope(dt);
@@ -1093,6 +1100,8 @@ export class Game {
   leaveMatch() {
     this.net?.disconnect();
     this.remotes?.clear();
+    // Or last match's shooters would still be on the map in the next one.
+    this.minimap?.clear();
     this.weapons.remoteHitTest = null;
     this.weapons.onShotResolved = null;
     this._respawnAt = 0;

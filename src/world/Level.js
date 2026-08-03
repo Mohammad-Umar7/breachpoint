@@ -56,6 +56,8 @@ export class Level {
     /** @type {THREE.Vector3[]} */
     /** @type {Array} pickup definitions consumed by PickupManager */
     this.pickupSpots = [];
+    /** Top-down footprints of everything solid, for the minimap. See _box. */
+    this.mapShapes = [];
 
     this.bounds = { min: new THREE.Vector3(-35, 0, -35), max: new THREE.Vector3(35, 20, 35) };
   }
@@ -212,6 +214,21 @@ export class Level {
 
     if (!this._pending.has(material)) this._pending.set(material, []);
     this._pending.get(material).push(geo);
+
+    /*
+     * Footprint for the minimap.
+     *
+     * Collected HERE because _box is the single funnel every wall, container
+     * and crate goes through — anywhere else and the map would drift out of
+     * agreement with the level the moment somebody added a building.
+     *
+     * Only things that block you and stand high enough to matter: floor slabs
+     * and the painted hazard strips on top of cover are solid or thin, and
+     * drawing them would fill the map with rectangles that mean nothing.
+     */
+    if (collide && sy >= 0.7) {
+      this.mapShapes.push({ x, z, hx: sx / 2, hz: sz / 2, rotY, height: sy });
+    }
 
     if (collide) {
       const quat = rotY ? new THREE.Quaternion().setFromAxisAngle(UP, rotY) : null;

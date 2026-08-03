@@ -172,6 +172,16 @@ export function wireNetwork(game) {
    * flash, so both ends show the same thing.
    */
   net.onFire = (f) => {
+    /*
+     * Firing puts you on everyone else's map for a couple of seconds.
+     *
+     * The map deliberately does not show people all the time — in a
+     * free-for-all that would remove any reason to be careful. Showing a
+     * shooter is the convention most shooters settled on, and it costs
+     * nothing here because this relay already exists for the muzzle flash.
+     */
+    game.minimap?.noteShot(f.shooter);
+
     const def = getWeaponDef(f.weapon);
     if (!def || !Array.isArray(f.origin)) return;
 
