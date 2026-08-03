@@ -70,26 +70,26 @@ const MIN_REPLAY_SEC = 0.6;
 /*
  * WHERE THE CAMERA SITS RELATIVE TO THE KILLER'S EYE
  *
- * Strictly behind and slightly above and to the right — over their shoulder.
- * The first version put it exactly AT the eye and hid their body, which is
- * literally their point of view and was unwatchable:
+ * At it. This is a first-person kill cam: you look out of the killer's eyes,
+ * down the sights they were using, at yourself.
  *
- *   - no body and no weapon, so it read as a camera flying through the map
- *     rather than as a person, and
- *   - their own muzzle flashes were drawn 0.85 m from the lens, because that
- *     is where a muzzle is relative to an eye. Twenty-two world-scale flashes
- *     going off on the camera over one replay.
+ * It was over-the-shoulder for a while, and that was a workaround for two
+ * problems rather than a preference:
  *
- * Pulled back, all of that becomes the point instead of the problem: you see
- * the man, you see his gun, you see it fire, and you see yourself walk into
- * it. Every shipped kill cam is framed this way, and this is why.
+ *   - their own head filled the lens, and
+ *   - their own muzzle flashes were drawn 0.85 m from the camera, because
+ *     that is where a muzzle is relative to an eye. Twenty-two world-scale
+ *     flashes going off on the lens over one replay.
  *
- * The orientation is still exactly theirs, so it remains what they were
- * looking at. Set all three to zero for a true first-person view.
+ * Both are now fixed where they actually live. The subject's head is hidden
+ * for the duration (RemotePlayers.headlessId), which leaves their arms and
+ * their weapon in frame exactly as a first-person view should; and gunfire
+ * from inside the lens skips the flash while keeping its tracer and its sound
+ * (wireNetwork.drawGunfire). Set these back above zero for over-the-shoulder.
  */
-const CAMERA_BACK = 1.5;
-const CAMERA_UP = 0.32;
-const CAMERA_RIGHT = 0.42;
+const CAMERA_BACK = 0;
+const CAMERA_UP = 0;
+const CAMERA_RIGHT = 0;
 
 /** Never put the camera through a wall — see the clearance probe. */
 const CAMERA_SKIN = 0.25;
@@ -402,13 +402,13 @@ export class KillCam {
     }
 
     /*
-     * The killer IS drawn, and that is the point.
+     * The killer IS drawn, head excluded — see RemotePlayers.headlessId.
      *
-     * An earlier version deleted them, because the camera sat exactly at their
-     * eye and their own head filled the screen. With the camera over their
-     * shoulder instead they are the subject of the shot: you watch the person
-     * who killed you raise a weapon you can identify and fire it at you. A
-     * replay with them missing is just a corridor.
+     * Deleting them outright was the first attempt and it was wrong: with no
+     * body and no weapon the replay reads as a camera flying through the map,
+     * indistinguishable from your own view pointing the wrong way. Keeping the
+     * body and dropping just the head gives a first-person view with hands and
+     * a gun in it, which is what a first-person view looks like.
      */
   }
 
@@ -453,9 +453,15 @@ export class KillCam {
     // Right is the horizontal perpendicular; no roll, so this is exact.
     const rx = cy, rz = -sy;
 
-    // How far back we can actually go before hitting something behind them.
+    /*
+     * How far back we can actually go before hitting something behind them.
+     *
+     * Skipped outright at a zero offset, which is what first person is: there
+     * is nothing to pull back, and this would otherwise spend a raycast per
+     * frame of every replay establishing that zero is still zero.
+     */
     let back = CAMERA_BACK;
-    if (this.clearanceProbe) {
+    if (CAMERA_BACK > 0 && this.clearanceProbe) {
       const hit = this.clearanceProbe(ex, ey, ez, -fx, -fy, -fz, CAMERA_BACK + CAMERA_SKIN);
       if (typeof hit === 'number' && hit >= 0) {
         back = Math.max(0, Math.min(CAMERA_BACK, hit - CAMERA_SKIN));

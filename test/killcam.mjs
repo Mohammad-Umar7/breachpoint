@@ -220,25 +220,28 @@ const walkTowards = (i) => ({
     near(e.y, YAW) && near(e.x, PITCH),
     `yaw ${e.y.toFixed(2)} want ${YAW}, pitch ${e.x.toFixed(2)} want ${PITCH}`);
 
+  /*
+   * FIRST PERSON: the camera is at the eye, not near it.
+   *
+   * Not "close enough" — at it. A camera a metre back is a different shot with
+   * different sightlines, and the whole claim the kill cam makes is that this
+   * is what the other player saw. Anything the eye could not see from exactly
+   * there is a lie about how you died.
+   */
   const eye = new THREE.Vector3(7, 1.1 + EYE_ABOVE_CENTRE_STAND, -3);
-  const back = cam.position.distanceTo(eye);
-  check('and sits behind their head rather than inside it',
-    back > 1 && back < 2.2,
-    `${back.toFixed(2)} m from the eye`);
-  check('and above it, so the shot looks down over the shoulder',
-    cam.position.y > eye.y, `camera y ${cam.position.y.toFixed(2)} vs eye ${eye.y.toFixed(2)}`);
+  const off = cam.position.distanceTo(eye);
+  check('and sits exactly at their eye, not near it',
+    off < 0.01, `${off.toFixed(3)} m from the eye`);
 
   /*
-   * The killer must actually be ON SCREEN. This is the check that would have
-   * caught the original framing: everything else about it was correct — right
-   * position, right orientation, right world state — and the one thing that
-   * mattered, being able to see the person who killed you, was not true.
+   * And it is ON the subject's spine, which is what makes hiding their head
+   * necessary — see RemotePlayers.headlessId. This is the check that pins the
+   * framing down: over-the-shoulder puts the camera 1.5 m back and 0.42 m to
+   * the right, so it cannot pass for first person by accident.
    */
-  const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(cam.quaternion);
-  const toSubject = eye.clone().sub(cam.position).normalize();
-  const dot = fwd.dot(toSubject);
-  check('and the killer is in front of the camera, not behind it',
-    dot > 0.85, `alignment ${dot.toFixed(3)} (1.0 is dead centre)`);
+  const spine = Math.hypot(cam.position.x - 7, cam.position.z + 3);
+  check('and on their spine, which is why the head has to be hidden',
+    spine < 0.05, `${spine.toFixed(3)} m off their axis`);
 
   // Crouching still lowers the whole rig — the difference between seeing over
   // a crate and seeing the crate.
@@ -265,18 +268,19 @@ const walkTowards = (i) => ({
     `crouched ${cam2.position.y.toFixed(2)} vs standing ${cam3.position.y.toFixed(2)}`);
 }
 
-// ------------------------------------------------------- staying out of walls
+// -------------------------------------------------------- nothing to clear
 {
   /*
-   * Pulling the camera back is only safe if something stops it going through
-   * whatever the killer had their back to — which, in a shooter, is usually a
-   * wall, because that is where people fight from.
+   * The wall-clearance machinery exists for an over-the-shoulder camera, which
+   * has to avoid going through whatever the killer had their back to. At the
+   * eye there is nothing to clear, and this proves the offset is genuinely
+   * zero rather than a small number being quietly corrected by a probe.
    */
   const cam = camera();
   const hits = [];
   const kc = new KillCam({
     camera: cam,
-    // A wall 0.6 m behind them.
+    // A wall 0.6 m behind them. It must make no difference at all.
     clearanceProbe: (ox, oy, oz, dx, dy, dz, max) => { hits.push(max); return 0.6; },
   });
   const end = recorded(kc, 120, () => ({
@@ -287,12 +291,13 @@ const walkTowards = (i) => ({
   kc.update(0.016);
 
   const eye = new THREE.Vector3(7, 1.1 + EYE_ABOVE_CENTRE_STAND, -3);
-  const back = cam.position.distanceTo(eye);
-  check('a wall behind the killer pulls the camera in instead of through it',
-    hits.length > 0 && back < 0.6,
-    `probe said 0.6 m, camera sits ${back.toFixed(2)} m back`);
+  check('a wall behind the killer changes nothing at the eye',
+    cam.position.distanceTo(eye) < 0.01,
+    `${cam.position.distanceTo(eye).toFixed(3)} m from the eye`);
+  check('and no raycast is spent asking',
+    hits.length === 0, `${hits.length} probes`);
 
-  // With no probe at all it still works — it just cannot avoid geometry.
+  // And with no probe supplied at all, identically.
   const camB = camera();
   const kcB = new KillCam({ camera: camB });
   const endB = recorded(kcB, 120, () => ({
@@ -301,9 +306,9 @@ const walkTowards = (i) => ({
   }));
   kcB.watch(2, { endAtMs: endB });
   kcB.update(0.016);
-  check('and with no probe it falls back to the full offset',
-    camB.position.distanceTo(eye) > 1,
-    `${camB.position.distanceTo(eye).toFixed(2)} m back`);
+  check('with or without a probe, the camera is in the same place',
+    camB.position.distanceTo(cam.position) < 0.01,
+    `${camB.position.distanceTo(cam.position).toFixed(3)} m apart`);
 }
 
 // ------------------------------------------------------------- interpolation

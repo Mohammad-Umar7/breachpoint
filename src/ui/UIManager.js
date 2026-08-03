@@ -66,6 +66,7 @@ export class UIManager {
       statsPanel: id('hud-stats'),
       drawCalls: id('hud-draws'),
       killFeed: id('kill-feed'),
+      clickToPlay: id('click-to-play'),
       ctfBar: id('ctf-bar'),
       ctfCarrying: id('ctf-carrying'),
       ctfScore: { 1: id('ctf-red-score'), 2: id('ctf-blue-score') },
@@ -184,6 +185,13 @@ export class UIManager {
     // replay there is nothing of ours on screen to aim.
     if (this.el.crosshair) {
       this.el.crosshair.style.visibility = s.spectating ? 'hidden' : '';
+    }
+
+    // "Click to take control". Assigned only on a change: this runs every
+    // frame, and writing `hidden` sixty times a second invalidates style on an
+    // element that has not moved.
+    if (this.el.clickToPlay && this.el.clickToPlay.hidden === !!s.needsClick) {
+      this.el.clickToPlay.hidden = !s.needsClick;
     }
 
     // --- weapon / ammo ---

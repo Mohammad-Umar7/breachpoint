@@ -66,6 +66,14 @@ export class InputManager {
     this.wheelDelta = 0;
 
     this.pointerLocked = false;
+    /**
+     * Whether the game wants the mouse at all.
+     *
+     * True between requestPointerLock() and exitPointerLock() — that is, while
+     * a match is being played — and it is what tells a click on the canvas to
+     * re-acquire a lock that was refused, rather than doing it in a menu.
+     */
+    this.wantsPointerLock = false;
     /** True once navigator.keyboard.lock() has been granted — see _lockKeyboard. */
     this._keyboardLocked = false;
     /** Set by Escape/P so a deliberate exit is not treated as a browser hiccup. */
@@ -110,7 +118,27 @@ export class InputManager {
     };
 
     this._onMouseDown = (e) => {
-      if (!this.pointerLocked) return;
+      /*
+       * A click while the game wants the mouse and does not have it RE-ASKS.
+       *
+       * The request made when a match starts nearly always fails, and for a
+       * reason no retry inside the game can fix: pointer lock needs transient
+       * user activation, and starting a match is a chain of asynchronous work
+       * — connect, agree a room, build the arena — so by the time the game is
+       * ready the click that began it has long since stopped counting. The
+       * player arrives in a live match with a visible cursor and a mouse that
+       * does nothing, which reads as the game being broken rather than as one
+       * missing permission.
+       *
+       * A click IS a fresh activation, so asking here always works. The event
+       * is swallowed rather than passed on: this click bought the lock, and
+       * firing a weapon with it would mean the first shot of every match is
+       * one the player did not aim.
+       */
+      if (!this.pointerLocked) {
+        if (this.wantsPointerLock && this.enabled) this._plainPointerLock();
+        return;
+      }
       this.mouseButtons.add(e.button);
       this.mousePressed.add(e.button);
     };
@@ -241,6 +269,7 @@ export class InputManager {
 
   // ------------------------------------------------------------ pointer lock
   requestPointerLock() {
+    this.wantsPointerLock = true;
     if (this.pointerLocked) return;
 
     // `unadjustedMovement` asks for raw, unaccelerated mouse input — and it is
@@ -322,6 +351,7 @@ export class InputManager {
   }
 
   exitPointerLock() {
+    this.wantsPointerLock = false;
     if (document.pointerLockElement) document.exitPointerLock();
   }
 

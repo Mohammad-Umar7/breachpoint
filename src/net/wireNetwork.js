@@ -46,6 +46,17 @@ const FIRE_LIGHT_RANGE_SQ = 22 * 22;
  */
 const _dir = new THREE.Vector3();
 const _tip = new THREE.Vector3();
+const _tail = new THREE.Vector3();
+
+/**
+ * How close to the camera counts as "on the lens", in metres.
+ *
+ * A muzzle is about 0.85 m from its owner's eye, so this has to clear that to
+ * catch the first-person kill cam replaying the subject's own gunfire. It is
+ * generous on purpose: the cost of being wrong in one direction is a flash
+ * that could have been drawn, and in the other a white blob across the frame.
+ */
+const LENS_CLEAR = 1.25;
 
 /** @param {import('../Game.js').Game} game */
 export function wireNetwork(game) {
@@ -245,16 +256,20 @@ export function wireNetwork(game) {
     const from = hasBody ? game._tmpB : game._tmpA;
 
     /*
-     * Never draw a flash on the lens.
+     * Never draw a flash ON the lens — but never silence the shot either.
      *
-     * A muzzle sits about 0.85 m from its owner's eye, so replaying the kill
-     * cam subject's own gunfire put a world-scale flash sprite that far from
-     * the camera — twenty-two of them over one replay, each one a white blob
-     * across the whole screen. The over-the-shoulder camera puts the gun
-     * properly in frame, and this is the backstop for the cases where it
-     * cannot: pinned against a wall, or the offsets tuned back to zero.
+     * A muzzle sits about 0.85 m from its owner's eye, so the first-person
+     * kill cam replays the subject's own gunfire with the flash inside the
+     * near plane: twenty-two world-scale sprites over one replay, each a white
+     * blob across the whole screen. Returning early here fixed that and broke
+     * something worse — the replay went silent, and a kill cam that does not
+     * let you hear the shot that killed you is not showing you the kill.
+     *
+     * So the flash is dropped and the tracer is started clear of the lens,
+     * while the sound plays untouched. It still reads as a shot because it
+     * still sounds like one and the round still crosses the frame.
      */
-    if (from.distanceToSquared(game.camera.position) < 0.35 * 0.35) return;
+    const onLens = from.distanceToSquared(game.camera.position) < LENS_CLEAR * LENS_CLEAR;
 
     /*
      * How far away it happened decides how much of this is worth building.
@@ -287,7 +302,7 @@ export function wireNetwork(game) {
        * across the map take one would rob a nearby explosion of its flash.
        */
       const lit = distSq < FIRE_LIGHT_RANGE_SQ;
-      game.fx.spawnMuzzleFlash(from, dir, def.muzzleScale ?? 1, lit);
+      if (!onLens) game.fx.spawnMuzzleFlash(from, dir, def.muzzleScale ?? 1, lit);
 
       /*
        * A tracer, so a shot that MISSES is still visible — which is the one
@@ -297,7 +312,12 @@ export function wireNetwork(game) {
        * that hit nothing has no impact point to trace to.
        */
       _tip.copy(dir).multiplyScalar(Math.min(def.range ?? 80, 90)).add(from);
-      game.fx.spawnTracer(from, _tip, { width: 0.03 });
+      // Started past the near plane when the gun is our own, or the first
+      // centimetre of the tracer is a bright streak drawn across the lens.
+      const tail = onLens
+        ? _tail.copy(dir).multiplyScalar(LENS_CLEAR * 1.6).add(from)
+        : from;
+      game.fx.spawnTracer(tail, _tip, { width: 0.03 });
     }
 
     // Positional, so it carries a direction and a distance — the whole point

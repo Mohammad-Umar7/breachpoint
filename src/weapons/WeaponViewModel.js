@@ -156,6 +156,20 @@ export class WeaponViewModel {
     this.camera.updateProjectionMatrix();
   }
 
+  /**
+   * Show or hide the first-person weapon.
+   *
+   * Used by the kill cam. The view-model camera copies the world camera every
+   * frame, so when the world camera moves into somebody else's head OUR gun
+   * goes with it — drawn at a rifle's offset from a lens that is now theirs.
+   * With both players holding a rifle the two overlapped almost exactly and it
+   * looked correct; it was two guns in the same place, and picking up a
+   * different weapon would have made a liar of the replay.
+   */
+  setVisible(visible) {
+    this.holder.visible = visible;
+  }
+
   /** Copy the world camera's transform so the gun tracks the view exactly. */
   syncCamera() {
     this.worldCamera.getWorldPosition(this.camera.position);

@@ -1387,6 +1387,12 @@ export class Game {
      * or the minimap knows a kill cam exists.
      */
     const replay = this.killcam?.sample ?? null;
+    // Looking out of someone's eyes means being inside their head. Set and
+    // cleared together with the replay so it can never outlive it.
+    this.remotes.headlessId = replay ? this.killcam.subjectId : null;
+    // And our own weapon is not in their hands. Same reasoning as the
+    // crosshair and the damage vignette — see UIManager, `spectating`.
+    this.viewModel.setVisible(!replay);
     // net.players is already a Map of exactly what sync() wants. Rebuilding it
     // here was allocating an array and a Map on every single frame for nothing.
     this.remotes.sync(
@@ -1481,6 +1487,9 @@ export class Game {
         // overlays that describe OUR condition have no business on it — see
         // UIManager.updateHud.
         spectating: !!this.killcam?.active,
+        // The mouse is not ours yet. Worth saying out loud rather than leaving
+        // the player to work out why looking around does nothing.
+        needsClick: this.state === GAME_STATE.PLAYING && !this.input.pointerLocked,
         weapon: this.weapons.hudState(),
         lean: this.lean.amount,
         match: this.net?.connected ? this.net.match : null,
