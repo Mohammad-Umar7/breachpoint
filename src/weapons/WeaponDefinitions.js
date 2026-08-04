@@ -629,6 +629,111 @@ export const WEAPON_DEFS = [
     fireSound: 'grenadeThrow',
     reloadSounds: [],
   },
+
+  /* ===================================================================== */
+  /* GADGETS                                                               */
+  /* ===================================================================== */
+  /*
+   * The scout drone's handset. A weapon in the table, and nothing else.
+   *
+   * It is in WEAPON_DEFS on purpose, and that membership is the entire
+   * multiplayer half of the feature: the server derives `HELD_WEAPON_IDS` from
+   * this array, `w` is already in every snapshot row, so an enemy who walks in
+   * on a pilot sees a screen in their hands instead of a rifle with NO protocol
+   * change at all. A gadget kept in a table of its own would have needed one.
+   *
+   * `slot: 'gadget'` is what keeps it out of everything that would be wrong.
+   * `weaponsForSlot` and the loadout browser both filter for primary/secondary,
+   * so it can never be picked; `SLOTS` in WeaponSystem lists the four carried
+   * slots, so it is on no number key; and it is reached only through
+   * `equipGadget`, against the pool rather than a slot index.
+   *
+   * `damage: 0` is what keeps it out of `test/damage-falloff.mjs`, which skips
+   * anything that cannot hurt somebody.
+   */
+  {
+    id: 'dronectl',
+    name: 'FIELD TERMINAL',
+    short: 'TERM',
+    category: 'gadget',
+    slot: 'gadget',
+    /*
+     * Procedural, and deliberately WITHOUT a `modelId`.
+     *
+     * Every other weapon names one, and every one of those ids has a .glb in
+     * `public/models/` produced by a script in `assets/blender/builds/`. There
+     * is no authored terminal and no build script for one, so naming a model id
+     * here would either fail `test/contracts.mjs` ("every weapon resolves to a
+     * model that is actually loaded") or, if the manifest were extended to
+     * match, 404 on every single page load forever for a file nothing produces.
+     *
+     * Omitting it is also strictly safer than a unique-but-absent id:
+     * `buildViewModel` adds an authored scene WITHOUT cloning it, so two defs
+     * sharing an id reparent geometry out of each other's group. With no id
+     * there is nothing to share. When a `dronectl.glb` is eventually authored,
+     * adding the manifest entry and one line here is the whole change.
+     */
+    modelClass: 'terminal',
+    gadget: true,
+    description: 'Handheld control terminal for the scout drone. Not a weapon.',
+
+    // Priced like everything else so nothing downstream has to special-case it,
+    // and zeroed so the price is always nothing. See `_handleFiring`: a gadget
+    // is neither `melee` nor `throwable`, and with an empty magazine and no
+    // reserve the trigger falls through to the dry-fire branch and stops there.
+    damage: 0, headMul: 1, limbMul: 1, pellets: 1, armorPen: 0,
+    range: 0, falloffStart: 0, falloffEnd: 0, falloffMinScale: 1,
+
+    rpm: 60, automatic: false, magSize: 0,
+    startReserve: 0, maxReserve: 0,
+    // 'none' rather than 'magazine': `canReload` is false for it, which is what
+    // stops the auto-reload in `_handleReload` firing every frame on a weapon
+    // that is permanently empty by design.
+    reloadTime: 0, reloadEmptyTime: 0, reloadType: 'none',
+    switchTime: 0.45,
+
+    spreadBase: 0, spreadMoving: 0, spreadJumping: 0, spreadCrouch: 0,
+    spreadPerShot: 0, spreadMax: 0, spreadRecovery: 1,
+
+    // Never read — `fire()` is unreachable for a gadget — but present because
+    // `RecoilSystem.fire` indexes `def.recoil.pattern` without guarding, and a
+    // definition that is complete cannot become the next NaN.
+    recoil: {
+      pattern: [[0, 0]],
+      randomPitch: 0, randomYaw: 0,
+      recovery: 12, recoveryDelay: 0.05,
+      adsMul: 1, crouchMul: 1, moveMul: 1, airMul: 1,
+      kickback: 0, kickRot: 0, shake: 0,
+    },
+
+    optic: { type: 'none', magnification: 1, reticle: 'none' },
+    adsTime: 0.14, adsSensitivity: 1.0, adsMoveSpeedMul: 1.0,
+    adsSpreadMul: 1, noAds: true,
+    // Held two-handed at chest height and read rather than aimed. Slower than
+    // the LMG, because a pilot is a stationary target by design.
+    moveSpeedMul: 0.62,
+
+    /*
+     * Held higher and closer than a gun, because the screen has to be READ.
+     *
+     * A rifle's offset points a barrel down-range and puts the receiver at the
+     * bottom of the frame, which is exactly where you want a gun and exactly
+     * wrong for a panel: at -0.15 the terminal sat almost entirely below the
+     * viewport, with only its aerial and the top centimetre of the bezel
+     * showing. Raised and pulled in until the panel occupies the lower third
+     * of the screen and can actually be looked at.
+     */
+    viewOffset: [0.002, -0.074, -0.347],
+    adsOffset: [0.002, -0.074, -0.347],
+    adsRotation: [0, 0, 0],
+
+    tracerColor: 0xffffff, tracerWidth: 0, tracerSpeed: 1,
+    muzzleFlashScale: 0, shellVelocity: [0, 0, 0],
+    // A button press, not a shot. `fireSound` is required of every carried
+    // definition (see test/contracts.mjs) and every name must have a synth.
+    fireSound: 'uiClick',
+    reloadSounds: [],
+  },
 ];
 
 /** Optic magnification lookup used for ADS FOV and sensitivity scaling. */

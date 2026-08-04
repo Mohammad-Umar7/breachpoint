@@ -33,6 +33,24 @@ import { randRange } from '../core/MathUtils.js';
 
 const SHADOW_SIZES = { off: 0, low: 1024, medium: 2048, high: 4096 };
 
+/**
+ * Merged batches that must NOT cast a shadow.
+ *
+ * Two different reasons, and both look like a rendering bug when ignored:
+ *   - An EMISSIVE surface that casts a shadow reads as broken. A ceiling light
+ *     is meant to be the source of the light in the room, and one that throws
+ *     a black rectangle onto the floor beneath itself is the single most
+ *     obvious wrong thing on a lit interior map.
+ *   - GLAZING should throw the pattern of its bars and reveals, not a solid
+ *     slab of shade. The manor's conservatory is 9 x 11 m of glass; casting
+ *     from the panes put the whole wing in the dark at dawn.
+ * `floorTile` is here for neither: a floor can only ever shadow itself, and
+ * self-shadowing a flat plane is pure acne.
+ */
+const NO_SHADOW_CAST = new Set([
+  'floorTile', 'lightPanel', 'lampGlow', 'stainedGlass', 'manorGlass',
+]);
+
 export class Level {
   /**
    * @param {THREE.Scene} scene
@@ -375,8 +393,22 @@ export class Level {
    * @param {number} from   start along `axis`
    * @param {number} to     end along `axis`
    * @param {number[][]} gaps  [[start,end], ...] along `axis`
+   * @param {object} [opts]
+   *   `baseY`  the floor this wall stands on, default 0
+   *   `doorH`  head height of every gap, default 3.0
+   *   `tile`   texture repeat, default 2
+   *
+   * WHY `baseY` AND `doorH` EXIST
+   * -----------------------------
+   * Both were constants: the wall was always centred at `height / 2` and the
+   * lintel always sat at exactly 3.0. That is fine for a single-storey compound
+   * and a blocker for anything else — a first-floor partition built with it
+   * appeared at ground level, through the floor slab, and every interior door
+   * in a house came out as a 3 m hangar arch. The two existing maps pass eight
+   * arguments and get the old behaviour unchanged.
    */
-  _wallWithGaps(material, axis, fixed, from, to, height, thickness, gaps) {
+  _wallWithGaps(material, axis, fixed, from, to, height, thickness, gaps, opts = {}) {
+    const { baseY = 0, doorH = 3.0, tile = 2 } = opts;
     const sorted = [...gaps].sort((a, b) => a[0] - b[0]);
     let cursor = from;
     const segments = [];
@@ -384,13 +416,13 @@ export class Level {
       if (gs > cursor) segments.push([cursor, gs]);
       cursor = Math.max(cursor, ge);
       // Lintel above each doorway so the wall reads as continuous.
-      const doorH = 3.0;
       const lintelH = height - doorH;
       if (lintelH > 0.1) {
         const c = (gs + ge) / 2;
         const len = ge - gs;
-        if (axis === 'x') this._box(material, [c, doorH + lintelH / 2, fixed], [len, lintelH, thickness], { tile: 2 });
-        else this._box(material, [fixed, doorH + lintelH / 2, c], [thickness, lintelH, len], { tile: 2 });
+        const ly = baseY + doorH + lintelH / 2;
+        if (axis === 'x') this._box(material, [c, ly, fixed], [len, lintelH, thickness], { tile });
+        else this._box(material, [fixed, ly, c], [thickness, lintelH, len], { tile });
       }
     }
     if (cursor < to) segments.push([cursor, to]);
@@ -399,8 +431,9 @@ export class Level {
       const len = e - s;
       if (len <= 0.01) continue;
       const c = (s + e) / 2;
-      if (axis === 'x') this._box(material, [c, height / 2, fixed], [len, height, thickness], { tile: 2 });
-      else this._box(material, [fixed, height / 2, c], [thickness, height, len], { tile: 2 });
+      const wy = baseY + height / 2;
+      if (axis === 'x') this._box(material, [c, wy, fixed], [len, height, thickness], { tile });
+      else this._box(material, [fixed, wy, c], [thickness, height, len], { tile });
     }
   }
 
@@ -425,7 +458,7 @@ export class Level {
       if (merged) {
         merged.computeBoundingSphere();
         const mesh = new THREE.Mesh(merged, this.assets.getMaterial(matName));
-        mesh.castShadow = matName !== 'floorTile' && matName !== 'lightPanel';
+        mesh.castShadow = !NO_SHADOW_CAST.has(matName);
         mesh.receiveShadow = matName !== 'lightPanel';
         mesh.matrixAutoUpdate = false;
         mesh.updateMatrix();
@@ -627,6 +660,28 @@ function surfaceForMaterial(name) {
     case 'adobe':
     case 'terracotta':
       return SURFACE.CONCRETE;
+    /*
+     * The manor is a house, so what you walk on changes room to room and you
+     * hear it: bare boards and joinery are timber, the treads of both back
+     * stairs are timber, and even the soft furnishings you vault over sound
+     * like the wood frame under them rather than like stone.
+     */
+    case 'walnut':
+    case 'oakFloor':
+    case 'atticBoard':
+    case 'pineStep':
+    case 'rafterOak':
+    case 'linenSoft':
+    case 'carpetOx':
+      return SURFACE.WOOD;
+    // The car, the brass you grab hold of, and the lead-and-slate roof.
+    case 'carDuco':
+    case 'brassTrim':
+    case 'slateRoof':
+      return SURFACE.METAL;
+    case 'manorGlass':
+    case 'stainedGlass':
+      return SURFACE.GLASS;
     default:
       return SURFACE.CONCRETE;
   }

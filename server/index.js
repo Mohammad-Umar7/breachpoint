@@ -35,6 +35,7 @@ import {
   PLAYER_MAX_ARMOR, PLAYER_START_ARMOR, ARMOR_ABSORB,
   PROTOCOL_VERSION, ROOM_CODE_ALPHABET, ROOM_CODE_LENGTH,
   MULTIKILL_WINDOW_MS, STREAK_ANNOUNCE_AT,
+  DRONE, DRONE_CMD, DRONE_EVENT, droneIdFor, ownerOfDroneId, isDroneId,
   isValidRoomCode, sanitizeName, damageFor,
 } from '../src/net/protocol.js';
 import {
@@ -71,11 +72,59 @@ const FLAG_DROP_LOCKOUT_MS = 2000;
 /** Centimetre rounding. Beyond this is noise nobody can see, and it is sent
  *  thirty times a second per player. */
 const r2 = (v) => Math.round(v * 100) / 100;
+/** And ~0.06 degrees for angles, for the same reason. */
+const r3 = (v) => Math.round(v * 1000) / 1000;
 
 /** Shortest interval between shots this weapon could legitimately produce. */
 function minFireInterval(weapon) {
   const rpm = weapon.rpm ?? 600;
   return (60 / rpm) * LIMITS.fireIntervalSlack;
+}
+
+// ---------------------------------------------------------------------------
+// Lag compensation, for anything with an { x, y, z, history }
+// ---------------------------------------------------------------------------
+/*
+ * Free functions rather than methods, because BOTH Player and Drone are shot
+ * at and both have to be judged against where they were when the trigger was
+ * pulled. Two copies of this would be two rewind windows that agree today and
+ * drift the first time either is touched — and the symptom of a rewind that is
+ * subtly wrong is not an error, it is bullets that pass through a target the
+ * shooter watched themselves hit.
+ */
+
+/**
+ * Record a position sample so a shot can be judged against where the victim
+ * actually was when the shooter fired, not where they are now. The client
+ * renders everyone INTERP_DELAY_MS in the past, so without this every shot at
+ * a moving target would be judged against a position the shooter never saw.
+ */
+function pushHistory(entity, now) {
+  entity.history.push({ t: now, x: entity.x, y: entity.y, z: entity.z });
+  // ~1 s is far more than enough to cover interpolation delay plus RTT.
+  const cutoff = now - 1000;
+  while (entity.history.length && entity.history[0].t < cutoff) entity.history.shift();
+}
+
+/** Interpolated position at a past time, for lag-compensated hit checks. */
+function positionAt(entity, when) {
+  const h = entity.history;
+  if (!h.length) return { x: entity.x, y: entity.y, z: entity.z };
+  if (when >= h[h.length - 1].t) return h[h.length - 1];
+  if (when <= h[0].t) return h[0];
+  for (let i = h.length - 1; i > 0; i--) {
+    if (h[i - 1].t <= when && when <= h[i].t) {
+      const a = h[i - 1], b = h[i];
+      const span = b.t - a.t || 1;
+      const k = (when - a.t) / span;
+      return {
+        x: a.x + (b.x - a.x) * k,
+        y: a.y + (b.y - a.y) * k,
+        z: a.z + (b.z - a.z) * k,
+      };
+    }
+  }
+  return h[h.length - 1];
 }
 
 // ---------------------------------------------------------------------------
@@ -139,6 +188,21 @@ class Player {
     this.shotBudget = new Map();
     /** Spawn point held from death until respawn. See Room.reserveSpawn. */
     this.reservedSpawn = null;
+    /**
+     * Looking through a drone rather than out of their own eyes.
+     *
+     * Server-side because it is a RULE, not a display: handleShot refuses a
+     * shot from a pilot, which is what makes "piloting and fighting are
+     * mutually exclusive" something a modified client cannot opt out of.
+     *
+     * Every path that removes a drone must clear this. Miss one and the player
+     * whose drone was shot out from under them can never fire again for the
+     * rest of the match, with nothing logged anywhere — which is why it is
+     * cleared inside despawnDrone rather than at any of its call sites.
+     */
+    this.piloting = false;
+    /** No redeploy until this. Survives respawning, or dying would be free. */
+    this.droneCooldownUntil = 0;
     /** Pickup claim timestamps, one per pool. See handleHeal. */
     this.lastHealAt = 0;
     this.lastArmorAt = 0;
@@ -170,39 +234,96 @@ class Player {
     }
   }
 
-  /**
-   * Record a position sample so a shot can be judged against where the victim
-   * actually was when the shooter fired, not where they are now. The client
-   * renders everyone INTERP_DELAY_MS in the past, so without this every shot
-   * at a moving target would be judged against a position the shooter never
-   * saw.
-   */
-  pushHistory(now) {
-    this.history.push({ t: now, x: this.x, y: this.y, z: this.z });
-    // ~1 s is far more than enough to cover interpolation delay plus RTT.
-    const cutoff = now - 1000;
-    while (this.history.length && this.history[0].t < cutoff) this.history.shift();
+  pushHistory(now) { pushHistory(this, now); }
+
+  positionAt(when) { return positionAt(this, when); }
+}
+
+// ---------------------------------------------------------------------------
+// Drone
+// ---------------------------------------------------------------------------
+/**
+ * One player's scout drone, while it exists.
+ *
+ * EXISTENCE IS MEMBERSHIP of `Room.drones`, and nothing else. There is no
+ * `alive` field and no destroyed state to check, because a second way of
+ * saying "gone" is a second thing to keep in step with the snapshot — and the
+ * snapshot's `d` array is built from that Map alone, which is what makes it
+ * impossible for two clients to disagree about whether a drone is there.
+ *
+ * The Map is keyed by OWNER, which is what makes "one drone per player" a
+ * property of the data structure rather than a rule somebody has to remember
+ * to enforce. See the id convention in protocol.js.
+ */
+class Drone {
+  constructor(player, arena) {
+    this.id = droneIdFor(player.id);
+    this.ownerId = player.id;
+    /*
+     * The owner's team, COPIED rather than looked up.
+     *
+     * `damageDrone` runs the same friendly-fire gate players get, and
+     * `sameTeam(undefined, x)` is false — so a drone that had to be joined
+     * back to its owner to know its side would be shootable by its own team
+     * for every code path that forgot the join. Copying it costs one field.
+     */
+    this.team = player.team;
+
+    // Placed by the SERVER at the pilot's own last-validated position. The
+    // client never names this point; see MSG.DRONE.
+    this.x = player.x;
+    this.y = arena.spawnY;
+    this.z = player.z;
+    this.yaw = player.yaw;
+    this.hp = DRONE.maxHealth;
+
+    /** Where it went in, and the centre of the leash. Never moves. */
+    this.deployX = player.x;
+    this.deployZ = player.z;
+
+    /*
+     * Battery, held as REMAINING rather than as a deadline.
+     *
+     * It only drains while the owner is actually looking through it, so a
+     * deadline stamped at deploy would count the pull-it-out animation and
+     * every pause against a figure the HUD advertises as flight time.
+     * `expiresAt` is the deadline that remaining time implies, and is 0
+     * whenever the drone is not under power.
+     */
+    this.batteryMs = DRONE.batteryMs;
+    this.expiresAt = 0;
+
+    const now = Date.now();
+    /** Last drive report of any kind. Silence past DRONE.staleMs despawns it. */
+    this.lastDriveAt = now;
+    this.lastDriveSeq = -1;
+    /** Movement token bucket, in metres. See LIMITS.droneBurstMetres. */
+    this.moveBudget = LIMITS.droneBurstMetres;
+    this.budgetAt = now;
+
+    /** Short history of past positions, for rewinding shots at it. */
+    this.history = [];
   }
 
-  /** Interpolated position at a past time, for lag-compensated hit checks. */
-  positionAt(when) {
-    const h = this.history;
-    if (!h.length) return { x: this.x, y: this.y, z: this.z };
-    if (when >= h[h.length - 1].t) return h[h.length - 1];
-    if (when <= h[0].t) return h[0];
-    for (let i = h.length - 1; i > 0; i--) {
-      if (h[i - 1].t <= when && when <= h[i].t) {
-        const a = h[i - 1], b = h[i];
-        const span = b.t - a.t || 1;
-        const k = (when - a.t) / span;
-        return {
-          x: a.x + (b.x - a.x) * k,
-          y: a.y + (b.y - a.y) * k,
-          z: a.z + (b.z - a.z) * k,
-        };
-      }
-    }
-    return h[h.length - 1];
+  pushHistory(now) { pushHistory(this, now); }
+
+  positionAt(when) { return positionAt(this, when); }
+
+  /** Start the clock. Idempotent, so a repeated PILOT cannot double-charge. */
+  startBattery(now) {
+    if (!this.expiresAt) this.expiresAt = now + this.batteryMs;
+  }
+
+  /** Stop it, banking what is left. */
+  stopBattery(now) {
+    if (!this.expiresAt) return;
+    this.batteryMs = Math.max(0, this.expiresAt - now);
+    this.expiresAt = 0;
+  }
+
+  /** What the HUD shows, whether or not the clock is currently running. */
+  batteryLeft(now) {
+    return this.expiresAt ? Math.max(0, this.expiresAt - now) : this.batteryMs;
   }
 }
 
@@ -238,6 +359,12 @@ class Room {
      * is the flag Red defends and Blue is trying to take.
      */
     this.flags = new Map();
+    /**
+     * ownerId -> Drone. The single source of the snapshot's `d` array, and
+     * therefore the single thing any client creates or destroys a chassis
+     * from. See the Drone class.
+     */
+    this.drones = new Map();
 
     this.isPublic = false;
     this.players = new Map();
@@ -342,6 +469,12 @@ class Room {
     // Drop first: a carrier who disconnects while holding a flag would
     // otherwise take it out of the world entirely, and no one could score.
     this.dropFlagFrom(player);
+    // And take their drone with them, BEFORE the delete — the same ordering
+    // the flag taught. Afterwards the owner is no longer in `players`, so the
+    // despawn cannot clear their piloting flag or start their cooldown, and
+    // the chassis is left standing in the room as a free sensor belonging to
+    // somebody who has gone home.
+    this.despawnDrone(player.id, DRONE_EVENT.LOST);
     if (!this.players.delete(player.id)) return;
     player.room = null;
     this.broadcast(MSG.LEFT, { id: player.id });
@@ -432,6 +565,12 @@ class Room {
     // where they have been waiting rather than being moved a second time.
     const at = player.reservedSpawn ?? this.reserveSpawn(player);
     player.reservedSpawn = null;
+    // Nothing survives a life boundary. The despawn covers the normal case;
+    // the assignment covers a player who is spawned without having died — a
+    // match restart, or the very first spawn — where there is no drone to
+    // clear the flag as a side effect.
+    this.despawnDrone(player.id, DRONE_EVENT.LOST);
+    player.piloting = false;
     player.x = at.x; player.y = at.y; player.z = at.z;
     player.hp = PLAYER_MAX_HEALTH;
     player.armor = PLAYER_START_ARMOR;
@@ -534,6 +673,15 @@ class Room {
      * what the mode is, and either alternative removes it.
      */
     this.dropFlagFrom(victim);
+    /*
+     * And their drone goes with them.
+     *
+     * A drone that outlived its pilot would be a sensor you keep by dying,
+     * which inverts the whole cost of using one: the safest way to hold an
+     * angle would be to deploy, run out and get shot. LOST rather than
+     * DESTROYED — nobody shot the robot.
+     */
+    this.despawnDrone(victim.id, DRONE_EVENT.LOST);
     // Blowing yourself up costs a death and earns nothing. Without this guard
     // the suicide would credit a kill to the person who committed it.
     if (this.state === MATCH_STATE.LIVE && !selfInflicted) attacker.kills++;
@@ -734,7 +882,163 @@ class Room {
     }
   }
 
+  // ------------------------------------------------------------------ drones
+  /** The snapshot's `d` rows: [droneId, x, y, z, yaw, hp, ownerId]. */
+  dronePayload() {
+    return [...this.drones.values()].map((d) => [
+      d.id, r2(d.x), r2(d.y), r2(d.z), r3(d.yaw), Math.round(d.hp), d.ownerId,
+    ]);
+  }
+
+  /**
+   * Put a drone into the world at its owner's feet.
+   *
+   * Creation is a SERVER EVENT and is never predicted. The client presses the
+   * key, plays a ~0.9 s pull-it-out-of-your-pocket animation, and the drone
+   * appears when this broadcast lands — so the round trip hides inside an
+   * animation that has to happen anyway, and there is no window in which one
+   * player has a drone and another does not.
+   */
+  spawnDrone(player) {
+    const drone = new Drone(player, arenaFor(this.mapId));
+    this.drones.set(player.id, drone);
+    this.broadcast(MSG.DRONESTATE, {
+      o: drone.ownerId,
+      id: drone.id,
+      ev: DRONE_EVENT.DEPLOYED,
+      hp: drone.hp,
+      bt: drone.batteryLeft(Date.now()),
+      p: [r2(drone.x), r2(drone.y), r2(drone.z)],
+      y: r3(drone.yaw),
+    });
+    return drone;
+  }
+
+  /**
+   * Take one out of the world, for any reason at all.
+   *
+   * The ONE place `piloting` is cleared and the cooldown is started, so no
+   * caller can forget either. A pilot left flagged after their drone is gone
+   * can never shoot again; a caller that forgot the cooldown would make the
+   * redeploy timer depend on how you lost the last one.
+   */
+  despawnDrone(ownerId, ev, byId = null) {
+    const drone = this.drones.get(ownerId);
+    if (!drone) return false;
+    this.drones.delete(ownerId);
+
+    const owner = this.players.get(ownerId);
+    if (owner) {
+      owner.piloting = false;
+      owner.droneCooldownUntil = Date.now() + DRONE.redeployCooldownMs;
+    }
+
+    this.broadcast(MSG.DRONESTATE, {
+      o: ownerId,
+      id: drone.id,
+      ev,
+      by: byId,
+      hp: 0,
+      p: [r2(drone.x), r2(drone.y), r2(drone.z)],
+      y: r3(drone.yaw),
+    });
+    return true;
+  }
+
+  despawnAllDrones(ev) {
+    for (const ownerId of [...this.drones.keys()]) this.despawnDrone(ownerId, ev);
+  }
+
+  /**
+   * The two deadlines a drone lives under, checked once per tick beside the
+   * flags — the one place per-tick authoritative state is produced.
+   *
+   * Both exist because a drone is a free sensor sitting in a doorway and its
+   * owner has every reason to leave it there. The battery bounds how long one
+   * deployment is worth, and the stale check bounds a client that has stopped
+   * talking: alt-tabbed, wedged, or a modified one that simply never sends a
+   * RECALL. Without the second, walking away from your keyboard would be the
+   * strongest thing you could do with the feature.
+   */
+  tickDrones(now) {
+    if (!this.drones.size) return;
+    for (const [ownerId, drone] of [...this.drones]) {
+      const owner = this.players.get(ownerId);
+      /*
+       * Unreachable by design — `remove` despawns before `players.delete` —
+       * and guarded anyway, because this runs inside the room's setInterval
+       * where a throw takes the whole room's snapshot with it and nothing is
+       * watching.
+       */
+      if (!owner) { this.despawnDrone(ownerId, DRONE_EVENT.LOST); continue; }
+
+      drone.pushHistory(now);
+
+      if (owner.piloting && drone.expiresAt && now >= drone.expiresAt) {
+        this.despawnDrone(ownerId, DRONE_EVENT.EXPIRED);
+        continue;
+      }
+      if (now - drone.lastDriveAt > DRONE.staleMs) {
+        this.despawnDrone(ownerId, DRONE_EVENT.LOST);
+      }
+    }
+  }
+
+  /**
+   * Shoot a drone. Deliberately NOT a widening of applyDamage.
+   *
+   * Only the first third of that function generalises. The rest awards a kill,
+   * resets streaks, drops a flag, reserves a spawn point, heals the attacker,
+   * broadcasts the score and can END THE MATCH on killTarget — and a robot
+   * being shot must do none of those. Restating six generic lines here is a
+   * far better trade than one missed guard handing somebody the game for
+   * blowing up a toy.
+   */
+  damageDrone(drone, attacker, weapon, distance = null) {
+    if (this.state === MATCH_STATE.OVER) return;
+    // The same friendly-fire rule players get, and it can be asked honestly
+    // because the drone carries its owner's team explicitly.
+    if (sameTeam(drone.team, attacker.team)) return;
+
+    /*
+     * ALWAYS 'torso', and this is the only place that decides it — which is
+     * why handleShot does not bother forcing it on the way in.
+     *
+     * A robot has no head to shoot off, and the multiplier is not cosmetic: a
+     * rifle does 24 to a torso and 48 to a head, against 40 chassis health.
+     * Honouring a claimed headshot would make every drone a one-round kill,
+     * which is the difference between a thing worth deploying and a thing
+     * nobody would bother with.
+     */
+    const dmg = Math.min(damageFor(weapon, 'torso', distance), LIMITS.maxDamagePerHit);
+    drone.hp -= dmg;
+
+    /*
+     * PRIVATE to the attacker: this is their hitmarker and nothing else.
+     *
+     * Broadcasting it would tell the pilot they had been hit without telling
+     * them by whom or from where, which is not information — it is a noise
+     * that makes a player abandon a drone they were in no danger of losing.
+     * They can read the chassis health off the snapshot like everyone else.
+     */
+    attacker.send(MSG.DRONESTATE, {
+      o: drone.ownerId,
+      id: drone.id,
+      ev: DRONE_EVENT.HIT,
+      hp: Math.max(0, Math.round(drone.hp)),
+      by: attacker.id,
+    });
+
+    if (drone.hp <= 0) {
+      this.despawnDrone(drone.ownerId, DRONE_EVENT.DESTROYED, attacker.id);
+    }
+  }
+
   endMatch(winnerId) {
+    // Nothing keeps driving through the post-match screen. The client's own
+    // update loop is still running in GAMEOVER, so a drone left in the room
+    // would carry on being reported and shot at over the scoreboard.
+    this.despawnAllDrones(DRONE_EVENT.LOST);
     this.state = MATCH_STATE.OVER;
     this.winnerId = winnerId;
     this.restartAt = Date.now() + MATCH_RULES.postMatchSec * 1000;
@@ -747,11 +1051,16 @@ class Room {
     this.teamScores[TEAM.RED] = 0;
     this.teamScores[TEAM.BLUE] = 0;
     this.resetFlags();
+    this.despawnAllDrones(DRONE_EVENT.LOST);
     for (const p of this.players.values()) {
       p.kills = 0; p.deaths = 0; p.captures = 0;
       // Streaks belong to a match. Carrying one across a restart would have
       // somebody announced as UNSTOPPABLE on the first kill of a fresh game.
       p.streak = 0; p.multiKill = 0; p.lastKillAt = 0;
+      // And so does the redeploy cooldown, for the same reason: starting a
+      // fresh game already twelve seconds into a timer is a punishment
+      // carried over from a match that is finished.
+      p.droneCooldownUntil = 0;
       this.spawn(p);
     }
     this.broadcastFlags();
@@ -782,6 +1091,7 @@ class Room {
     if (windowElapsed) this.rateWindowAt = now;
 
     this.tickCTF(now);
+    this.tickDrones(now);
 
     if (this.state === MATCH_STATE.LIVE && now >= this.endsAt) {
       let best = null;
@@ -798,7 +1108,6 @@ class Room {
     // Snapshot. Positions are rounded to centimetres and angles to ~0.06 deg:
     // beyond that is noise the player cannot see, and it costs bandwidth 30
     // times a second per player.
-    const r3 = (v) => Math.round(v * 1000) / 1000;
     this.broadcast(MSG.SNAPSHOT, {
       ts: now,
       p: [...this.players.values()].map((p) => [
@@ -810,11 +1119,18 @@ class Room {
           | (p.alive && now < p.protectedUntil ? FLAG.PROTECTED : 0),
         p.weapon, Math.round(p.hp),
       ]),
+      // Undefined, not an empty array: JSON.stringify drops the key entirely,
+      // so a room with no drones — which is every room on every other map —
+      // pays nothing at all for the feature. See MSG.SNAPSHOT.
+      d: this.drones.size ? this.dronePayload() : undefined,
     });
   }
 
   dispose() {
     clearInterval(this.timer);
+    // The timer is what would have expired these. With it gone they are just
+    // objects holding a position history nobody will ever read again.
+    this.drones.clear();
   }
 }
 
@@ -1038,10 +1354,179 @@ function handleHeal(player, msg) {
   });
 }
 
+/**
+ * Everything a client asks of its drone. See MSG.DRONE.
+ *
+ * Its own handler rather than a widening of handleInput, which is the most
+ * security-critical function on this server: threading a second validated
+ * position through it to save one envelope is a bad trade, and the rate
+ * limiting comes for free anyway because DRIVE is charged against the same
+ * per-second budget in the message switch.
+ */
+function handleDrone(player, msg) {
+  const room = player.room;
+  if (!room) return;
+  const arena = arenaFor(room.mapId);
+
+  /* Private, and always with a reason: silence reads as a broken key. */
+  const deny = (why) => player.send(MSG.DRONESTATE, {
+    o: player.id, id: droneIdFor(player.id), ev: DRONE_EVENT.DENIED, why,
+  });
+
+  const now = Date.now();
+
+  switch (msg.c) {
+    case DRONE_CMD.DEPLOY: {
+      /*
+       * THE MAP DECIDES, and the server reads its own copy of that decision.
+       *
+       * `arena.drone` is arena.js's mirror of the map module's `drone: true`,
+       * because the server cannot import THREE and so cannot read the map
+       * itself. A map with no drone block simply has no `arena.drone` — an
+       * absent key, not a false one — so every existing arena refuses this
+       * without being edited, and adding a map cannot accidentally enable it.
+       */
+      if (!arena.drone) { deny('no drone on this map'); return; }
+      if (!player.alive) { deny('not while you are down'); return; }
+      if (room.drones.has(player.id)) { deny('your drone is already out'); return; }
+      if (now < player.droneCooldownUntil) {
+        deny(`drone rebooting — ${Math.ceil((player.droneCooldownUntil - now) / 1000)}s`);
+        return;
+      }
+      room.spawnDrone(player);
+      break;
+    }
+
+    case DRONE_CMD.DRIVE:
+      handleDroneDrive(player, room, arena, msg, now);
+      break;
+
+    case DRONE_CMD.PILOT: {
+      const drone = room.drones.get(player.id);
+      if (!drone) { deny('no drone deployed'); return; }
+      const on = msg.on === 1 || msg.on === true;
+      if (on === player.piloting) return;
+      player.piloting = on;
+      // The battery measures time under power, not time since deploy.
+      if (on) drone.startBattery(now); else drone.stopBattery(now);
+      break;
+    }
+
+    case DRONE_CMD.RECALL:
+      room.despawnDrone(player.id, DRONE_EVENT.RECALLED, player.id);
+      break;
+
+    default:
+      break;
+  }
+}
+
+/**
+ * One drive report, validated the way a player's movement report is.
+ *
+ * Deliberately the same SHAPE as handleInput's check rather than a fresh
+ * derivation of it: a metres token bucket refilled over real elapsed time,
+ * plus a per-step ceiling. Never an instantaneous dxz/dt, because arrival
+ * times are not send times — the network bunches packets, so two perfectly
+ * legal steps land microseconds apart and read as an impossible speed. That is
+ * the lesson LIMITS.moveBurstMetres already records, and it cost a release of
+ * rubber-banding that only ever appeared off a LAN.
+ *
+ * Every rejection ANSWERS, with the authoritative pose. Silently dropping a
+ * bad report leaves the browser simulating forward from a position the server
+ * never accepted, and the two then diverge without limit.
+ */
+function handleDroneDrive(player, room, arena, msg, now) {
+  const drone = room.drones.get(player.id);
+  /*
+   * No drone, nothing to validate — and this is also what makes `arena.drone`
+   * safe to dereference below without a guard. The only way a drone exists is
+   * that DEPLOY found that block, and a room's map is fixed for the life of
+   * the room. A map that never declared one has no block at all rather than a
+   * false one, so every other arena refuses the whole feature by omission.
+   */
+  if (!drone) return;
+
+  const p = msg.p;
+  if (!Array.isArray(p) || p.length !== 3) return;
+  const [x, y, z] = p;
+  if (![x, y, z].every(Number.isFinite)) return;
+  if (typeof msg.q === 'number' && msg.q <= drone.lastDriveSeq) return;
+  drone.lastDriveSeq = typeof msg.q === 'number' ? msg.q : drone.lastDriveSeq;
+
+  /*
+   * The staleness clock is reset HERE, before validation, and that ordering is
+   * the whole point of it.
+   *
+   * DRONE.staleMs despawns a client that has gone SILENT. A pilot pressing
+   * their drone into the leash or into a ceiling is not silent — they are
+   * driving into a wall — and resetting this only on an accepted report would
+   * have the server delete the drone of anyone who held a direction for three
+   * seconds at the edge of its range.
+   */
+  drone.lastDriveAt = now;
+
+  const correct = () => player.send(MSG.DRONESTATE, {
+    o: drone.ownerId,
+    id: drone.id,
+    ev: DRONE_EVENT.CORRECT,
+    hp: Math.round(drone.hp),
+    bt: drone.batteryLeft(now),
+    p: [r2(drone.x), r2(drone.y), r2(drone.z)],
+    y: r3(drone.yaw),
+  });
+
+  // Outside the world by a wide margin — impossible through normal play.
+  if (!isInsideArena(x, y, z, room.mapId)) { correct(); return; }
+  /*
+   * A ceiling, because the drone's whole value is that its camera is 19 cm off
+   * the floor. One that could be flown would see over every wall in the house
+   * and be a different, much stronger item than the one being balanced.
+   */
+  if (y > arena.drone.maxY) { correct(); return; }
+  /*
+   * And a leash from the point the SERVER deployed it at — never from where
+   * the client says it is now, which a modified client could walk outward one
+   * legal step at a time until the drone was in the enemy spawn.
+   */
+  if (Math.hypot(x - drone.deployX, z - drone.deployZ) > arena.drone.leash) {
+    correct(); return;
+  }
+
+  const dt = Math.max(0.001, (now - drone.budgetAt) / 1000);
+  drone.budgetAt = now;
+  drone.moveBudget = Math.min(
+    LIMITS.droneBurstMetres,
+    drone.moveBudget + DRONE.speed * dt,
+  );
+
+  // The step ceiling is checked as well as the budget, not instead of it: a
+  // client that sat still for two seconds has a full bucket, and without this
+  // it could spend the lot as one 5 m jump through a wall.
+  const step = Math.hypot(x - drone.x, z - drone.z);
+  if (step > LIMITS.droneMaxStep || step > drone.moveBudget) { correct(); return; }
+  drone.moveBudget -= step;
+
+  drone.x = x; drone.y = y; drone.z = z;
+  if (Number.isFinite(msg.y)) drone.yaw = msg.y;
+}
+
 function handleShot(player, msg) {
   const room = player.room;
   if (!room || !player.alive) return;
   if (room.state === MATCH_STATE.OVER) return;
+  /*
+   * PILOTING AND FIGHTING ARE MUTUALLY EXCLUSIVE, and it is enforced here
+   * rather than by the client's weapon system being switched off.
+   *
+   * The client half is a UI decision a modified build simply would not make.
+   * This is the rule: while you are looking through a drone your body is
+   * standing still with a screen in its hands, and it cannot shoot back.
+   * Above everything else in this function — including giving up spawn
+   * protection — because a shot from a pilot is not a shot that was refused,
+   * it is a shot that was never taken.
+   */
+  if (player.piloting) return;
 
   const weapon = WEAPON_BY_ID.get(typeof msg.w === 'string' ? msg.w : player.weapon);
   if (!weapon) return;
@@ -1138,11 +1623,25 @@ function handleShot(player, msg) {
    */
   const selfHarmAllowed = weapon.selfHarm === true;
 
+  /*
+   * The dedupe Set keys on `v` alone, unchanged.
+   *
+   * A drone's wire id is minus its owner's, so the two id spaces are disjoint
+   * and a claim is self-describing — see the id convention in protocol.js. The
+   * alternative was a discriminator field and a composite `${v}:${k}` key,
+   * which is a bug waiting to be written.
+   */
   const claimed = new Set();
   for (const hit of hits) {
     const victimId = hit && hit.v;
-    const victim = room.players.get(victimId);
-    if (!victim || !victim.alive) continue;
+    const drone = isDroneId(victimId);
+    const victim = drone
+      ? room.drones.get(ownerOfDroneId(victimId))
+      : room.players.get(victimId);
+    // A drone has no `alive` field on purpose: being in the registry IS being
+    // alive, so there is only one thing to check and one thing to keep in step
+    // with the snapshot.
+    if (!victim || (!drone && !victim.alive)) continue;
     if (victim === player && !selfHarmAllowed) continue;
     // One shot may not damage the same victim twice (a pellet spread claims
     // several hits, but each is checked and capped by weapon damage anyway).
@@ -1151,6 +1650,8 @@ function handleShot(player, msg) {
       claimed.add(victimId);
     }
 
+    // Only meaningful for a player. A robot has no head to shoot off, and
+    // damageDrone is the one place that says so — see the note there.
     const part = hit.pt === 'head' || hit.pt === 'limb' ? hit.pt : 'torso';
 
     // How far away the victim actually was. Used twice: to reject impossible
@@ -1182,7 +1683,12 @@ function handleShot(player, msg) {
       if (dist > maxRange) continue;
     }
 
-    room.applyDamage(victim, player, weapon, part, dist);
+    // Everything above this line — the fire-rate bucket, the rewind window,
+    // the range reject, the falloff — is identical for both. Only what the
+    // damage DOES differs, and that is the whole reason damageDrone exists
+    // as its own function.
+    if (drone) room.damageDrone(victim, player, weapon, dist);
+    else room.applyDamage(victim, player, weapon, part, dist);
   }
 }
 
@@ -1265,6 +1771,22 @@ wss.on('connection', (socket) => {
 
       case MSG.SHOT:
         if (player) handleShot(player, msg);
+        break;
+
+      case MSG.DRONE:
+        if (!player) return;
+        /*
+         * Only DRIVE is charged, and it is charged against the SAME budget as
+         * MSG.INPUT: 30 position reports and 30 drive reports a second is 60
+         * against a ceiling of 90, so a pilot cannot use the drone to buy
+         * themselves extra input bandwidth.
+         *
+         * Deploy, pilot and recall are single presses rather than a stream.
+         * Spending movement budget on them would let a key held down throttle
+         * the player's own body, which is a strange way to lose a fight.
+         */
+        if (msg.c === DRONE_CMD.DRIVE && ++player.inputCount > LIMITS.maxInputHz) return;
+        handleDrone(player, msg);
         break;
 
       case MSG.RESPAWN:

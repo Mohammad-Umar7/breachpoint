@@ -65,6 +65,23 @@ function assertFinite(where, values) {
   }
 }
 
+/**
+ * And refuse a rotation that is not a rotation.
+ *
+ * Separate only because a quaternion is optional at both call sites that take
+ * one. The specific failure it catches is a missing `w`: a caller assembling
+ * `{x, y, z}` by hand — which is what every other argument in this file looks
+ * like — hands Rapier a quaternion it normalises to something arbitrary, and
+ * the collider ends up rotated away from the mesh it belongs to. That is a wall
+ * you can walk through while looking straight at it, with nothing thrown.
+ */
+function assertRotation(where, quat) {
+  if (!quat) return;
+  assertFinite(`${where} rotation`, {
+    qx: quat.x, qy: quat.y, qz: quat.z, qw: quat.w,
+  });
+}
+
 export class PhysicsWorld {
   constructor() {
     this.RAPIER = RAPIER;
@@ -85,8 +102,9 @@ export class PhysicsWorld {
     /** @type {Set<any>} all dynamic bodies (used by explosion queries) */
     this.dynamicBodies = new Set();
 
-    // One shared controller for NPCs (used strictly sequentially) and a
-    // dedicated one for the player so their tuning can differ.
+    // One controller per kind of character, so their tuning can differ. They
+    // hold no state between calls, so a single controller per kind is enough
+    // however many bodies use it.
     this.playerController = this._makeController(0.02, {
       autostepHeight: 0.45,
       // Must not exceed the depth of a single stair tread, or the controller
@@ -99,13 +117,31 @@ export class PhysicsWorld {
       minSlideSlope: 44,
       characterMass: 82,
     });
-    this.npcController = this._makeController(0.02, {
-      autostepHeight: 0.4,
-      autostepMinWidth: 0.2,
-      snapToGround: 0.4,
-      maxSlope: 50,
-      minSlideSlope: 46,
-      characterMass: 78,
+    /*
+     * The scout drone: 0.39 m long, 0.28 m tall, and nothing like a person.
+     *
+     * It gets its own controller rather than borrowing the player's because
+     * every number here is a fraction of the player's, and a robot given a
+     * 0.45 m autostep climbs a kitchen counter.
+     */
+    this.droneController = this._makeController(0.02, {
+      // A kerb, a floor lip, a stair tread. Above the treads it has to climb
+      // and below the furniture it must not.
+      autostepHeight: 0.14,
+      // Must not exceed the depth of a single stair tread, exactly as the
+      // player's must not — the house authors its interior flights with a
+      // 0.24 m run specifically so a robot this size can climb them, so this
+      // has to sit comfortably below that or the drone grinds to a halt
+      // against the bottom step and the upper floors are unreachable.
+      autostepMinWidth: 0.08,
+      // Shorter than the player's, because a chassis 0.11 m off the ground
+      // that snapped down 0.35 m would be pulled through a stair nosing.
+      snapToGround: 0.12,
+      maxSlope: 38,
+      minSlideSlope: 34,
+      // Light enough that shoving a crate with it looks like a toy pushing
+      // furniture, which is what it is.
+      characterMass: 6,
     });
 
     // Scratch objects — reused to keep the frame allocation-free.
@@ -154,6 +190,7 @@ export class PhysicsWorld {
     assertFinite('createStaticBox', {
       x: pos.x, y: pos.y, z: pos.z, hx: half.x, hy: half.y, hz: half.z,
     });
+    assertRotation('createStaticBox', quat);
     const bodyDesc = RAPIER.RigidBodyDesc.fixed().setTranslation(pos.x, pos.y, pos.z);
     if (quat) bodyDesc.setRotation({ x: quat.x, y: quat.y, z: quat.z, w: quat.w });
     const body = this.world.createRigidBody(bodyDesc);
@@ -167,9 +204,10 @@ export class PhysicsWorld {
 
   /** Pushable crate / debris. */
   createDynamicBox(pos, half, opts = {}) {
-    assertFinite('createDynamicBox', {
-      x: pos.x, y: pos.y, z: pos.z, hx: half.x, hy: half.y, hz: half.z,
-    });
+    // Destructured BEFORE the guard, so the guard can see the rotation too.
+    // Reading fields off `opts` one at a time later is how a field ends up
+    // undefined without anyone noticing — `x > undefined` is false, so the
+    // check that should have caught it passes.
     const {
       mass = 24,
       friction = 0.7,
@@ -180,6 +218,10 @@ export class PhysicsWorld {
       tag = null,
       mesh = null,
     } = opts;
+    assertFinite('createDynamicBox', {
+      x: pos.x, y: pos.y, z: pos.z, hx: half.x, hy: half.y, hz: half.z,
+    });
+    assertRotation('createDynamicBox', quat);
 
     const bodyDesc = RAPIER.RigidBodyDesc.dynamic()
       .setTranslation(pos.x, pos.y, pos.z)
@@ -236,8 +278,23 @@ export class PhysicsWorld {
     return { body, collider };
   }
 
-  /** Kinematic capsule used by the player. */
+  /** Kinematic capsule used by the player and by the scout drone. */
   createCharacterBody(pos, halfHeight, radius, tag) {
+    /*
+     * This was the last collider factory with no guard on it, and the only one
+     * whose caller is not level-building code that runs once at load.
+     *
+     * A character capsule is built from a LIVE position — a spawn point, or in
+     * the drone's case wherever the server says its owner was standing — so
+     * unlike a wall it can be built from a number that arrived over a socket.
+     * A single non-finite value here does not misplace one capsule; it poisons
+     * the broad phase and every raycast on the map stops answering, so the
+     * floor, the walls and hit registration all quietly cease to exist while
+     * the level goes on rendering perfectly.
+     */
+    assertFinite('createCharacterBody', {
+      x: pos.x, y: pos.y, z: pos.z, halfHeight, radius,
+    });
     const body = this.world.createRigidBody(
       RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(pos.x, pos.y, pos.z)
     );
@@ -249,6 +306,10 @@ export class PhysicsWorld {
 
   /** Extra collider attached to an existing body. */
   addSphereCollider(body, offsetY, radius, tag) {
+    // Same broad phase, same consequence. A head sphere offset by a NaN takes
+    // the whole map's raycasts down with it, and the body it hangs off is
+    // perfectly fine, which is what makes it hard to find afterwards.
+    assertFinite('addSphereCollider', { offsetY, radius });
     const colDesc = RAPIER.ColliderDesc.ball(radius).setTranslation(0, offsetY, 0);
     const collider = this.world.createCollider(colDesc, body);
     this.tag(collider, tag);

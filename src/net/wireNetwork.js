@@ -19,7 +19,7 @@ import * as THREE from 'three';
 
 import { getWeaponDef } from '../weapons/WeaponDefinitions.js';
 import {
-  MATCH_STATE, MATCH_RULES, STREAK_TIERS, STREAK_ANNOUNCE_AT,
+  MATCH_STATE, MATCH_RULES, STREAK_TIERS, STREAK_ANNOUNCE_AT, DRONE_EVENT,
   streakName, multiKillName,
 } from './protocol.js';
 import { NET_STATE } from './NetworkClient.js';
@@ -592,6 +592,16 @@ export function wireNetwork(game) {
       // camera in the head of somebody who is not there.
       game.killcam?.clear();
       game.ui.setKillCam?.(null);
+      /*
+       * And the drone goes with the socket.
+       *
+       * A pilot whose connection drops while looking through a robot would
+       * otherwise be left staring at a frozen feed with no weapon, no body
+       * control and no event ever coming to give them back — the server that
+       * would have sent it is the one that just went away.
+       */
+      game.drone?.abort?.();
+      game.droneObjects?.clear?.();
       game.weapons.remoteHitTest = null;
       game.weapons.onShotResolved = null;
     }
@@ -602,9 +612,62 @@ export function wireNetwork(game) {
 
   net.onDenied = (why) => game.ui.showNetWarning?.(why);
 
-  // Hit registration: the weapon asks who is on the ray, and reports claims.
-  game.weapons.remoteHitTest = (origin, dir, maxDist) =>
-    (net.connected ? game.remotes.raycast(origin, dir, maxDist) : null);
+  /*
+   * Everything the server says about a drone.
+   *
+   * The split is the same one the whole feature is built on: DroneSystem is
+   * told about anything that changes what the PILOT can do, DroneObjects about
+   * anything that changes what the WORLD looks like, and neither knows the
+   * other exists. This function is the only place that knows both.
+   */
+  net.onDroneState = (s) => {
+    // The mode switch first, always: it owns whether the player has hands.
+    game.drone?.onServerEvent?.(s);
+
+    switch (s.event) {
+      case DRONE_EVENT.HIT:
+        // Metal, not flesh. A robot that bleeds is the tell that nobody
+        // thought about it — see the note in WeaponSystem.
+        if (s.isSelfOwner) game.droneScreen?.alert?.(1);
+        game.droneObjects?.flash?.(s.droneId);
+        break;
+
+      case DRONE_EVENT.DESTROYED:
+        game.droneObjects?.explode?.(s.position ?? null);
+        break;
+
+      /*
+       * A refusal a player never sees reads as a broken key.
+       *
+       * DENIED is the one event that is actionable on its own — no drone on
+       * this map, one already out, still on cooldown — so it goes through the
+       * same warning the server's own DENIED does. It is the same thing: the
+       * server saying no to something we asked for.
+       */
+      case DRONE_EVENT.DENIED:
+        if (s.why) game.ui.showNetWarning?.(s.why);
+        break;
+
+      default:
+        break;
+    }
+  };
+
+  /*
+   * Hit registration: the weapon asks who is on the ray, and reports claims.
+   *
+   * ONE hook with two things behind it, which is what gives drones hitscan,
+   * projectile AND knife hits without touching WeaponSystem — it calls this
+   * from all three. The drone test is given the player hit's distance as its
+   * ceiling, so a body in front of a drone still wins and the nearer of the
+   * two is always the one claimed.
+   */
+  game.weapons.remoteHitTest = (origin, dir, maxDist) => {
+    if (!net.connected) return null;
+    const body = game.remotes.raycast(origin, dir, maxDist);
+    const drone = game.droneObjects?.raycast?.(origin, dir, body ? body.distance : maxDist);
+    return drone ?? body;
+  };
   game.weapons.onShotResolved = (claims, weaponId) => {
     /*
      * One message per trigger pull, hit or miss.

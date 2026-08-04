@@ -114,6 +114,7 @@ export class AssetManager {
       ['Painting hazards', () => this._buildHazard()],
       ['Glazing windows', () => this._buildGlass()],
       ['Quarrying sandstone', () => this._buildOutpost()],
+      ['Papering the manor', () => this._buildManor()],
       ['Rigging soldiers', () => this._buildCharacterMaterials()],
       ['Generating sprites', () => this._buildSprites()],
     ];
@@ -1012,6 +1013,620 @@ export class AssetManager {
         ctx.beginPath(); ctx.moveTo(0, s * 0.32); ctx.lineTo(s, s * 0.32); ctx.stroke();
         ctx.beginPath(); ctx.moveTo(0, s * 0.68); ctx.lineTo(s, s * 0.68); ctx.stroke();
         speckle(ctx, s, rng, 500, ['#9d7a4a', '#c49c66'], 0.7, 2.0);
+      },
+    });
+  }
+
+  /**
+   * The MANOR palette — a lived-in country house, inside.
+   *
+   * Twenty materials, sharing nothing with either outdoor map, and the reason
+   * there are twenty rather than six is that this map is INTERIOR. The
+   * warehouse and the outpost are read at 30-70 m, where four masonry tones
+   * carry the whole place; a house is read at 3-8 m, where every surface is
+   * within arm's reach and a room built out of one grey plaster reads as a
+   * corridor set rather than a kitchen.
+   *
+   * Two of them do navigational work and must not be quietly recoloured:
+   *   - `emeraldTile` is the only saturated colour in the house, so it is what
+   *     tells you at a glance that the room ahead is a bathroom, the kitchen or
+   *     the guest WC. It is doing the outpost teal's job.
+   *   - `brassTrim` is used ONLY on things you touch or climb — balustrade
+   *     caps, glazing bars, stair rods, thresholds. A player learns within one
+   *     match that brass means a route.
+   *
+   * `lampGlow` and `stainedGlass` are emissive because the house is SEALED.
+   * A closed building lit only by a sun that cannot get in is a black box, and
+   * the fix for a dark room here is a light fitting, never more ambient —
+   * ambient blows out the four rooms that do have daylight.
+   */
+  _buildManor() {
+    // Warm lime plaster: the bulk of every interior wall in the house.
+    this._register('plasterCream', {
+      size: 256,
+      roughness: 0.95,
+      metalness: 0.0,
+      normalScale: 0.45,
+      paintColor: (ctx, s, rng) => {
+        fill(ctx, s, '#e8dfd0');
+        blotches(ctx, s, rng, 26, 'rgba(206, 192, 170, 0.30)', 14, 48);
+        blotches(ctx, s, rng, 14, 'rgba(250, 246, 238, 0.40)', 12, 38);
+        // Trowel drag. Without it a flat cream fill reads as painted card.
+        ctx.strokeStyle = 'rgba(198, 184, 162, 0.22)';
+        for (let i = 0; i < 40; i++) {
+          const y = rng() * s;
+          ctx.lineWidth = 1 + rng() * 3;
+          ctx.beginPath();
+          ctx.moveTo(0, y);
+          ctx.lineTo(s, y + (rng() - 0.5) * 10);
+          ctx.stroke();
+        }
+        speckle(ctx, s, rng, 1200, ['#ded4c4', '#f2ece0'], 0.6, 1.8);
+      },
+      paintHeight: (ctx, s, rng) => {
+        fill(ctx, s, '#858585');
+        blotches(ctx, s, rng, 30, 'rgba(120,120,120,0.35)', 10, 34);
+        speckle(ctx, s, rng, 1600, ['#8e8e8e', '#7c7c7c'], 0.6, 1.8);
+      },
+    });
+
+    /*
+     * Floral wallpaper — the single material that proves this is not a grey
+     * box, and the one that makes a bedroom read as a bedroom from the doorway.
+     */
+    this._register('wallpaperRose', {
+      size: 128,
+      roughness: 0.88,
+      metalness: 0.0,
+      normalScale: 0.30,
+      paintColor: (ctx, s, rng) => {
+        fill(ctx, s, '#d8c3c0');
+        // Faint vertical stripe under the print, as papers of this era have.
+        ctx.fillStyle = 'rgba(226, 210, 206, 0.55)';
+        for (let i = 0; i < 8; i += 2) ctx.fillRect((s / 8) * i, 0, s / 8, s);
+        // A small repeat on a half-drop grid: four rosettes and their leaves.
+        for (let gy = 0; gy < 4; gy++) {
+          for (let gx = 0; gx < 4; gx++) {
+            const cx = (s / 4) * (gx + 0.5) + (gy % 2 ? s / 8 : 0);
+            const cy = (s / 4) * (gy + 0.5);
+            ctx.fillStyle = 'rgba(150, 96, 104, 0.55)';
+            for (let p = 0; p < 5; p++) {
+              const a = (p / 5) * Math.PI * 2;
+              ctx.beginPath();
+              ctx.ellipse(cx + Math.cos(a) * 4, cy + Math.sin(a) * 4, 3.4, 2.4, a, 0, Math.PI * 2);
+              ctx.fill();
+            }
+            ctx.fillStyle = 'rgba(112, 130, 100, 0.55)';
+            ctx.beginPath();
+            ctx.ellipse(cx - 8, cy + 7, 5, 2.2, -0.6, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.beginPath();
+            ctx.ellipse(cx + 8, cy + 7, 5, 2.2, 0.6, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        }
+        blotches(ctx, s, rng, 8, 'rgba(180, 160, 150, 0.18)', 8, 24);
+      },
+      paintHeight: (ctx, s, rng) => {
+        fill(ctx, s, '#888888');
+        speckle(ctx, s, rng, 900, ['#8e8e8e', '#828282'], 0.5, 1.4);
+      },
+    });
+
+    // Wide oak boards: the reception rooms and the whole first floor.
+    this._register('oakFloor', {
+      size: 256,
+      roughness: 0.62,
+      metalness: 0.0,
+      normalScale: 0.7,
+      paintColor: (ctx, s, rng) => {
+        fill(ctx, s, '#9c6f42');
+        // Four boards across, with the joints staggered end to end.
+        for (let i = 0; i < 4; i++) {
+          const y = (s / 4) * i;
+          ctx.fillStyle = ['#a4764a', '#94693c', '#a87c50', '#8f6438'][i];
+          ctx.fillRect(0, y, s, s / 4);
+          ctx.strokeStyle = 'rgba(58, 36, 18, 0.75)';
+          ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(s, y); ctx.stroke();
+          const jx = ((i * 97) % s);
+          ctx.beginPath(); ctx.moveTo(jx, y); ctx.lineTo(jx, y + s / 4); ctx.stroke();
+        }
+        grain(ctx, s, rng, 90, 'rgba(70, 44, 22, 0.30)');
+        speckle(ctx, s, rng, 700, ['#8a5f36', '#b0855a'], 0.6, 2.0);
+      },
+      paintHeight: (ctx, s, rng) => {
+        fill(ctx, s, '#8c8c8c');
+        ctx.strokeStyle = '#4a4a4a';
+        ctx.lineWidth = 3;
+        for (let i = 0; i < 4; i++) {
+          const y = (s / 4) * i;
+          ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(s, y); ctx.stroke();
+        }
+        grain(ctx, s, rng, 60, 'rgba(110,110,110,0.5)');
+      },
+    });
+
+    /*
+     * Pale dusty attic boarding, laid with gaps.
+     *
+     * Deliberately the loudest change of floor in the house: you know you have
+     * reached the top storey the instant you step on it, without looking down.
+     */
+    this._register('atticBoard', {
+      size: 256,
+      roughness: 0.94,
+      metalness: 0.0,
+      normalScale: 0.9,
+      paintColor: (ctx, s, rng) => {
+        fill(ctx, s, '#c3ab86');
+        for (let i = 0; i < 5; i++) {
+          const y = (s / 5) * i;
+          ctx.fillStyle = ['#c8b08c', '#bda481', '#cbb590', '#b89e79', '#c5ad88'][i];
+          ctx.fillRect(0, y, s, s / 5);
+          // The gap between boards — daylight from the storey below.
+          ctx.fillStyle = 'rgba(40, 28, 16, 0.65)';
+          ctx.fillRect(0, y, s, 3);
+        }
+        grain(ctx, s, rng, 70, 'rgba(96, 70, 42, 0.28)');
+        blotches(ctx, s, rng, 12, 'rgba(150, 130, 100, 0.25)', 8, 26);
+      },
+      paintHeight: (ctx, s, rng) => {
+        fill(ctx, s, '#909090');
+        for (let i = 0; i < 5; i++) {
+          ctx.fillStyle = '#3c3c3c';
+          ctx.fillRect(0, (s / 5) * i, s, 4);
+        }
+        grain(ctx, s, rng, 50, 'rgba(120,120,120,0.5)');
+      },
+    });
+
+    // Dark oiled joinery: doors, skirtings, balustrades, bookcases, the piano.
+    this._register('walnut', {
+      size: 256,
+      roughness: 0.42,
+      metalness: 0.0,
+      normalScale: 0.55,
+      paintColor: (ctx, s, rng) => {
+        fill(ctx, s, '#4e3320');
+        grain(ctx, s, rng, 130, 'rgba(28, 16, 8, 0.40)');
+        grain(ctx, s, rng, 50, 'rgba(120, 82, 48, 0.30)');
+        // Panel moulding, so a door reads as a door and not a brown slab.
+        ctx.strokeStyle = 'rgba(24, 14, 6, 0.6)';
+        ctx.lineWidth = 4;
+        ctx.strokeRect(s * 0.14, s * 0.10, s * 0.72, s * 0.34);
+        ctx.strokeRect(s * 0.14, s * 0.56, s * 0.72, s * 0.34);
+        speckle(ctx, s, rng, 500, ['#452c1b', '#5c3d26'], 0.6, 1.8);
+      },
+      paintHeight: (ctx, s, rng) => {
+        fill(ctx, s, '#8a8a8a');
+        ctx.strokeStyle = '#565656';
+        ctx.lineWidth = 5;
+        ctx.strokeRect(s * 0.14, s * 0.10, s * 0.72, s * 0.34);
+        ctx.strokeRect(s * 0.14, s * 0.56, s * 0.72, s * 0.34);
+        grain(ctx, s, rng, 60, 'rgba(110,110,110,0.45)');
+      },
+    });
+
+    // Black-and-white chequer: the entrance hall, the stair hall, the baths.
+    this._register('marbleChequer', {
+      size: 256,
+      roughness: 0.28,
+      metalness: 0.02,
+      normalScale: 0.25,
+      paintColor: (ctx, s, rng) => {
+        for (let gy = 0; gy < 4; gy++) {
+          for (let gx = 0; gx < 4; gx++) {
+            ctx.fillStyle = (gx + gy) % 2 ? '#2b2b30' : '#ddd8d0';
+            ctx.fillRect((s / 4) * gx, (s / 4) * gy, s / 4, s / 4);
+          }
+        }
+        // Veining, drawn across the joints so it does not read as printed tile.
+        ctx.strokeStyle = 'rgba(140, 140, 148, 0.35)';
+        for (let i = 0; i < 26; i++) {
+          ctx.lineWidth = 0.6 + rng() * 1.6;
+          let x = rng() * s, y = rng() * s;
+          ctx.beginPath(); ctx.moveTo(x, y);
+          for (let k = 0; k < 5; k++) {
+            x += (rng() - 0.5) * 30; y += (rng() - 0.5) * 30;
+            ctx.lineTo(x, y);
+          }
+          ctx.stroke();
+        }
+        ctx.strokeStyle = 'rgba(90, 88, 92, 0.5)';
+        ctx.lineWidth = 1.5;
+        for (let i = 0; i <= 4; i++) {
+          const p = (s / 4) * i;
+          ctx.beginPath(); ctx.moveTo(0, p); ctx.lineTo(s, p); ctx.stroke();
+          ctx.beginPath(); ctx.moveTo(p, 0); ctx.lineTo(p, s); ctx.stroke();
+        }
+      },
+      paintHeight: (ctx, s) => {
+        fill(ctx, s, '#909090');
+        ctx.strokeStyle = '#4a4a4a';
+        ctx.lineWidth = 3;
+        for (let i = 0; i <= 4; i++) {
+          const p = (s / 4) * i;
+          ctx.beginPath(); ctx.moveTo(0, p); ctx.lineTo(s, p); ctx.stroke();
+          ctx.beginPath(); ctx.moveTo(p, 0); ctx.lineTo(p, s); ctx.stroke();
+        }
+      },
+    });
+
+    // Deep green 100 mm glazed tile — the map's signature colour. See the note
+    // above: this is the wayfinding material, not decoration.
+    this._register('emeraldTile', {
+      size: 128,
+      roughness: 0.18,
+      metalness: 0.04,
+      normalScale: 0.6,
+      paintColor: (ctx, s, rng) => {
+        fill(ctx, s, '#1d4f3c');
+        for (let gy = 0; gy < 4; gy++) {
+          for (let gx = 0; gx < 4; gx++) {
+            const shade = ['#2f6d55', '#28604a', '#357760', '#2b6650'][(gx + gy * 3) % 4];
+            ctx.fillStyle = shade;
+            ctx.fillRect((s / 4) * gx + 2, (s / 4) * gy + 2, s / 4 - 4, s / 4 - 4);
+            // Glaze highlight in the top-left of each tile.
+            const g = ctx.createLinearGradient(
+              (s / 4) * gx, (s / 4) * gy, (s / 4) * (gx + 1), (s / 4) * (gy + 1));
+            g.addColorStop(0, 'rgba(190, 240, 220, 0.30)');
+            g.addColorStop(0.5, 'rgba(255,255,255,0.03)');
+            g.addColorStop(1, 'rgba(0, 30, 20, 0.22)');
+            ctx.fillStyle = g;
+            ctx.fillRect((s / 4) * gx + 2, (s / 4) * gy + 2, s / 4 - 4, s / 4 - 4);
+          }
+        }
+        speckle(ctx, s, rng, 240, ['rgba(255,255,255,0.08)'], 0.5, 1.4);
+      },
+      paintHeight: (ctx, s) => {
+        fill(ctx, s, '#3a3a3a');
+        ctx.fillStyle = '#c8c8c8';
+        for (let gy = 0; gy < 4; gy++) {
+          for (let gx = 0; gx < 4; gx++) {
+            ctx.fillRect((s / 4) * gx + 3, (s / 4) * gy + 3, s / 4 - 6, s / 4 - 6);
+          }
+        }
+      },
+    });
+
+    // Warm red-brown brick: the conservatory piers, the arch screen, and the
+    // chimney breast that repeats at the same x,z on all three floors.
+    this._register('manorBrick', {
+      size: 256,
+      roughness: 0.90,
+      metalness: 0.0,
+      normalScale: 1.0,
+      paintColor: (ctx, s, rng) => {
+        fill(ctx, s, '#c8c0b0');   // lime mortar shows between the bricks
+        const rows = 8, cols = 4;
+        const bh = s / rows, bw = s / cols;
+        for (let r = 0; r < rows; r++) {
+          const off = (r % 2) * (bw / 2);
+          for (let c = -1; c < cols; c++) {
+            const x = off + bw * c;
+            ctx.fillStyle = ['#8c4a33', '#7d4029', '#96543c', '#834530', '#a05c42'][
+              ((r * 7 + c * 3) % 5 + 5) % 5];
+            ctx.fillRect(x + 2, r * bh + 2, bw - 4, bh - 4);
+          }
+        }
+        blotches(ctx, s, rng, 14, 'rgba(60, 30, 20, 0.22)', 8, 28);
+        speckle(ctx, s, rng, 1400, ['#7a3f2b', '#a4614a'], 0.6, 2.0);
+      },
+      paintHeight: (ctx, s) => {
+        fill(ctx, s, '#4c4c4c');
+        const rows = 8, cols = 4;
+        const bh = s / rows, bw = s / cols;
+        ctx.fillStyle = '#c4c4c4';
+        for (let r = 0; r < rows; r++) {
+          const off = (r % 2) * (bw / 2);
+          for (let c = -1; c < cols; c++) {
+            ctx.fillRect(off + bw * c + 3, r * bh + 3, bw - 6, bh - 6);
+          }
+        }
+      },
+    });
+
+    // Pale cut stone: garden steps, sills, thresholds, hearths.
+    this._register('limestone', {
+      size: 256,
+      roughness: 0.88,
+      metalness: 0.0,
+      normalScale: 0.6,
+      paintColor: (ctx, s, rng) => {
+        fill(ctx, s, '#cfc6b2');
+        blotches(ctx, s, rng, 22, 'rgba(174, 165, 146, 0.30)', 12, 40);
+        blotches(ctx, s, rng, 10, 'rgba(232, 226, 212, 0.35)', 10, 30);
+        ctx.strokeStyle = 'rgba(140, 132, 114, 0.40)';
+        ctx.lineWidth = 2;
+        for (let r = 1; r < 3; r++) {
+          const y = (s / 3) * r;
+          ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(s, y); ctx.stroke();
+        }
+        speckle(ctx, s, rng, 2000, ['#c2b9a4', '#dbd3c0'], 0.6, 1.8);
+      },
+      paintHeight: (ctx, s, rng) => {
+        fill(ctx, s, '#8a8a8a');
+        ctx.strokeStyle = '#5a5a5a';
+        ctx.lineWidth = 3;
+        for (let r = 1; r < 3; r++) {
+          const y = (s / 3) * r;
+          ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(s, y); ctx.stroke();
+        }
+        speckle(ctx, s, rng, 2200, ['#949494', '#7e7e7e'], 0.7, 2.2);
+      },
+    });
+
+    // Brass. Metallic and smooth so it catches the dawn — which is the point:
+    // it marks every route, and a route you can see from across a room is one
+    // you can plan around.
+    this._register('brassTrim', {
+      size: 128,
+      roughness: 0.24,
+      metalness: 0.88,
+      normalScale: 0.4,
+      envMapIntensity: 1.6,
+      paintColor: (ctx, s, rng) => {
+        fill(ctx, s, '#b08a3c');
+        brushed(ctx, s, rng, 160, 'rgba(232, 200, 130, 0.55)', 'rgba(110, 82, 30, 0.45)');
+        blotches(ctx, s, rng, 8, 'rgba(80, 66, 30, 0.25)', 4, 14);
+      },
+      paintHeight: (ctx, s, rng) => {
+        fill(ctx, s, '#8a8a8a');
+        brushed(ctx, s, rng, 120, '#9a9a9a', '#7a7a7a');
+      },
+    });
+
+    // Dark stained structural timber: the attic trusses and exposed beams.
+    this._register('rafterOak', {
+      size: 256,
+      roughness: 0.86,
+      metalness: 0.0,
+      normalScale: 0.85,
+      paintColor: (ctx, s, rng) => {
+        fill(ctx, s, '#3d2c1c');
+        grain(ctx, s, rng, 150, 'rgba(20, 12, 6, 0.45)');
+        grain(ctx, s, rng, 40, 'rgba(96, 72, 44, 0.30)');
+        // Adze marks — hand-cut timber, not sawn stock.
+        ctx.strokeStyle = 'rgba(18, 10, 4, 0.35)';
+        ctx.lineWidth = 2;
+        for (let i = 0; i < 18; i++) {
+          const y = rng() * s;
+          ctx.beginPath();
+          ctx.moveTo(rng() * s, y);
+          ctx.lineTo(rng() * s, y + (rng() - 0.5) * 8);
+          ctx.stroke();
+        }
+      },
+      paintHeight: (ctx, s, rng) => {
+        fill(ctx, s, '#7e7e7e');
+        grain(ctx, s, rng, 80, 'rgba(110,110,110,0.5)');
+      },
+    });
+
+    // Pale soft furnishing: sofas, beds, dust sheets, the laundry heap.
+    this._register('linenSoft', {
+      size: 128,
+      roughness: 0.98,
+      metalness: 0.0,
+      normalScale: 0.35,
+      paintColor: (ctx, s, rng) => {
+        fill(ctx, s, '#ddd6c6');
+        blotches(ctx, s, rng, 18, 'rgba(198, 190, 176, 0.35)', 8, 26);
+        // A loose weave, so it does not read as painted plaster.
+        ctx.strokeStyle = 'rgba(210, 202, 188, 0.5)';
+        ctx.lineWidth = 1;
+        for (let i = 0; i < s; i += 4) {
+          ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(s, i); ctx.stroke();
+          ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, s); ctx.stroke();
+        }
+      },
+      paintHeight: (ctx, s, rng) => {
+        fill(ctx, s, '#888888');
+        speckle(ctx, s, rng, 1400, ['#929292', '#7e7e7e'], 0.8, 2.2);
+      },
+    });
+
+    // Oxblood carpet with a woven border: stair runners, landings, rugs.
+    this._register('carpetOx', {
+      size: 128,
+      roughness: 0.99,
+      metalness: 0.0,
+      normalScale: 0.5,
+      paintColor: (ctx, s, rng) => {
+        fill(ctx, s, '#6a2622');
+        blotches(ctx, s, rng, 16, 'rgba(48, 16, 14, 0.35)', 8, 26);
+        // The border, which is what makes a runner read as a runner.
+        ctx.strokeStyle = 'rgba(196, 162, 96, 0.55)';
+        ctx.lineWidth = 3;
+        ctx.strokeRect(6, 6, s - 12, s - 12);
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(12, 12, s - 24, s - 24);
+        speckle(ctx, s, rng, 2400, ['#7a2e28', '#5a1e1a', '#8a3a30'], 0.7, 2.0);
+      },
+      paintHeight: (ctx, s, rng) => {
+        fill(ctx, s, '#8a8a8a');
+        speckle(ctx, s, rng, 3000, ['#7a7a7a', '#9a9a9a'], 0.9, 2.6);
+      },
+    });
+
+    /*
+     * Architectural glazing — and unlike the warehouse's grimy `glass` this
+     * one WRITES DEPTH.
+     *
+     * The yard has eight small panes that never overlap, so blending them
+     * without depth is free. The manor stacks a conservatory wall, a pitched
+     * conservatory roof, a lantern and four dormers along the same sightline,
+     * and transparent surfaces without depth-write sort by object rather than
+     * by pixel — the lantern drew through the roof it sits behind. Depth-write
+     * plus a higher opacity is the correct trade for thick, clean glass.
+     */
+    this.materials.set(
+      'manorGlass',
+      new THREE.MeshStandardMaterial({
+        color: 0xc6dbe4,
+        roughness: 0.05,
+        metalness: 0.08,
+        transparent: true,
+        opacity: 0.42,
+        side: THREE.DoubleSide,
+        envMapIntensity: 2.2,
+        depthWrite: true,
+        name: 'manorGlass',
+      })
+    );
+
+    // Polished concrete: the garage, the utility, and every structural slab.
+    this._register('screedFloor', {
+      size: 256,
+      roughness: 0.55,
+      metalness: 0.03,
+      normalScale: 0.45,
+      paintColor: (ctx, s, rng) => {
+        fill(ctx, s, '#6b6862');
+        blotches(ctx, s, rng, 26, 'rgba(84, 82, 78, 0.35)', 14, 46);
+        blotches(ctx, s, rng, 10, 'rgba(30, 26, 22, 0.30)', 6, 22);   // oil
+        speckle(ctx, s, rng, 3000, ['#605d58', '#77746e', '#565350'], 0.7, 2.2);
+      },
+      paintHeight: (ctx, s, rng) => {
+        fill(ctx, s, '#868686');
+        speckle(ctx, s, rng, 2400, ['#8e8e8e', '#7c7c7c'], 0.7, 2.0);
+      },
+    });
+
+    // Bare softwood treads. The service and loft stairs are the unglamorous
+    // routes and they are meant to LOOK unglamorous — you should be able to
+    // tell which staircase you are on from a screenshot of the step.
+    this._register('pineStep', {
+      size: 256,
+      roughness: 0.90,
+      metalness: 0.0,
+      normalScale: 0.7,
+      paintColor: (ctx, s, rng) => {
+        fill(ctx, s, '#c2a170');
+        grain(ctx, s, rng, 100, 'rgba(140, 104, 60, 0.30)');
+        // Knots, which is most of what says "softwood" rather than "oak".
+        for (let i = 0; i < 4; i++) {
+          const x = rng() * s, y = rng() * s, r = 4 + rng() * 5;
+          ctx.strokeStyle = 'rgba(112, 78, 40, 0.55)';
+          for (let k = 0; k < 3; k++) {
+            ctx.lineWidth = 1.4;
+            ctx.beginPath();
+            ctx.ellipse(x, y, r - k * 1.2, (r - k * 1.2) * 0.62, 0.4, 0, Math.PI * 2);
+            ctx.stroke();
+          }
+        }
+        speckle(ctx, s, rng, 700, ['#b4935f', '#cdae80'], 0.6, 1.8);
+      },
+      paintHeight: (ctx, s, rng) => {
+        fill(ctx, s, '#8a8a8a');
+        grain(ctx, s, rng, 70, 'rgba(112,112,112,0.5)');
+      },
+    });
+
+    // The car in the garage. Deep green automotive paint: smooth and glossy,
+    // which is what makes it read as a car rather than a green crate.
+    this._register('carDuco', {
+      size: 128,
+      roughness: 0.16,
+      metalness: 0.55,
+      normalScale: 0.2,
+      envMapIntensity: 1.4,
+      paintColor: (ctx, s, rng) => {
+        fill(ctx, s, '#1f3a2c');
+        blotches(ctx, s, rng, 8, 'rgba(60, 96, 76, 0.30)', 10, 34);
+        blotches(ctx, s, rng, 6, 'rgba(10, 20, 16, 0.35)', 8, 24);
+        speckle(ctx, s, rng, 300, ['rgba(255,255,255,0.05)'], 0.5, 1.2);
+      },
+    });
+
+    // Blue-grey slate and lead: the roof slopes, the dormer cheeks, the
+    // up-and-over garage door.
+    this._register('slateRoof', {
+      size: 256,
+      roughness: 0.72,
+      metalness: 0.10,
+      normalScale: 0.9,
+      paintColor: (ctx, s, rng) => {
+        fill(ctx, s, '#3a4048');
+        for (let r = 0; r < 6; r++) {
+          const off = (r % 2) * (s / 8);
+          for (let c = -1; c < 4; c++) {
+            ctx.fillStyle = ['#454c55', '#3c434b', '#4d545e', '#404750'][(r + c + 8) % 4];
+            ctx.fillRect(off + (s / 4) * c + 1, (s / 6) * r + 1, s / 4 - 2, s / 6 - 2);
+          }
+        }
+        speckle(ctx, s, rng, 1600, ['#333941', '#525a64'], 0.6, 2.0);
+      },
+      paintHeight: (ctx, s) => {
+        fill(ctx, s, '#5a5a5a');
+        ctx.fillStyle = '#b4b4b4';
+        for (let r = 0; r < 6; r++) {
+          const off = (r % 2) * (s / 8);
+          for (let c = -1; c < 4; c++) {
+            ctx.fillRect(off + (s / 4) * c + 2, (s / 6) * r + 2, s / 4 - 4, s / 6 - 4);
+          }
+        }
+      },
+    });
+
+    /*
+     * Warm emissive amber — every pendant, sconce, chandelier, hearth, the
+     * range, the TV and the fridge interior.
+     *
+     * This is the material that makes a sealed house playable. It is emissive
+     * rather than lit because a hundred real point lights would cost the frame
+     * budget several times over, and because a glowing fitting reads as the
+     * source of the light in a room even when the actual illumination is
+     * coming from `hemi` and `bounce`. It is exempted from shadow casting in
+     * Level._flush for the obvious reason.
+     */
+    this._register('lampGlow', {
+      size: 128,
+      roughness: 0.35,
+      metalness: 0.0,
+      emissive: 0xffb45a,
+      emissiveIntensity: 2.6,
+      paintColor: (ctx, s, rng) => {
+        const g = ctx.createRadialGradient(s / 2, s / 2, 2, s / 2, s / 2, s / 2);
+        g.addColorStop(0, '#fff4d8');
+        g.addColorStop(0.55, '#ffcc7a');
+        g.addColorStop(1, '#e08a34');
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, s, s);
+        speckle(ctx, s, rng, 200, ['rgba(255,255,255,0.18)'], 0.6, 1.6);
+      },
+    });
+
+    // The fanlight over the front door and the half-landing window. Emissive
+    // for the same reason as the lamps: it has to throw its colour into the
+    // hall at dawn, when there is barely any sun to transmit.
+    this._register('stainedGlass', {
+      size: 128,
+      roughness: 0.15,
+      metalness: 0.0,
+      emissive: 0xff6a4a,
+      emissiveIntensity: 1.3,
+      transparent: true,
+      opacity: 0.85,
+      side: THREE.DoubleSide,
+      paintColor: (ctx, s) => {
+        fill(ctx, s, '#8c2a24');
+        // Leaded quarries: red and blue, with the came between them.
+        for (let gy = 0; gy < 4; gy++) {
+          for (let gx = 0; gx < 4; gx++) {
+            ctx.fillStyle = (gx + gy) % 3 === 0 ? '#2a4a8c'
+              : (gx + gy) % 3 === 1 ? '#a83028' : '#d8b040';
+            ctx.fillRect((s / 4) * gx + 3, (s / 4) * gy + 3, s / 4 - 6, s / 4 - 6);
+          }
+        }
+        ctx.strokeStyle = '#2c2c30';
+        ctx.lineWidth = 3;
+        for (let i = 0; i <= 4; i++) {
+          const p = (s / 4) * i;
+          ctx.beginPath(); ctx.moveTo(0, p); ctx.lineTo(s, p); ctx.stroke();
+          ctx.beginPath(); ctx.moveTo(p, 0); ctx.lineTo(p, s); ctx.stroke();
+        }
       },
     });
   }

@@ -38,6 +38,17 @@ export const KEY_BINDINGS = Object.freeze({
 
   zoomToggle: ['KeyB'],
   /**
+   * Take the scout drone out, and put it away again — one key, both ways.
+   *
+   * It has to be in this frozen literal rather than assigned at runtime for two
+   * reasons. `Object.freeze` makes a later `KEY_BINDINGS.drone = [...]` throw in
+   * strict mode, which every module is; and `BOUND_KEYS` is derived from this
+   * object once at module load, so a binding added afterwards would never get
+   * its `preventDefault` and Ctrl+Z — crouch plus drone — would reach the
+   * browser's undo instead of the game.
+   */
+  drone: ['KeyZ'],
+  /**
    * Put a carried flag down, for passing it to a teammate.
    *
    * Took over KeyF from a `flashlight` binding that nothing had ever read —

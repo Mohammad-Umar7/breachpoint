@@ -324,6 +324,57 @@ export class WeaponSystem {
     this.audio.play('weaponSwitch');
   }
 
+  /**
+   * Put a gadget in the player's hands, remembering the gun they had.
+   *
+   * `switchTo` cannot be reused for this and cannot be made to. It early-returns
+   * on an unchanged index and it only ever indexes `slots`, and a gadget is in
+   * neither — it lives in `pool` and nowhere else, which is exactly what keeps
+   * it off the number keys, out of the wheel and out of the loadout browser.
+   *
+   * So both of these work against a POOL REFERENCE and deliberately leave
+   * `currentIndex` alone. That is what makes `restoreWeapon` land back on the
+   * weapon you were holding rather than on slot 0, and it is why they are five
+   * lines each instead of a flag threaded through the switching logic.
+   *
+   * @returns {boolean} true if the swap actually happened
+   */
+  equipGadget(id) {
+    const gadget = this.pool.get(id);
+    if (!gadget || gadget === this.current) return false;
+    this.current.onHolster();
+    this.current = gadget;
+    this.current.onEquip();
+    this.ads.reset();
+    this.recoil.resetPattern();
+    this.viewModel.cancelInspect();
+    this.audio.play('weaponSwitch');
+    return true;
+  }
+
+  /**
+   * Put the carried weapon back.
+   *
+   * Goes through `onHolster`/`onEquip` rather than assigning `current`, because
+   * `onEquip` is what sets `switchProgress` to 0 — which is the raise animation.
+   * Assigning it directly would have the gun simply appear, fully shouldered, in
+   * the same frame the terminal vanished.
+   *
+   * @returns {boolean} true if a gadget was actually being held
+   */
+  restoreWeapon() {
+    const back = this.slots[this.currentIndex];
+    if (!back || back === this.current) return false;
+    this.current.onHolster();
+    this.current = back;
+    this.current.onEquip();
+    this.ads.reset();
+    this.recoil.resetPattern();
+    this.viewModel.cancelInspect();
+    this.audio.play('weaponSwitch');
+    return true;
+  }
+
   _handleReload() {
     if (this.input.wasPressed('reload')) {
       if (this.current.startReload()) {
@@ -605,16 +656,40 @@ export class WeaponSystem {
    */
   _resolveRemoteHit(remote, direction, weapon) {
     const def = weapon.def;
-    const headshot = remote.part === 'head';
+    /*
+     * What was hit, not just where.
+     *
+     * `remoteHitTest` is one hook with two things behind it — other players and
+     * drones — and a robot that bleeds is the tell that nobody thought about it.
+     * `kind` rides along from whichever test answered; absent means a player,
+     * because RemotePlayers has been answering this hook alone for far longer
+     * than drones have existed.
+     *
+     * It goes into the CLAIM as well as the effects. The server does not need it
+     * — a negative victim id already says "drone" on its own — but the kill cam
+     * and anything else replaying a claim would otherwise have to work it out
+     * from the sign of an id, which is the reasoning this exists to spare them.
+     */
+    const isDrone = remote.kind === 'drone';
+    // A drone has no head. The server forces `part` to 'torso' for one anyway,
+    // so a client that claimed otherwise would be quietly overruled and the
+    // hitmarker would be the only thing that lied.
+    const headshot = !isDrone && remote.part === 'head';
 
     this._tmp2.copy(direction).negate();
-    this.fx.spawnImpact(remote.point, this._tmp2, SURFACE.FLESH, headshot ? 1.6 : 1);
-    this.fx.spawnBloodBurst(remote.point, direction, headshot ? 1.5 : 1);
-    this.audio.play(impactSoundFor(SURFACE.FLESH), { position: remote.point, volume: 0.8 });
+    if (isDrone) {
+      this.fx.spawnImpact(remote.point, this._tmp2, SURFACE.METAL, 1);
+      this.audio.play(impactSoundFor(SURFACE.METAL), { position: remote.point, volume: 0.8 });
+    } else {
+      this.fx.spawnImpact(remote.point, this._tmp2, SURFACE.FLESH, headshot ? 1.6 : 1);
+      this.fx.spawnBloodBurst(remote.point, direction, headshot ? 1.5 : 1);
+      this.audio.play(impactSoundFor(SURFACE.FLESH), { position: remote.point, volume: 0.8 });
+    }
 
     const claim = {
       victimId: remote.id,
       part: remote.part,
+      kind: isDrone ? 'drone' : 'player',
       point: remote.point,
       distance: remote.distance,
       weaponId: def.id,
@@ -981,7 +1056,10 @@ export class WeaponSystem {
 
       if (remote) {
         const r = this._resolveRemoteHit(remote, this._spreadDir, weapon);
-        this.audio.play('knifeHit', { position: remote.point });
+        // Same reasoning as the impact branch above: a blade on a chassis is
+        // the wall sound, not the flesh one.
+        this.audio.play(remote.kind === 'drone' ? 'knifeHitWall' : 'knifeHit',
+          { position: remote.point });
         if (r?.hitPlayer) this._registerHit(r.damage, r.headshot, r.killed, r.point);
         return;
       }

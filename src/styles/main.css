@@ -409,13 +409,28 @@ html, body {
   padding: 34px 44px;
   width: min(92vw, 620px);
   max-height: 92vh;
+  /*
+   * A panel that is too tall SCROLLS rather than clipping.
+   *
+   * Without this, `max-height` silently cut off whatever did not fit — and
+   * what did not fit was the third map card, so MANOR existed, was listed, and
+   * could not be selected or even seen. Nothing errored; the map was simply
+   * unreachable from the menu. Any future map, mode or setting would have hit
+   * the same wall, so the fix belongs on the panel rather than on the grid.
+   */
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: var(--accent-dim) transparent;
   background: var(--surface);
   border: 1px solid var(--panel-border);
   box-shadow: 0 0 80px rgba(0,0,0,0.75), inset 0 0 70px rgba(0,45,66,0.28);
   position: relative;
   animation: screenIn 0.28s var(--ease);
 }
-.screen.wide { width: min(94vw, 940px); }
+/* Wide enough for three map cards side by side; everything else that is
+   `wide` was already comfortable and only gets more room. */
+.screen.wide { width: min(94vw, 1120px); }
 .screen.centered { align-items: center; text-align: center; }
 .screen.active { display: flex; }
 @keyframes screenIn {
@@ -818,11 +833,29 @@ kbd {
 
 .map-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  /*
+   * Three across where there is room, and the width allows for it.
+   *
+   * `max-width: 780px` against a 280px minimum track meant the grid could only
+   * ever fit two, so a third map wrapped to a row of its own below the fold.
+   * 1000px fits three with their gaps and still centres two comfortably.
+   */
+  grid-template-columns: repeat(auto-fit, minmax(266px, 1fr));
   gap: 18px;
-  max-width: 780px;
+  /*
+   * `width: 100%` as well as a max, and `min-width: 0` on the cards.
+   *
+   * Without both, `auto-fit` sizes its tracks against the card CONTENT rather
+   * than the panel, lays out three columns wider than the panel is, and the
+   * panel's overflow rule then clips the third one — which looks exactly like
+   * the bug this was meant to fix. With them, three fit where there is room
+   * and it drops to two where there is not.
+   */
+  width: 100%;
+  max-width: 1000px;
   margin: 0 auto 26px;
 }
+.map-grid > .map-card, .mode-grid > .mode-card { min-width: 0; }
 
 .map-card {
   --map-accent: #7fb2d8;

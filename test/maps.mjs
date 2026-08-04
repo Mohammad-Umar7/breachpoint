@@ -228,9 +228,27 @@ for (const map of MAPS) {
     buried.length ? `${buried.length} buried: ${JSON.stringify(buried)}`
                   : `${arena.spawnPoints.length} points clear`);
 
-  // The same for pickups: one inside a wall is one nobody can ever take.
+  /*
+   * The same for pickups: one inside a wall is one nobody can ever take.
+   *
+   * The 0.15 m of slack is so a pickup tucked against a wall still passes, but
+   * a FLAT -0.15 inverts on anything thinner than 0.3 m — and a stair tread is
+   * 0.24 m deep. Every step of every staircase was therefore exempt from this
+   * check, and the manor put a health pack a third of the way up one: sunk in
+   * the treads, drawn perfectly, impossible to walk into. Shrinking by at most
+   * half a shape keeps the slack where it was meant to be and never turns a
+   * solid inside out.
+   */
+  const shrunk = (sh, x, y, z) => {
+    if (y < sh.y - sh.height / 2 || y > sh.y + sh.height / 2) return false;
+    const dx = x - sh.x, dz = z - sh.z;
+    const c = Math.cos(-(sh.rotY || 0)), sn = Math.sin(-(sh.rotY || 0));
+    const lx = dx * c - dz * sn, lz = dx * sn + dz * c;
+    return Math.abs(lx) < sh.hx - Math.min(0.15, sh.hx / 2)
+      && Math.abs(lz) < sh.hz - Math.min(0.15, sh.hz / 2);
+  };
   const stuck = level.pickupSpots.filter((sp) =>
-    level.mapShapes.some((sh) => inside(sh, sp.pos.x, sp.pos.y, sp.pos.z, -0.15)));
+    level.mapShapes.some((sh) => shrunk(sh, sp.pos.x, sp.pos.y, sp.pos.z)));
   /*
    * Every explosive must carry a COMPLETE blast configuration.
    *
@@ -276,6 +294,55 @@ for (const map of MAPS) {
     missing.length === 0, missing.join(', ') || 'complete');
   check(`${map.name} has a three-colour swatch`,
     Array.isArray(map.swatch) && map.swatch.length === 3, JSON.stringify(map.swatch));
+}
+
+console.log('\n--- Capture the Flag is symmetrical ---');
+
+/*
+ * Both teams have to get the same map.
+ *
+ * CTF spawn sets are two hand-written lists of coordinates that nothing
+ * compares to each other, and one of them shipped 45% worse than the other:
+ * BLUE averaged 12.3 m from its own flag against RED's 8.5, with two of its
+ * five points genuinely nearer the ENEMY base than its own, and a worst case
+ * of 22 m on a map 27 m across.
+ *
+ * That is not a rounding error, it is the defensive re-loop, and `pickSpawn`
+ * actively seeks the worst case out: it maximises distance from living
+ * players, so the defender killed standing on their own flag by attackers
+ * standing on it too is precisely who gets sent to the far corner. Invisible
+ * by eye, decisive over a match, and trivial to check.
+ */
+for (const map of MAPS) {
+  const arena = arenaFor(map.id);
+  const ctf = arena.ctf;
+  if (!ctf) continue;
+  const teams = Object.keys(ctf.spawns);
+  const stat = (team) => {
+    const own = ctf.bases[team];
+    const foe = ctf.bases[teams.find((t) => t !== team)];
+    const d = ctf.spawns[team].map(([x, z]) => Math.hypot(x - own[0], z - own[1]));
+    const wrongSide = ctf.spawns[team].filter(([x, z]) =>
+      Math.hypot(x - own[0], z - own[1]) >= Math.hypot(x - foe[0], z - foe[1]));
+    return { mean: d.reduce((a, b) => a + b, 0) / d.length, max: Math.max(...d), wrongSide };
+  };
+  const s = teams.map(stat);
+
+  const stranded = s.flatMap((t) => t.wrongSide);
+  check(`${map.name} CTF spawns are all nearer their own base than the enemy's`,
+    stranded.length === 0,
+    stranded.length ? `${stranded.length} on the wrong side: ${JSON.stringify(stranded)}`
+                    : `${teams.length * ctf.spawns[teams[0]].length} points`);
+
+  const dMean = Math.abs(s[0].mean - s[1].mean);
+  check(`${map.name} CTF teams run the same average distance to their flag`,
+    dMean <= 1.0,
+    `${s[0].mean.toFixed(1)} m vs ${s[1].mean.toFixed(1)} m`);
+
+  const dMax = Math.abs(s[0].max - s[1].max);
+  check(`${map.name} CTF teams have the same worst case`,
+    dMax <= 1.0,
+    `${s[0].max.toFixed(1)} m vs ${s[1].max.toFixed(1)} m`);
 }
 
 console.log('\n--- surfaces that would shimmer ---');

@@ -130,6 +130,109 @@ export const ARENAS = Object.freeze({
       }),
     }),
   }),
+
+  /**
+   * MANOR — one sealed country house, 30 x 26 m over three storeys.
+   *
+   * EVERY SPAWN IS ON THE GROUND FLOOR, and that is not a compromise — it is
+   * the map. `arenaFor` carries a single scalar `spawnY` per map, so mixing
+   * floors is not expressible here anyway, and the house is built around the
+   * consequence: every one-way route in it (six balustrade drops, the laundry
+   * chute, the linen hatch, the collapsed attic floor, the loft-stair opening)
+   * runs DOWNWARD, into the respawn traffic. You start downstairs and fight
+   * upward; the geometry keeps dragging the fight back down to meet the next
+   * wave, which is what stops the top of a three-storey map deciding it.
+   */
+  manor: Object.freeze({
+    spawnY: 1.1,
+    /*
+     * Thirteen points spread across eight of the ten ground-floor rooms, none
+     * in a staircase and none in the open middle of the hall.
+     *
+     * Every one is derived from the room table in `maps/manor.js` — the CLEAR
+     * interiors, not the wall centre lines — and `test/maps.mjs` re-checks all
+     * thirteen against the footprints the map actually builds, with the 0.40 m
+     * player radius as the margin. The furniture that matters to that check is
+     * only what spans y = 1.1: the car body (0.35-1.45), the piano, the
+     * long-case clock, the larder towers, the bookcases and the gallery
+     * columns. The waist-high pieces (island 0.95, dining table 0.78, sofas
+     * 0.46) stop below the spawn capsule's centre and cannot bury anybody.
+     */
+    spawnPoints: Object.freeze([
+      [-11.5, -10.5], // kitchen, west of the island
+      [-6.8, -8.0],   // kitchen, by the door to the dining room
+      [-2.5, -10.5],  // dining, north of the table
+      [2.6, -9.0],    // rear lobby, clear of the service stair
+      [-11.0, -2.5],  // long gallery, north end
+      [11.5, 9.8],    // study, east
+      [7.0, 7.4],     // study, west
+      [2.5, 7.0],     // entrance hall, north
+      [-2.6, 10.6],   // entrance hall, by the front door
+      [10.5, 2.0],    // conservatory, south bay
+      [7.6, -11.4],   // garage, north-west of the car
+      [-1.0, 1.5],    // stair hall, east of the great stair
+      [11.0, -3.0],   // conservatory, north bay
+    ]),
+    /*
+     * Generous, and taller than the house: it is only 13 m to the ridge, but a
+     * player thrown off the attic by a blast has to stay legal all the way
+     * down, and the garden outside the glass is part of the world too.
+     */
+    bounds: Object.freeze({
+      minX: -34, maxX: 34,
+      minY: -12, maxY: 40,
+      minZ: -32, maxZ: 32,
+    }),
+
+    /*
+     * Bases in diagonally opposite corners of the house — the kitchen in the
+     * far north-west, the study in the far south-east, 27.0 m apart.
+     *
+     * The carrier has to choose between the spine (kitchen, dining, hall,
+     * entrance hall, study) and the service diagonal (kitchen, long gallery,
+     * living room, or lobby, garage, conservatory, study). Both cross rooms
+     * where the fighting already is, and neither is a straight line: the arch
+     * screen chops the spine into three slots and the conservatory makes the
+     * diagonal cross a double-height space that two galleries and a bridge
+     * overlook.
+     *
+     * THE TWO SPAWN SETS ARE MATCHED, and that is checked rather than eyeballed.
+     * An earlier pair had BLUE averaging 12.3 m from its own flag against RED's
+     * 8.5, with two BLUE points closer to the enemy base than to their own —
+     * so a BLUE defender killed on the flag was pushed 22 m away while RED's
+     * worst case was 15. `pickSpawn` maximises distance from the living, which
+     * means it actively seeks that worst case out. `test/maps.mjs` now asserts
+     * both teams' mean and maximum own-base distances agree to within a metre,
+     * and that no spawn is nearer the enemy base than its own.
+     */
+    /**
+     * The scout drone, mirrored from `manorMap.drone` in maps/manor.js.
+     *
+     * The server cannot import THREE and therefore cannot read a map module,
+     * so the one decision lives in the map and its consequence is copied here.
+     * `test/contracts.mjs` asserts the two agree, because a map that says yes
+     * and an arena that says no is a key that does nothing with no error.
+     *
+     *   maxY   the drone is a GROUND robot. This is just above the attic floor
+     *          so a client cannot claim to have driven one up the stairwell
+     *          void and parked it against the ridge, watching the whole house.
+     *   leash  how far it may get from where the server deployed it. Measured
+     *          from the deploy point, never from the last accepted position —
+     *          a leash that walks with the drone is not a leash.
+     */
+    drone: Object.freeze({ maxY: 8.6, leash: 26 }),
+
+    ctf: Object.freeze({
+      bases: Object.freeze({
+        [TEAM.RED]: Object.freeze([-10.0, -9.4]),
+        [TEAM.BLUE]: Object.freeze([10.0, 8.8]),
+      }),
+      spawns: Object.freeze({
+        [TEAM.RED]: Object.freeze([[-11.5, -10.5], [-6.8, -8.0], [-2.5, -10.5], [2.6, -9.0], [-11.0, -2.5]]),
+        [TEAM.BLUE]: Object.freeze([[11.5, 9.8], [7.0, 7.4], [2.5, 7.0], [-2.6, 10.6], [10.5, 2.0]]),
+      }),
+    }),
+  }),
 });
 
 /** Every map id, in menu order. */
