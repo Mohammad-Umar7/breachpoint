@@ -180,6 +180,35 @@ export class NetworkClient {
    *
    * @returns {Promise<{name: string, url: string, ms: number}|null>}
    */
+  /**
+   * Who is playing what, right now, before we have a socket.
+   *
+   * Deliberately over plain HTTP and deliberately failure-tolerant: this feeds
+   * a nice-to-have line on the map cards, and a menu that refused to open
+   * because a stats request timed out would be a far worse bug than a missing
+   * player count. Every failure path returns null and the caller shows nothing.
+   *
+   * @returns {Promise<{maps: object, publicPlayers: number}|null>}
+   */
+  async fetchPopulation(timeoutMs = 2000) {
+    const http = String(this.url).replace(/^ws/, 'http');
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const res = await fetch(`${http}/health`, { signal: ctrl.signal, cache: 'no-store' });
+      if (!res.ok) return null;
+      const body = await res.json();
+      // An older server has no `maps` key at all. Treat that as "no data"
+      // rather than as an empty server, which would claim every map is dead.
+      if (!body || typeof body.maps !== 'object' || body.maps === null) return null;
+      return { maps: body.maps, publicPlayers: body.publicPlayers ?? 0 };
+    } catch {
+      return null;
+    } finally {
+      clearTimeout(t);
+    }
+  }
+
   async pickRegion(timeoutMs = 2500) {
     let regions;
     try {

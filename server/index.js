@@ -1699,12 +1699,46 @@ const httpServer = http.createServer((req, res) => {
   // A health endpoint so Fly.io (or any host) can tell the process is alive,
   // and so you can eyeball live rooms from a browser.
   if (req.url === '/health' || req.url === '/') {
-    res.writeHead(200, { 'content-type': 'application/json' });
+    /*
+     * WHO IS PLAYING WHAT, broken down by map and by mode.
+     *
+     * On /health rather than as a WebSocket message, because the menu needs it
+     * BEFORE it has a socket — the whole point is to answer "where are the
+     * people" while the player is still choosing. It is plain HTTP, cacheless,
+     * and already the endpoint the region probe hits, so the menu gets the
+     * populations and the latency measurement from one request.
+     *
+     * Public rooms only. A private room is somebody's match with their friends
+     * and its population is not the lobby's business — advertising it would
+     * also leak that a given code is live, which is halfway to guessing one.
+     */
+    const maps = {};
+    let publicPlayers = 0;
+    for (const room of rooms.values()) {
+      if (!room.isPublic || !room.size) continue;
+      publicPlayers += room.size;
+      const entry = maps[room.mapId] ?? (maps[room.mapId] = { players: 0, rooms: 0, modes: {} });
+      entry.players += room.size;
+      entry.rooms += 1;
+      entry.modes[room.modeId] = (entry.modes[room.modeId] ?? 0) + room.size;
+    }
+
+    res.writeHead(200, {
+      'content-type': 'application/json',
+      // The menu polls this while the picker is open, and a cached answer
+      // showing an empty server is worse than no answer at all.
+      'cache-control': 'no-store',
+      // Read cross-origin: the page is served by a static host and the game
+      // server is a different origin in every deployment there has ever been.
+      'access-control-allow-origin': '*',
+    });
     res.end(JSON.stringify({
       ok: true,
       protocol: PROTOCOL_VERSION,
       rooms: rooms.size,
       players: [...rooms.values()].reduce((n, r) => n + r.size, 0),
+      publicPlayers,
+      maps,
       uptimeSec: Math.round(process.uptime()),
     }));
     return;

@@ -486,6 +486,13 @@ export class Game {
 
     this.menus.onCreateMatch = (name) => this._connect({ name, room: null });
     this.menus.onJoinMatch = (code, name) => this._connect({ name, room: code });
+    /*
+     * The menu asks who is playing where. Game owns the network client, so it
+     * is the one place that can answer without MenuManager learning about
+     * sockets, regions or environment variables.
+     */
+    this.menus.onPopulation = () => this.net?.fetchPopulation?.() ?? null;
+
     this.menus.onQuickMatch = async (name, status) => {
       // Pick the closest region by measurement before connecting. Silent and
       // optional — with a single server there is nothing to choose and this

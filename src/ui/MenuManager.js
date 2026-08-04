@@ -336,6 +336,9 @@ export class MenuManager {
       document.getElementById(s)?.classList.toggle('active', s === name);
     }
     this.currentScreen = name;
+    // The population poll belongs to the two pickers and nothing else. Left
+    // running it would keep hitting the server for the whole match.
+    if (name !== 'screen-maps' && name !== 'screen-modes') this._stopPopulationPolling();
     this.el.overlay.classList.remove('hidden');
     this.el.menuFx.style.display = name === 'screen-menu' ? '' : 'none';
 
@@ -345,6 +348,7 @@ export class MenuManager {
   }
 
   hideOverlay() {
+    this._stopPopulationPolling();
     this.el.overlay.classList.add('hidden');
     for (const s of SCREENS) document.getElementById(s)?.classList.remove('active');
     this.currentScreen = null;
@@ -803,6 +807,7 @@ export class MenuManager {
     }
     this._renderModeCards();
     this.showScreen('screen-modes');
+    this._startPopulationPolling();
   }
 
   _renderModeCards() {
@@ -833,6 +838,23 @@ export class MenuManager {
         + `<span><b>${mode.scoreTarget}</b>to win</span>`
         + `</div>`;
 
+      /*
+       * How many are playing THIS MODE, across every map.
+       *
+       * Summed here rather than served pre-aggregated: the server reports by
+       * map with a mode breakdown inside, which is the shape the map cards
+       * need, and rolling it up the other way is two lines.
+       */
+      const pop = this._population;
+      if (pop) {
+        const total = Object.values(pop.maps ?? {})
+          .reduce((sum, m) => sum + (m.modes?.[mode.id] ?? 0), 0);
+        const badge = document.createElement('span');
+        badge.className = 'mode-pop' + (total ? ' live' : '');
+        badge.textContent = total ? `${total} PLAYING` : 'NOBODY PLAYING';
+        art.appendChild(badge);
+      }
+
       const cta = document.createElement('span');
       cta.className = 'mode-cta';
       cta.textContent = mode.id === current ? 'SELECTED' : 'SELECT';
@@ -862,9 +884,67 @@ export class MenuManager {
     }
     this._renderMapCards();
     this.showScreen('screen-maps');
+    this._startPopulationPolling();
     // Going back from the map picker should undo one step, not all of them.
     const back = document.querySelector('#screen-maps [data-back]');
     if (back) back.dataset.back = intent === 'browse' ? 'screen-menu' : 'screen-modes';
+  }
+
+  /**
+   * Who is playing where, refreshed while a picker is open.
+   *
+   * Polled rather than pushed because the menu has no socket yet — that is the
+   * whole point of showing it here, so a player can see where the people are
+   * before committing to a map. Ten seconds is slow enough to be free and fast
+   * enough that a match filling up is visible while you are still deciding.
+   *
+   * Every failure is silent and simply shows nothing. A count is a
+   * nice-to-have, and a menu that broke because a stats request timed out
+   * would be a far worse bug than a missing line of text.
+   */
+  _startPopulationPolling() {
+    this._stopPopulationPolling();
+    const tick = async () => {
+      const data = await this.onPopulation?.();
+      // Ignore a reply that arrives after the player has left the picker —
+      // otherwise a slow response repaints a screen nobody is looking at.
+      if (!this._popTimer) return;
+      this._population = data;
+      if (this.currentScreen === 'screen-maps') this._renderMapCards();
+      else if (this.currentScreen === 'screen-modes') this._renderModeCards();
+    };
+    this._popTimer = setInterval(tick, 10000);
+    tick();
+  }
+
+  _stopPopulationPolling() {
+    if (this._popTimer) clearInterval(this._popTimer);
+    this._popTimer = 0;
+  }
+
+  /**
+   * The "N PLAYING" line for one map, or null when there is nothing to say.
+   *
+   * Null rather than "0 PLAYING" when the server could not be reached: an
+   * empty server and an unreachable one look identical to a player, and
+   * claiming a map is dead when the truth is that we do not know is the one
+   * outcome worth avoiding — it would talk people out of the map they picked.
+   */
+  _populationFor(mapId) {
+    const pop = this._population;
+    if (!pop) return null;
+    const entry = pop.maps?.[mapId];
+    const players = entry?.players ?? 0;
+    // Filter to the mode being chosen, when one has been: "3 playing" is
+    // misleading if all three are in a game type you are not about to join.
+    const modeId = this.settings.get('modeId');
+    const inMode = entry?.modes?.[modeId];
+    return {
+      players,
+      rooms: entry?.rooms ?? 0,
+      inMode: typeof inMode === 'number' ? inMode : null,
+      modeId,
+    };
   }
 
   _renderMapCards() {
@@ -915,6 +995,24 @@ export class MenuManager {
       scale.className = 'map-scale';
       scale.textContent = map.scale;
       art.appendChild(scale);
+
+      /*
+       * A live population badge, top-left of the art so it reads against the
+       * photograph rather than competing with the stats row below.
+       */
+      const pop = this._populationFor(map.id);
+      if (pop) {
+        const badge = document.createElement('span');
+        badge.className = 'map-pop' + (pop.players ? ' live' : '');
+        badge.textContent = pop.players
+          ? `${pop.players} PLAYING${pop.inMode != null && pop.inMode !== pop.players
+              ? ` · ${pop.inMode} IN ${getMode(pop.modeId).short}` : ''}`
+          : 'EMPTY';
+        badge.title = pop.players
+          ? `${pop.players} player${pop.players === 1 ? '' : 's'} across ${pop.rooms} public match${pop.rooms === 1 ? '' : 'es'}`
+          : 'No public matches running on this map';
+        art.appendChild(badge);
+      }
 
       const body = document.createElement('div');
       body.className = 'map-body';
