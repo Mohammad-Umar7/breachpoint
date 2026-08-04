@@ -54,10 +54,10 @@ const send = (s, o) => s.ws.send(JSON.stringify(o));
 /**
  * Come back the way a real client does — by asking.
  *
- * The server's own timer is only a BACKSTOP now, because the kill cam runs for
- * as long as the fight did and the client is the only side that knows when its
- * death sequence has finished. A test that just waits gets the backstop, many
- * seconds later, and reads as "respawning is broken".
+ * The server's own timer is only a BACKSTOP: the client is the side that knows
+ * when its own death sequence has finished, and it asks. A test that just
+ * waits gets the backstop, several seconds later, and reads as "respawning is
+ * broken".
  */
 function askToRespawn(s) {
   setTimeout(() => {

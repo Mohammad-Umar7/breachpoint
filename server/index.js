@@ -152,9 +152,9 @@ class Player {
     /**
      * And when we put them back whether they ask or not.
      *
-     * Separate from `respawnAt` because the kill cam is as long as the fight
-     * was, so the client decides when its own death sequence is finished. This
-     * is only the backstop for a client that never says anything.
+     * Separate from `respawnAt` because the client is the one that decides its
+     * own death sequence is finished and asks. This is only the backstop for a
+     * client that never says anything at all.
      */
     this.forceRespawnAt = 0;
     this.kills = 0;
@@ -1083,9 +1083,9 @@ class Room {
       }
       if (windowElapsed) { p.msgCount = 0; p.inputCount = 0; }
       if (p.alive) p.pushHistory(now);
-      // The BACKSTOP, not the schedule — a client that is still watching its
-      // kill cam asks for itself, and one that has gone quiet gets put back
-      // here rather than lying dead in the room forever.
+      // The BACKSTOP, not the schedule — a live client asks for itself when
+      // its countdown ends, and one that has gone quiet gets put back here
+      // rather than lying dead in the room forever.
       if (!p.alive && p.forceRespawnAt && now >= p.forceRespawnAt) this.spawn(p);
     }
     if (windowElapsed) this.rateWindowAt = now;

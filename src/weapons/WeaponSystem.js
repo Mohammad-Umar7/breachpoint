@@ -665,10 +665,10 @@ export class WeaponSystem {
      * because RemotePlayers has been answering this hook alone for far longer
      * than drones have existed.
      *
-     * It goes into the CLAIM as well as the effects. The server does not need it
-     * — a negative victim id already says "drone" on its own — but the kill cam
-     * and anything else replaying a claim would otherwise have to work it out
-     * from the sign of an id, which is the reasoning this exists to spare them.
+     * It goes into the CLAIM as well as the effects. The server does not need
+     * it — a negative victim id already says "drone" on its own — but anything
+     * else reading a claim would otherwise have to infer it from the sign of
+     * an id, which is the reasoning this exists to spare them.
      */
     const isDrone = remote.kind === 'drone';
     // A drone has no head. The server forces `part` to 'torso' for one anyway,

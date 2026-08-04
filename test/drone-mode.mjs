@@ -529,12 +529,11 @@ console.log('\n--- the key, and the one thing this file must never touch ---');
     KEY_BINDINGS.drone.every((c) => !bound.includes(c)));
 
   /*
-   * THE FOURTH WRITER.
+   * THE THIRD WRITER.
    *
-   * `viewModel.holder.visible` already has three: the respawn path and the
-   * death path in wireNetwork.js, and WeaponViewModel.setVisible, which the
-   * kill cam drives. A fourth means whichever runs last in a frame wins, and
-   * the symptom is a weapon that flickers rather than an error anybody can
+   * `viewModel.holder.visible` already has two: the respawn path and the death
+   * path in wireNetwork.js. A third means whichever runs last in a frame wins,
+   * and the symptom is a weapon that flickers rather than an error anybody can
    * find. `DroneSystem` is not even given the view model, so this is checked
    * from the source: the constructor taking one back is the change that would
    * make the mistake possible again.

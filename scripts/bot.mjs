@@ -20,7 +20,7 @@
  *   npm run bot -- ABCDE 1 hunt # and it comes after you, and shoots
  *
  * `hunt` is what you want for anything that only happens when you DIE — the
- * kill cam, the respawn sequence, the damage direction indicator. Without it
+ * respawn sequence, the damage direction indicator. Without it
  * they patrol and fire at nothing, which is right for looking at movement and
  * listening to footsteps but will never kill you.
  *

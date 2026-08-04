@@ -287,71 +287,45 @@ export const PLAYER_START_ARMOR = 50;
 export const ARMOR_ABSORB = 0.6;
 
 /*
- * Dying happens in two phases, in this order, never sharing the screen:
+ * Dying is ONE phase: you are moved to your own spawn point and you watch a
+ * counter run 3, 2, 1.
  *
- *   1. the KILL CAM — the fight replayed from your killer's eyes
- *   2. the COUNTDOWN — back at your own spawn, watching 3, 2, 1
- *
- * A countdown ticking over the top of a replay is two things asking to be read
- * at once, and it makes the replay feel like something to sit through rather
- * than the point of sitting through it.
- *
- * HOW LONG THE REPLAY RUNS, AND WHY IT IS NOT A FIXED NUMBER
- * ---------------------------------------------------------
- * Most shooters use a fixed window — five seconds or so — and it has an
- * obvious failure: a duel that ran ten seconds gets its opening cut off, so
- * the replay opens midway through a fight you are trying to understand.
- *
- * So the window is ANCHORED to the fight instead of to the clock. It starts a
- * moment before the killer first hurt you and runs to the moment you died, so
- * a long exchange is shown from its beginning and an instant headshot is not
- * padded out with ten seconds of somebody walking down a corridor.
- *
- * It is still CLAMPED at both ends, for reasons the fixed-window games were
- * right about. Below the minimum there is nothing to see. Above the maximum
- * you are watching television instead of playing, and the recording would have
- * to be unbounded — a replay is memory, and memory spent on a thirty-second
- * duel is memory spent every frame of every match on the chance of one.
+ * It used to be two — a replay of the fight from your killer's eyes, and then
+ * the countdown — and the whole of that has been taken out. What is left is
+ * deliberately the shorter, quieter version: the only thing between dying and
+ * playing again is three seconds at the place you are about to stand.
  */
-const KILL_CAM_LEAD_SEC = 0.9;     // shown before the first round lands
-const KILL_CAM_MIN_SEC = 1.6;      // an instant kill still gets a moment
-const KILL_CAM_MAX_SEC = 6;        // past this, you would rather be playing
 const RESPAWN_COUNTDOWN_SEC = 3;
 
 /** Free-for-all rules. */
 export const MATCH_RULES = Object.freeze({
   killTarget: 25,
   timeLimitSec: 600,
-  /** Kill cam window, anchored to the fight and clamped. See the note above. */
-  killCamLeadSec: KILL_CAM_LEAD_SEC,
-  killCamMinSec: KILL_CAM_MIN_SEC,
-  killCamMaxSec: KILL_CAM_MAX_SEC,
-  /** How long you then watch a counter at your own spawn. */
+  /** How long you watch a counter at your own spawn. */
   respawnCountdownSec: RESPAWN_COUNTDOWN_SEC,
   // 12, so a group of ten can all get in with headroom. The arena has 13 spawn
   // points, which is the real ceiling — beyond that players would start
   // spawning on top of each other.
   maxPlayers: 12,
   /**
-   * The EARLIEST you may come back — the shortest possible death.
+   * The EARLIEST you may come back.
    *
-   * Derived, never typed in: a hardcoded figure that drifted below the phases
-   * would let a client respawn in the middle of its own kill cam.
-   *
-   * Because the replay is as long as the fight was, the actual wait varies,
-   * and the client asks to respawn when its own sequence is done. The server
-   * only enforces this floor — nobody gets to skip their death by asking early.
+   * Derived from the countdown rather than typed in, so the two cannot drift
+   * apart and let a client respawn while its own counter is still on screen.
+   * The client still asks when its sequence is done; the server only enforces
+   * this floor, so nobody skips their death by asking early.
    */
-  respawnDelaySec: KILL_CAM_MIN_SEC + RESPAWN_COUNTDOWN_SEC,
+  respawnDelaySec: RESPAWN_COUNTDOWN_SEC,
 
   /**
    * And the LATEST — a backstop, not a schedule.
    *
    * A client that never asks (tabbed away, wedged, or simply gone) must not
    * lie dead in the room forever, so the server puts them back regardless once
-   * even the longest possible sequence has had time to finish.
+   * the sequence has had ample time to finish. The three seconds of slack are
+   * for a slow frame or a late packet, not for anything the game does.
    */
-  respawnBackstopSec: KILL_CAM_MAX_SEC + RESPAWN_COUNTDOWN_SEC + 3,
+  respawnBackstopSec: RESPAWN_COUNTDOWN_SEC + 3,
   /** Match restarts this long after it ends, so a lobby never gets stuck. */
   postMatchSec: 12,
   /** Spawn at least this far from the nearest living player. */

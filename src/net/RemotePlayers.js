@@ -92,14 +92,6 @@ export class RemotePlayers {
     this.audio = audio;
     /** @type {Map<number, object>} id -> body record */
     this.bodies = new Map();
-    /**
-     * Whose head not to draw, because the camera is inside it.
-     *
-     * Set by Game for the duration of a kill cam. Null the rest of the time —
-     * a head that stays hidden after the replay is a decapitated player, so
-     * this is cleared on the same line that clears the replay.
-     */
-    this.headlessId = null;
     this._available = assets.getModel?.('soldier') != null;
     this._tmp = new THREE.Vector3();
     // Scratch for the IK solver — allocating these per arm per player per
@@ -190,16 +182,6 @@ export class RemotePlayers {
       body.group.rotation.y = s.yaw;
       // Head follows aim, clamped so a straight-up look does not snap the neck.
       body.head.rotation.x = THREE.MathUtils.clamp(-s.pitch, -0.7, 0.7);
-      /*
-       * ...and vanishes entirely if the camera is inside it.
-       *
-       * The kill cam looks out of the killer's eyes, which is a point about
-       * 10 cm inside their skull. Hiding the head group (which carries the
-       * helmet and visor with it) leaves their arms and weapon in frame — a
-       * first-person view with hands in it, rather than the inside of a face.
-       */
-      body.head.visible = id !== this.headlessId;
-
       /*
        * In a team mode, a body wears its TEAM's colour rather than its own.
        *

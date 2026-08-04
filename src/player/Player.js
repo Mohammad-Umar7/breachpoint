@@ -735,10 +735,10 @@ export { lerp, SPEED_WALK };
  * How far the eye sits above the capsule CENTRE — the same figure the snapshot
  * reports as `y` for every player, local and remote alike.
  *
- * Exported because the kill cam has to put a camera in somebody else's head
- * from nothing but their snapshot row, and deriving that offset separately
- * would be a second place for it to be wrong. `eyeHeight` above is this same
- * arithmetic on the live, smoothly-interpolated `halfHeight`.
+ * Exported because anything placing a camera or a muzzle on a REMOTE player
+ * has only their snapshot row to work from, and deriving this offset a second
+ * time would be a second place for it to be wrong. `eyeHeight` above is the
+ * same arithmetic on the live, smoothly-interpolated `halfHeight`.
  */
 export const EYE_ABOVE_CENTRE_STAND = HALF_STAND + RADIUS - EYE_FROM_TOP;
 export const EYE_ABOVE_CENTRE_CROUCH = HALF_CROUCH + RADIUS - EYE_FROM_TOP;

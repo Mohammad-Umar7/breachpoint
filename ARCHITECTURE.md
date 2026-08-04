@@ -64,7 +64,7 @@ of them.**
 | `WEAPON_DEFS` | `WeaponDefinitions.js` | Client damage, server damage validation, the loadout UI |
 | `TAG_KIND` | `PhysicsWorld` | Every raycast filter in the weapons and player code |
 | `body.phase` / `body.speed` | `RemotePlayers._animate` | `RemoteAudio` reads both to place footsteps on the visible footfall — renaming either silences every player |
-| `MATCH_RULES.killCam*` / `respawn*` | `protocol.js` | The death sequence spans the server (when you may come back) and three client files (replay, countdown, camera). The totals are DERIVED — change a phase, not a total |
+| `MATCH_RULES.respawn*` | `protocol.js` | The death sequence spans the server (the earliest you may come back, and the backstop) and the client (the countdown). Both totals are DERIVED from `respawnCountdownSec` — change the phase, not a total |
 
 > A real example. The player-body materials used to be named `enemyFatigues`,
 > `enemyVest`, `enemySkin`. Nothing said they were also what every multiplayer
@@ -148,8 +148,8 @@ Two of them (`npm run bot -- BUDDY 2`) is enough to take a match LIVE without
 you joining, which is what most match-state behaviour needs.
 
 Add `hunt` — `npm run bot -- BUDDY 1 hunt` — and it comes after you and shoots.
-That is the only way to reach anything that happens when you DIE: the kill cam,
-the respawn sequence, the damage direction indicator.
+That is the only way to reach anything that happens when you DIE: the respawn
+sequence, the damage direction indicator.
 
 ### A warning about tests that pass
 

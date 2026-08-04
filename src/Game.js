@@ -50,7 +50,6 @@ import { MAPS, getMap, DEFAULT_MAP_ID } from './world/maps/index.js';
 import { ensureThumbnail, getThumbnail } from './world/MapThumbnail.js';
 import { RemotePlayers } from './net/RemotePlayers.js';
 import { RemoteAudio } from './net/RemoteAudio.js';
-import { KillCam } from './net/KillCam.js';
 import { FlagObjects } from './net/FlagObjects.js';
 import { DroneSystem } from './drone/DroneSystem.js';
 import { DroneObjects } from './drone/DroneObjects.js';
@@ -226,28 +225,11 @@ export class Game {
         }),
       });
 
-      /*
-       * Replays the run-up to your death from the killer's eyes.
-       *
-       * Knows nothing about kills — it records the world and can put the
-       * camera in any player's head at any past moment. wireNetwork is what
-       * decides to point it at whoever just shot you. See net/KillCam.js.
-       */
-      this.killcam = new KillCam({
-        camera: this.camera,
-        // Stops the over-the-shoulder camera being pushed through whatever the
-        // killer had their back to, which in this arena is usually a wall.
-        clearanceProbe: (ox, oy, oz, dx, dy, dz, max) =>
-          this._clearanceFrom(ox, oy, oz, dx, dy, dz, max),
-      });
-      /** Our own row for the recording; reused, because it is written at 30 Hz. */
-      this._selfRow = {
-        id: 0, x: 0, y: 0, z: 0, yaw: 0, pitch: 0,
-        flags: 0, weapon: 'rifle', hp: 100,
-      };
       /** Death sequence: who did it, and whether the countdown is up yet. */
       this._killedBy = null;
       this._respawnShown = false;
+      /** When we last asked to come back. See the throttle in _updateNetwork. */
+      this._respawnAskedAt = 0;
 
 
       this.menus.setLoadingProgress(0.78, 'Arming player');
@@ -1059,7 +1041,7 @@ export class Game {
     // Every drone in the room, ours included, drawn from the numbers that just
     // drew everybody's bodies.
     this.droneObjects?.sync(dt);
-    this.minimap?.update(dt, this.player, this.killcam?.sample ?? this._netSample);
+    this.minimap?.update(dt, this.player, this._netSample);
     this._updatePendingExplosions(dt);
     this.fx.update(dt, this.camera);
     this._updateScope(dt);
@@ -1307,24 +1289,6 @@ export class Game {
     return true;
   }
 
-  /**
-   * How far a camera can travel from a point before it hits the world.
-   *
-   * Used by the kill cam to keep its over-the-shoulder camera out of the
-   * geometry. Players are excluded — being briefly inside the killer's own
-   * shoulder is fine and expected; being inside a wall is not.
-   *
-   * @returns {number|null} distance to the obstruction, or null if clear
-   */
-  _clearanceFrom(ox, oy, oz, dx, dy, dz, max) {
-    this._probeAt.set(ox, oy, oz);
-    this._probeDir.set(dx, dy, dz).normalize();
-    const hit = this.physics.raycast(this._probeAt, this._probeDir, max, {
-      filter: (tag) => !!tag && tag.kind !== TAG_KIND.PLAYER,
-    });
-    return hit ? hit.distance : null;
-  }
-
   _surfaceUnder(x, y, z) {
     this._probeAt.set(x, y + 0.35, z);
     const hit = this.physics.raycast(this._probeAt, this._down, 1.4, {
@@ -1483,88 +1447,44 @@ export class Game {
     // the player standing next to it are never a frame apart.
     this._droneSample = net.sampleDrones(performance.now(), this._droneSample ?? undefined);
 
-    /*
-     * Feed the recording, then let any replay in progress rebuild the world.
-     *
-     * Our own row goes in separately because sample() never contains us — it
-     * refuses to interpolate the player it belongs to, which is right for
-     * normal play and exactly wrong for a kill cam, where the victim is the
-     * whole point of the shot. See net/KillCam.js.
-     */
-    if (this.killcam) {
-      const me = this._selfRow;
-      me.id = net.selfId;
-      me.x = this.player.position.x;
-      me.y = this.player.position.y;
-      me.z = this.player.position.z;
-      me.yaw = this.player.yaw;
-      me.pitch = this.player.pitch;
-      me.flags = this._playerFlags();
-      me.weapon = this.weapons.current?.def?.id ?? 'rifle';
-      me.hp = this.player.health;
-      this.killcam.record(this._netSample, net.selfId == null ? null : me, performance.now());
-      // Before sync, so a replay's world state is this frame's.
-      this.killcam.update(dt);
-    }
-
-    /*
-     * A replay is drawn by exactly the same code as live play — it only
-     * changes WHICH world state goes in. Nothing in RemotePlayers, RemoteAudio
-     * or the minimap knows a kill cam exists.
-     */
-    const replay = this.killcam?.sample ?? null;
-    // Looking out of someone's eyes means being inside their head. Set and
-    // cleared together with the replay so it can never outlive it.
-    this.remotes.headlessId = replay ? this.killcam.subjectId : null;
-    // And our own weapon is not in their hands. Same reasoning as the
-    // crosshair and the damage vignette — see UIManager, `spectating`.
-    this.viewModel.setVisible(!replay);
     // net.players is already a Map of exactly what sync() wants. Rebuilding it
     // here was allocating an array and a Map on every single frame for nothing.
-    this.remotes.sync(
-      replay ?? this._netSample, net.players, dt,
-      // Cull against wherever the camera actually is. During a replay that is
-      // the killer's head, half the arena from our own body.
-      replay ? this.camera.position : this.player.position,
-    );
+    this.remotes.sync(this._netSample, net.players, dt, this.player.position);
 
     /*
-     * Dead. Two phases, and the switch between them is a single comparison.
+     * Dead: stand at your own spawn and watch the counter.
      *
-     * The kill cam runs first and owns the camera; the countdown appears only
-     * once there is `respawnCountdownSec` left, which is exactly when the
-     * replay finishes. Deriving the handover from the clock rather than from
-     * a callback means the two cannot get out of step — and a death with NO
-     * kill cam (you blew yourself up, or your killer had just joined) gets the
-     * same countdown, starting at the same number, for free.
+     * You are moved to the spawn point at the moment of death rather than at
+     * the end of the wait — see the SPAWNPOINT message — so the countdown runs
+     * where you are about to be standing rather than over your own corpse.
      */
     if (!this.player.alive && this._respawnAt) {
       const left = Math.max(0, this._respawnAt - performance.now());
-      /*
-       * BOTH conditions, and the first is the load-bearing one.
-       *
-       * The replay advances on accumulated frame time while this deadline is
-       * wall-clock, so on a machine dropping frames the replay runs long and
-       * the two drift apart. Gating on the clock alone put the countdown on
-       * screen most of a second before the kill cam had finished — the exact
-       * overlap the phases exist to avoid. Asking the kill cam whether it is
-       * done cannot drift, because it is the thing being waited for.
-       *
-       * The clock half still earns its place: with no kill cam at all the
-       * first condition is true immediately, and this is what keeps the
-       * counter starting at the same number either way.
-       */
-      const replayDone = !this.killcam?.active;
-      if (replayDone && left <= MATCH_RULES.respawnCountdownSec * 1000) {
+      if (left <= MATCH_RULES.respawnCountdownSec * 1000) {
         if (!this._respawnShown) {
           this._respawnShown = true;
           this.ui.showRespawn?.(this._killedBy);
         }
         this.ui.updateRespawn?.(Math.ceil(left / 1000));
       }
-      // The server enforces its own floor and refuses anything earlier, so
-      // asking is safe even if a replay somehow ran short.
-      if (left <= 0) net.requestRespawn();
+      /*
+       * Ask — but no more than four times a second.
+       *
+       * The server refuses anything before its own floor, and that floor and
+       * this countdown are now the SAME figure, so whether our ask lands before
+       * or after it comes down to clock skew and latency. When it lands early
+       * it is refused, and an unthrottled retry then sends one message per
+       * frame until the floor passes. At 200 messages a second the server does
+       * not throttle a client, it DISCONNECTS it — so the failure mode is
+       * being kicked out of the match for the crime of dying on a fast machine.
+       *
+       * Four a second is far below anything that could trip it and far above
+       * anything a player could notice.
+       */
+      if (left <= 0 && performance.now() - this._respawnAskedAt > 250) {
+        this._respawnAskedAt = performance.now();
+        net.requestRespawn();
+      }
     }
   }
 
@@ -1581,9 +1501,8 @@ export class Game {
     this.weapons.onShotResolved = null;
     this._respawnAt = 0;
     this._respawnShown = false;
+    this._respawnAskedAt = 0;
     this._killedBy = null;
-    this.killcam?.clear();
-    this.ui.setKillCam?.(null);
     this.ui.hideRespawn?.();
     this.ui.hideNetWarning?.();
   }
@@ -1613,16 +1532,15 @@ export class Game {
         // taken away — which is precisely the moment it would matter.
         spawnProtected: this.net?.connected
           && (this.net.selfFlags & FLAG.PROTECTED) !== 0,
-        // While the kill cam is up the screen belongs to somebody else, so the
-        // overlays that describe OUR condition have no business on it — see
-        // UIManager.updateHud.
-        spectating: !!this.killcam?.active,
         /*
-         * Piloting borrows `spectating`'s meaning rather than adding a second
-         * flag: both say "this view is not your body's", which is the only
-         * thing the health vignette and the crosshair actually need to know.
-         * Your crosshair aims a weapon you are not holding.
+         * "This view is not your body's."
+         *
+         * Piloting the drone is the only thing that sets it. It tells the
+         * health vignette and the crosshair to stand down: a crosshair aims a
+         * weapon you are not holding, and a damage vignette describes a body
+         * you are not looking out of. See UIManager.updateHud.
          */
+        spectating: !!this.drone?.piloting,
         drone: this.drone?.hudState?.() ?? null,
         // The mouse is not ours yet. Worth saying out loud rather than leaving
         // the player to work out why looking around does nothing.

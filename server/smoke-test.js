@@ -199,10 +199,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   /*
    * Asked for, not waited for.
    *
-   * The server's own timer is a BACKSTOP: the kill cam runs for as long as the
-   * fight did, so only the client knows when its death sequence has finished
-   * and it is the client that asks. Sitting and waiting here would get the
-   * backstop many seconds later and read as "respawning is broken".
+   * The server's own timer is a BACKSTOP: only the client knows when its own
+   * death sequence has finished, and it is the client that asks. Sitting and
+   * waiting here would get the backstop many seconds later and read as
+   * "respawning is broken".
    */
   b.clear();
   await sleep(MATCH_RULES.respawnDelaySec * 1000 + 200);

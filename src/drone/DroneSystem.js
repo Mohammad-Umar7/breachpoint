@@ -17,10 +17,10 @@
  *
  * WHAT IT DELIBERATELY DOES NOT TOUCH
  * -----------------------------------
- * `viewModel.holder.visible`. Three places already write it — the respawn path
- * and the death path in `wireNetwork.js`, and `WeaponViewModel.setVisible`,
- * which is the kill cam's — and a fourth writer means whichever runs last each
- * frame wins, which is a flicker rather than a bug anyone can find. This class
+ * `viewModel.holder.visible`. Two places already write it — the respawn path
+ * and the death path in `wireNetwork.js` — and a third writer means whichever
+ * runs last each frame wins, which is a flicker rather than a bug anyone can
+ * find. This class
  * is not even GIVEN the view model, so writing it is not something a later edit
  * here can do by accident. The terminal appears and disappears through
  * `equipGadget`/`restoreWeapon`, which go through `onHolster`/`onEquip` like

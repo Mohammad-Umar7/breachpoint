@@ -784,27 +784,6 @@ kbd {
 }
 .ro-hint { font-size: 12px; letter-spacing: 5px; color: var(--ink-dim); margin-top: 4px; }
 
-/* ---------- Kill cam ----------
- * Bottom centre, clear of the respawn counter in the middle of the screen and
- * of both HUD corners. A viewport that has become somebody else's has to say
- * so — without a label it reads as the camera having come loose.
- */
-#killcam-tag {
-  position: absolute; bottom: 74px; left: 50%; transform: translateX(-50%);
-  display: flex; align-items: center; gap: 10px;
-  padding: 5px 14px;
-  background: rgba(8, 12, 16, 0.55);
-  border: 1px solid rgba(232, 101, 79, 0.4);
-  pointer-events: none;
-}
-#killcam-tag[hidden] { display: none; }
-.kc-label {
-  font-size: 11px; letter-spacing: 4px; color: var(--danger);
-}
-.kc-name {
-  font-size: 12px; letter-spacing: 2px; color: var(--ink);
-}
-
 /* ---------- Connection warning ---------- */
 #net-warning {
   position: absolute; top: 14px; left: 50%; transform: translateX(-50%);
