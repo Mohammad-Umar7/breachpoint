@@ -146,9 +146,9 @@ export const ARENAS = Object.freeze({
    * three-storey map deciding it.
    *
    * The box-room stair is the newest of the four and the reason there are four:
-   * the loft stair was the attic's only way in, off a landing with one door, so
-   * a single player in that doorway held the whole top storey. See the header
-   * of `maps/manor.js`.
+   * the loft stair was the attic's ONLY way in, so a single player at the head
+   * of it held the whole top storey by watching one hole in a floor. See the
+   * header of `maps/manor.js`.
    */
   manor: Object.freeze({
     spawnY: 1.1,

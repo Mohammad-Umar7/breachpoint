@@ -40,18 +40,31 @@
  * AND WHY THE ATTIC HAS TWO WAYS IN
  * ---------------------------------
  * It had one, and that made the top storey exactly the fortress the paragraph
- * above exists to prevent. The loft stair opens off the west landing, and the
- * west landing has a single door onto the rest of the floor — so one player
- * standing in that doorway closed the attic, the best pickups in the house and
- * a sixth of the map, without ever seeing the room he was holding.
+ * above exists to prevent. Not because the loft stair is hard to get to — the
+ * west landing it climbs out of has THREE doors, to the central landing, the
+ * master bedroom and the guest bedroom — but because the ATTIC had one opening.
+ * A player at the head of that flight was watching a single hole in a floor,
+ * and holding it closed the best pickups in the house and a sixth of the map
+ * for the price of never moving.
  *
  * The box-room stair is the answer, and it is deliberately as far from the loft
  * stair as the house allows: 20.0 m between their feet, 17.7 m between their
- * heads, in opposite quarters of a 19.8 x 25.0 m attic, watched by two sets of
- * sightlines that never meet. It also comes off a room with four ways into it
- * rather than one. The two routes share nothing below the attic except the
- * central landing at the top of the great stair — the busiest room on the
- * floor, and the one place a single player provably cannot hold.
+ * heads, in opposite quarters of a 19.8 x 25.0 m attic, with the L of party
+ * wall in `buildAttic` standing across the line between them. The two heads
+ * cannot see each other, and from anywhere within 2.5 m of the top of the loft
+ * stair — the one square of boards that was worth standing on, back to the west
+ * wall, on top of your own way out — the box-room head is not visible at all.
+ * It also comes off a room with four ways into it against the west landing's
+ * three. The two routes share nothing below the attic except the central
+ * landing at the top of the great stair — the busiest room on the floor, and
+ * the one place a single player provably cannot hold.
+ *
+ * BE PRECISE ABOUT WHAT THAT WALL DOES, because the temptation is to overclaim
+ * it. Two thirds of the attic can still see both openings. That is fine: those
+ * are positions in the middle of 25 m of open boards, ten metres from either
+ * head, with nothing at your back and both stairs feeding players in behind
+ * you. Holding the attic from there is not holding it, it is standing in it.
+ * What the wall removes is the one place where watching both cost nothing.
  *
  * THE CONSERVATORY IS THE EXCEPTION THAT MAKES IT WORK
  * ---------------------------------------------------
@@ -149,16 +162,29 @@ const LOFT_TOP_Z = LOFT.fromZ - LOFT.steps * LOFT.run;       // -4.28
  * the same reason and then one more. A flight only players could climb would
  * still leave the scout shut out of the whole top storey the moment somebody
  * stood on the loft stair, which is the exact failure this route exists to fix.
- * 0.125 over 0.24 is 27.5 degrees against the player's 52 and the drone's 38,
- * the shallowest flight in the house, and that is the point of it: this is the
- * LONG way to the attic, and the price it charges is distance rather than a
- * scout. Only the service stair, which is a genuine shortcut, charges that.
+ * 0.125 over 0.24 is 27.5 degrees against the player's 52 and the drone's 38.
+ * That TIES the loft stair for the shallowest pitch in the house rather than
+ * beating it — the two are the same expression, so they are the same angle to
+ * the last digit, and they will still be if the storey height ever moves. Do
+ * not re-pitch one to tell them apart: the loft stair clears the drone's 0.14 m
+ * autostep by 15 mm as it is.
+ *
+ * It is the LONG way to the attic all the same, and the length is in the
+ * APPROACH, not the climb. Both flights are 32 x 0.24 = 7.68 m of run for the
+ * same 4.0 m of rise. What costs is the walk to the foot: 17.9 m from the head
+ * of the great stair to here against 12.2 m to the loft stair, measured as a
+ * player walks it rather than straight through the walls. So the price of this
+ * route is distance and nothing else — and only the service stair, which is a
+ * genuine shortcut, charges you the scout instead.
  *
  * `z` is the centre of a 1.4 m band in a 7.3 m room, and it is chosen rather
- * than left over. North of it the roof closes to 1.81 m over the boards and a
- * 1.90 m player cannot stand at the head; south of it the flight would land
- * within 1.4 m of the arch screen and turn both of its gaps into a corridor
- * running down the side of a staircase.
+ * than left over. NORTH IS -z IN THIS HOUSE, so read the two constraints that
+ * pin it in that order: SOUTH of here the roof closes — it is down to 1.81 m
+ * over the boards at the south wall, and a 1.90 m player cannot stand at the
+ * head. NORTH of here the flight would land within 1.4 m of the arch screen at
+ * z = 5.0 and turn both of its gaps into a corridor running down the side of a
+ * staircase, and its west end would stand 1.42 m in front of the living-room
+ * door at x = -4.0, z 7.2..8.6 — a four-metre wall across a doorway.
  */
 const BOXROOM = {
   steps: 32, rise: (A_TOP - F_TOP) / 32, run: 0.24, fromX: 5.3, z: 9.3, w: 1.4,
@@ -571,21 +597,48 @@ function buildStairs(level) {
    *
    * ITS FOOT IS AGAINST x = 5.3 BECAUSE THAT IS AS FAR EAST AS THE HOUSE GOES.
    * The attic plate stops there; the same line is the interior face of the
-   * first-floor partition and the base of the east gable, so the flight starts
-   * against 5.6 m of continuous brick and plaster and comes out inside the
-   * attic's own east end. Past x = 5.7 there is no third storey at all — the
-   * east wing is the flat lead deck and the conservatory's glazed roof — and a
-   * flight there would arrive on top of a house that is meant to be sealed.
+   * first-floor partition and the base of the east gable, so the flight comes
+   * out inside the attic's own east end. Past x = 5.7 there is no third storey
+   * at all — the east wing is the flat lead deck and the conservatory's glazed
+   * roof — and a flight there would arrive on top of a house that is meant to
+   * be sealed.
    *
-   * Bare pine and no rail, like the other two back stairs. It is the one flight
-   * in the house with BOTH sides open, which is the whole reason it works: you
-   * can be shot off it from either half of the room, and you can leave it
-   * sideways at any height rather than being pinned on it.
+   * THAT PARTITION IS NOT BLANK BEHIND THE FOOT. The nursery door is cut in the
+   * same line at z 8.8..10.2, so 1.2 m of the flight's 1.4 m foot backs onto an
+   * opening rather than onto masonry — only z 8.6..8.8 has wall behind it, and
+   * the rest has a lintel starting at y = 6.6 and nothing under it. Two things
+   * follow, and both are the reason to leave this where it is rather than
+   * assume it was an accident:
    *
-   * 7.68 m of run in a 9.10 m room. The 1.42 m left at the west end is not
-   * slack — it is the walk-around that joins the hall's 3.4 m south band to its
-   * 2.5 m north one. Take it away and the upper hall is two rooms with no door
-   * between them.
+   *   THE GOOD ONE. The nursery is the only room on this floor with a single
+   *   door, and this gives it a second thing to be — a private approach to the
+   *   attic that never crosses the upper hall at all.
+   *   THE PRICE. A defender in that door looks straight down the only strip the
+   *   flight can be boarded from. Boarding needs a tread inside the 0.45 m
+   *   autostep, which is treads 0-2 over x 4.58..5.30 walking, or 0-9 over
+   *   x 2.90..5.30 with a jump. All of it is within three metres of the jamb.
+   *   That is not the loft stair's problem in miniature: the nursery has no
+   *   other way out, so holding its door costs the holder every other route in
+   *   the house, and the strip is overlooked from both bands of the upper hall
+   *   and from the flight standing over it.
+   *
+   * Bare pine and no rail, like the other two back stairs. BOTH SIDES ARE OPEN
+   * FOR THE BOTTOM THIRTEEN TREADS — up to tread 12 at x 2.30, the last one a
+   * standing capsule can occupy and still clear the attic plate's underside at
+   * y = 8.0 — so the first 1.63 m of the climb can be left sideways into either
+   * half of the room. Above that the plate closes both reveals and the flight
+   * behaves like every other stair through a floor: forward, back, or a drop
+   * into the well. That is not a fault and it is not special to this flight;
+   * it is written down so nobody plans a fight round side exits it has not got.
+   *
+   * 7.68 m of run in a 9.10 m room — the flight's foot lands exactly on the
+   * partition's face at x = 5.30, so there is no reveal behind it to fall into
+   * and nothing to trim. The 1.42 m left at the west end is the walk-around,
+   * and it is the only crossing at this end between the hall's 3.4 m north band
+   * and its 2.5 m south one. The other crossing is 8 m away, at the far end of
+   * the flight over treads 0-2 and in the nursery door's line, so
+   * anything standing in the walk-around costs the room half its circulation —
+   * which is why the press was moved out of it. Twice. See `buildUpstairs`.
    */
   level._stairs('pineStep', [BOXROOM.fromX, F_TOP, BOXROOM.z], [-1, 0],
     BOXROOM.steps, BOXROOM.rise, BOXROOM.run, BOXROOM.w);
@@ -957,7 +1010,17 @@ function buildUpstairs(level) {
 
   // The long landing over the gallery.
   level._box('carpetOx', [-10.6, y + 0.025, 0.4], [1.8, 0.05, 8.0], { collide: false, tile: 2 });
-  level._box('walnut', [-8.36, y + 1.1, -4.4], [0.5, 2.2, 1.6], { tile: 1 });
+  /*
+   * The landing press stands SOUTH OF THE DOORWAY — south is +z here — flush
+   * with its jamb, and that is not a nicety. At z = -4.4 it sat across 1.0 m of
+   * the 1.4 m door in the x = -8.0 wall and left 0.40 m, half what a 0.70 m
+   * player plus the controller's 0.02 a side needs. That sealed the west
+   * landing's door onto the central landing outright, and the header two
+   * hundred lines up counts that door as one of the three ways off the landing.
+   * z = -3.4 puts the press's north face on the jamb at z = -4.2 exactly, so
+   * the door is clear and there is no 200 mm slot beside it either.
+   */
+  level._box('walnut', [-8.36, y + 1.1, -3.4], [0.5, 2.2, 1.6], { tile: 1 });
   lamp(level, -10.6, F_CEIL, -0.6, 0.5, 0.7);
   lamp(level, -10.6, F_CEIL, 3.2, 0.5, 0.7);
 
@@ -975,20 +1038,31 @@ function buildUpstairs(level) {
    * The press and the hall lamp both used to stand where the box-room stair
    * now climbs, and both were moved rather than deleted.
    *
-   * The press sat across the 1.42 m walk-around at the west end of the flight
-   * and left 0.77 m of it. A player is 0.70 m across, so that is not a route,
-   * it is a squeeze — and the walk-around is the only thing joining the hall's
-   * two bands. It is now in the north-west corner with its back 0.15 m off the
-   * plaster, which is where the rest of the house keeps its joinery.
+   * THE PRESS HAS BEEN MOVED TWICE AND THE SECOND MOVE IS THE ONE TO READ,
+   * because the first one looked right and was not. Standing it clear of the
+   * flight is not enough. At [-3.4, 11.3] its north-east corner was 0.78 m from
+   * the flight's south-west corner — but the two rectangles do not overlap in
+   * z, so that 0.78 m is a diagonal between two corners rather than a gap you
+   * can walk down. A player is 0.70 m across and the controller adds 0.02 a
+   * side, so the free band for a capsule centre was 0.03 m wide and two thirds
+   * of a metre long: a slot, threaded round two corners, in the middle of what
+   * looks like an open 1.42 m walk-around. The failure mode is not being slowed
+   * down, it is stopping dead in visible floor and having to go the long way.
+   *
+   * It is now flat against the south wall in the SOUTH-WEST corner of the room,
+   * 2.0 m clear of the flight in z and out of the walk-around entirely, laid
+   * out like the living room's press directly below it. It gives the south band
+   * the cover it had none of, and it is nowhere near the only crossing at this
+   * end of the flight.
    *
    * The lamp hung off ceiling the stairwell removes, and its shade sat at chest
    * height in the middle of the climb.
    */
-  level._box('walnut', [-3.4, y + 1.1, 11.3], [0.5, 2.2, 2.4], { tile: 1 });
+  level._box('walnut', [-2.6, y + 1.1, 12.25], [2.4, 2.2, 0.5], { tile: 1 });
   lamp(level, 0.8, F_CEIL, 11.4, 0.7, 0.7);
   // And a second fitting, because the flight cuts the room in two and the
-  // south band is the side both arch gaps open into. One lamp for two rooms
-  // would leave the busier of them dark.
+  // NORTH band — z 5.2..8.6, north being -z here — is the side both arch gaps
+  // open into. One lamp for two rooms would leave the busier of them dark.
   lamp(level, 1.4, F_CEIL, 6.8, 0.7, 0.7);
 
   // Nursery, over the study.
@@ -1012,8 +1086,71 @@ function buildAttic(level) {
   }
   level._box('rafterOak', [-4.6, 12.6, 0], [19.6, 0.34, 0.4], { collide: false, tile: 1 });
 
-  // Sheeted furniture and a cold-water tank: cover, in a room with none.
-  for (const [x, z] of [[-8.0, -10.0], [-5.0, -9.2], [-9.5, 6.4], [1.5, 5.0]]) {
+  /*
+   * THE PARTY WALL, and it is the whole reason the attic's two heads are two
+   * positions rather than one.
+   *
+   * Without it the top storey is 19.8 x 25.0 m of open boards with nothing in
+   * it taller than a 1.1 m sheet, and that made the second stair decorative: a
+   * player standing one step off the loft stair saw the loft opening at his
+   * feet, the box-room head 18.0 m away and BOTH armours inside a fifty-degree
+   * cone, every one of them with clear line of sight. Half a screen. An
+   * attacker who had paid the long route's whole price — great stair, central
+   * landing, arch gap, the length of the upper hall, 7.68 m of climb — stepped
+   * off the top tread already inside the defender's field of view without the
+   * defender having turned his head. Two ways in that one pair of eyes covers
+   * is one way in with a longer walk attached.
+   *
+   * IT IS AN L, AND THE L IS THE PLAN OF THE MASONRY BELOW IT. The house has
+   * exactly two internal walls that run through both storeys as walls rather
+   * than as partitions: the gallery/hall spine at x = -8.0, and the arch screen
+   * at z = 5.0, which is manorBrick on both faces on the ground floor. They
+   * meet at (-8.0, 5.0). This carries that corner into the roof — so the collar
+   * ties land on something that goes to the ground, and nothing here is a block
+   * dropped into the middle of a room.
+   *
+   * Both ends of the spine leg are pinned. 4.8 is where the wall below stops
+   * and the screen takes over. 1.4 is as far north as it can come without
+   * burying the armour at (-8.0, 0.0) — `test/maps.mjs` would catch that as a
+   * pickup inside the geometry, and a player would only ever meet it as a
+   * pickup that cannot be taken.
+   *
+   * THE RETURN IS NOT DECORATION AND IS NOT REDUNDANT. The spine leg alone
+   * leaves half of the boards within three metres of the loft opening still
+   * looking straight at the box-room head — two metres either way along the
+   * west wall and you see round the end of it. With the return, of 233
+   * standable samples within 2.5 m of the top of the loft stair, NONE has line
+   * of sight to the other head. That is the whole claim in the header, and it
+   * is the return that makes it true, so do not shorten it past x = -4.0
+   * without re-running that count.
+   *
+   * Both legs stop at 10.85 — the underside of the collar ties — so where a
+   * collar crosses the spine at z = 3.5 it bears on the wall rather than
+   * passing through it, and the two only touch. The 1.0 to 1.8 m of open air
+   * left between the head of the wall and the roof slope sits 2.45 m above the
+   * boards: too high to reach, look through or shoot along. The attic stays one
+   * connected room, round the north end of the spine and round both ends of the
+   * return — 6.3 m of clear boards west of it and 9.3 m east.
+   */
+  level._box('manorBrick', [-8.0, (A_TOP + 10.85) / 2, 3.1],
+    [0.4, 10.85 - A_TOP, 3.4], { tile: 1.6 });
+  level._box('manorBrick', [-6.1, (A_TOP + 10.85) / 2, 5.0],
+    [4.2, 10.85 - A_TOP, 0.4], { tile: 1.6 });
+
+  /*
+   * Sheeted furniture and a cold-water tank: cover, in a room with none.
+   *
+   * The last of them is at the head of the box-room stair and is not scenery.
+   * Everything else solid on these boards was 4.8 m or more from where the top
+   * tread lands, and the nearest prop is the chest 5.8 m east with the well in
+   * between — so a player who had just paid the long route's price stepped off
+   * it into the open and had nothing to break line of sight against in any
+   * direction. This is 1.1 m north-west of the tread: one sidestep. It stops at
+   * z = 8.2, clear of the well's brass kerb at 8.48, so neither the two faces
+   * nor the 0.28 m between them is close enough to fight.
+   */
+  for (const [x, z] of [[-8.0, -10.0], [-5.0, -9.2], [-9.5, 6.4], [1.5, 5.0],
+    [-3.3, 7.6]]) {
     level._box('linenSoft', [x, y + 0.55, z], [1.6, 1.1, 1.2], { tile: 1.2 });
   }
   level._box('slateRoof', [3.4, y + 0.7, -4.0], [1.6, 1.4, 1.6], { tile: 1 });
@@ -1036,9 +1173,12 @@ function buildProps(level) {
     [-6.0, A_TOP, -8.0], [-4.9, A_TOP, -8.7], [0.2, A_TOP, -5.0],
     // This one stood at [2.0, A_TOP, 9.0], which the box-room stairwell has
     // since taken out of the boards — it would have spawned over the void and
-    // fallen four metres onto the treads. Moved north of the well, where it is
-    // cover for whoever arrives at the head of the new flight and, being
-    // pushable, something they can put into the well behind them.
+    // fallen four metres onto the treads. Moved SOUTH of the well. It is not
+    // the cover at the head — that is the sheeted piece in `buildAttic`, 1.1 m
+    // off the top tread. This is 5.8 m east along the south lip and the
+    // straight line to it crosses the void, so it is somewhere to fall back to
+    // rather than somewhere to duck. Being pushable, it is also something a
+    // player can put into the well behind them.
     [-10.0, A_TOP, 2.6], [3.2, A_TOP, 10.9],
   ];
   for (const [x, base, z] of chests) {
@@ -1108,7 +1248,10 @@ function buildProps(level) {
  * armour in the house and the loft stair would never have been worth taking
  * again. Six metres of open boards out from each head is the tax both climbs
  * pay — the loft stair is about seven from the one at (-8.0, 0.0) — and six
- * metres of a room with no cover in it is a long way to be looked at.
+ * metres of boards carrying one waist-high sheet is a long way to be looked at.
+ * The cover `buildAttic` puts at the box-room head is deliberately BEHIND that
+ * walk rather than on it: it buys you the first second off the tread, and then
+ * you are in the open like everybody else.
  */
 function buildPickups(level) {
   level.pickupSpots = [
