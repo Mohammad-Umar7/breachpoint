@@ -18,18 +18,40 @@
  *   FIRST    bedrooms and landings on the same walls, reached by the great
  *            stair out of the hall, the service stair out of the lobby, or —
  *            if you are already up here — not at all.
- *   ATTIC    one long boarded room under the rafters. Head height at the ridge,
- *            crouch height at the eaves, and the best pickups in the house.
+ *   ATTIC    one long boarded room under the rafters, entered at both ends: the
+ *            loft stair against the west wall and the box-room stair climbing
+ *            west across the upper hall. Head height at the ridge, crouch
+ *            height at the eaves, and the best pickups in the house.
  *
  * WHY EVERY ROUTE DOWN IS ONE-WAY
  * -------------------------------
- * There are exactly three ways UP (the great stair, the service stair, the
- * loft stair) and nine ways DOWN: six balustrade drops, the laundry chute, the
- * linen hatch and the hole where the attic floor has given way. Height in a
- * sealed building would otherwise be a fortress — you would take the attic,
- * watch two staircases and never leave. The drops mean the top of the house
- * leaks players downward into the respawn traffic on the ground floor, which
- * is where the spawns all are and where the flags both sit.
+ * There are exactly four ways UP (the great stair, the service stair, the loft
+ * stair, the box-room stair) and nine ways DOWN: six balustrade drops, the
+ * laundry chute, the linen hatch and the hole where the attic floor has given
+ * way. Height in a sealed building would otherwise be a fortress — you would
+ * take the attic, watch two staircases and never leave. The drops mean the top
+ * of the house leaks players downward into the respawn traffic on the ground
+ * floor, which is where the spawns all are and where the flags both sit.
+ *
+ * The stair openings are not in that nine. You can drop through any of them,
+ * but you land on treads you could have walked up, so they are shortcuts rather
+ * than one-way routes and are not counted as either.
+ *
+ * AND WHY THE ATTIC HAS TWO WAYS IN
+ * ---------------------------------
+ * It had one, and that made the top storey exactly the fortress the paragraph
+ * above exists to prevent. The loft stair opens off the west landing, and the
+ * west landing has a single door onto the rest of the floor — so one player
+ * standing in that doorway closed the attic, the best pickups in the house and
+ * a sixth of the map, without ever seeing the room he was holding.
+ *
+ * The box-room stair is the answer, and it is deliberately as far from the loft
+ * stair as the house allows: 20.0 m between their feet, 17.7 m between their
+ * heads, in opposite quarters of a 19.8 x 25.0 m attic, watched by two sets of
+ * sightlines that never meet. It also comes off a room with four ways into it
+ * rather than one. The two routes share nothing below the attic except the
+ * central landing at the top of the great stair — the busiest room on the
+ * floor, and the one place a single player provably cannot hold.
  *
  * THE CONSERVATORY IS THE EXCEPTION THAT MAKES IT WORK
  * ---------------------------------------------------
@@ -118,6 +140,31 @@ const STAIR_TOP_Z = STAIR.fromZ - STAIR.steps * STAIR.run;   // -3.76
 const LOFT = { steps: 32, rise: (A_TOP - F_TOP) / 32, run: 0.24, fromZ: 3.4 };
 const LOFT_TOP_Z = LOFT.fromZ - LOFT.steps * LOFT.run;       // -4.28
 
+/**
+ * The attic's SECOND way in: a straight flight across the upper hall, climbing
+ * west off the interior face of the x = 5.5 partition.
+ *
+ * Identical arithmetic to the loft stair — 32 steps, 0.24 m of run, the rise
+ * derived from the storey height — because the contract above applies to it for
+ * the same reason and then one more. A flight only players could climb would
+ * still leave the scout shut out of the whole top storey the moment somebody
+ * stood on the loft stair, which is the exact failure this route exists to fix.
+ * 0.125 over 0.24 is 27.5 degrees against the player's 52 and the drone's 38,
+ * the shallowest flight in the house, and that is the point of it: this is the
+ * LONG way to the attic, and the price it charges is distance rather than a
+ * scout. Only the service stair, which is a genuine shortcut, charges that.
+ *
+ * `z` is the centre of a 1.4 m band in a 7.3 m room, and it is chosen rather
+ * than left over. North of it the roof closes to 1.81 m over the boards and a
+ * 1.90 m player cannot stand at the head; south of it the flight would land
+ * within 1.4 m of the arch screen and turn both of its gaps into a corridor
+ * running down the side of a staircase.
+ */
+const BOXROOM = {
+  steps: 32, rise: (A_TOP - F_TOP) / 32, run: 0.24, fromX: 5.3, z: 9.3, w: 1.4,
+};
+const BOXROOM_TOP_X = BOXROOM.fromX - BOXROOM.steps * BOXROOM.run;   // -2.38
+
 /** Holes. Named because every one of them is a route, not an accident. */
 const HOLE = {
   stairwell: { x0: -7.8, x1: -5.0, z0: STAIR_TOP_Z, z1: 4.8 },
@@ -130,6 +177,26 @@ const HOLE = {
   loft: { x0: -14.5, x1: -13.0, z0: LOFT_TOP_Z, z1: 3.5 },
   collapse: { x0: -3.0, x1: 0.5, z0: -1.0, z1: 2.0 },
   linen: { x0: 1.4, x1: 2.4, z0: -9.0, z1: -8.0 },
+  /*
+   * The box-room stairwell. Every bound is DERIVED from the flight rather than
+   * typed next to it, and both halves of that matter.
+   *
+   * `x0` is the computed top of the climb, exactly as `loft`'s `z0` is
+   * LOFT_TOP_Z: with a 3.60 m storey and a 1.90 m player, boards left over any
+   * part of the top two metres of a four-metre climb make the flight
+   * unwalkable, so the opening has to span the whole footprint and its far edge
+   * has to move if the run ever does.
+   *
+   * The z bounds are the same expression `_stairs` builds the treads from, so
+   * the plate's cut lines and the treads' faces are the SAME doubles. Typing
+   * 8.6 and 10.0 here instead would put them a fraction of a micron apart —
+   * invisible, and enough to turn a clean abutment into an overlap the shimmer
+   * check has to reason about.
+   */
+  boxroom: {
+    x0: BOXROOM_TOP_X, x1: BOXROOM.fromX,
+    z0: BOXROOM.z - BOXROOM.w / 2, z1: BOXROOM.z + BOXROOM.w / 2,
+  },
 };
 
 /* ----------------------------------------------------------------- helpers */
@@ -390,7 +457,8 @@ function buildFloors(level) {
   // The attic covers the main block only — the east wing is two storeys under
   // a flat lead roof, and the conservatory is glass all the way up.
   plate(level, 'atticBoard', { x0: IN.x0, x1: 5.3, z0: IN.z0, z1: IN.z1 },
-    A_BOT, A_TOP, [HOLE.loft, HOLE.collapse, HOLE.linen, HOLE.chimney], { tile: 2.2 });
+    A_BOT, A_TOP,
+    [HOLE.loft, HOLE.collapse, HOLE.linen, HOLE.chimney, HOLE.boxroom], { tile: 2.2 });
 }
 
 /* ------------------------------------------------------- the ground floor */
@@ -497,6 +565,30 @@ function buildStairs(level) {
   // because otherwise the attic is a room only players can hold.
   level._stairs('pineStep', [-13.8, F_TOP, LOFT.fromZ], [0, -1],
     LOFT.steps, LOFT.rise, LOFT.run, 1.4);
+
+  /*
+   * The box-room stair: the attic's second way in, out of the upper hall.
+   *
+   * ITS FOOT IS AGAINST x = 5.3 BECAUSE THAT IS AS FAR EAST AS THE HOUSE GOES.
+   * The attic plate stops there; the same line is the interior face of the
+   * first-floor partition and the base of the east gable, so the flight starts
+   * against 5.6 m of continuous brick and plaster and comes out inside the
+   * attic's own east end. Past x = 5.7 there is no third storey at all — the
+   * east wing is the flat lead deck and the conservatory's glazed roof — and a
+   * flight there would arrive on top of a house that is meant to be sealed.
+   *
+   * Bare pine and no rail, like the other two back stairs. It is the one flight
+   * in the house with BOTH sides open, which is the whole reason it works: you
+   * can be shot off it from either half of the room, and you can leave it
+   * sideways at any height rather than being pinned on it.
+   *
+   * 7.68 m of run in a 9.10 m room. The 1.42 m left at the west end is not
+   * slack — it is the walk-around that joins the hall's 3.4 m south band to its
+   * 2.5 m north one. Take it away and the upper hall is two rooms with no door
+   * between them.
+   */
+  level._stairs('pineStep', [BOXROOM.fromX, F_TOP, BOXROOM.z], [-1, 0],
+    BOXROOM.steps, BOXROOM.rise, BOXROOM.run, BOXROOM.w);
 }
 
 /* -------------------------------------------------------- the first floor */
@@ -561,6 +653,26 @@ function buildBalustrades(level) {
   };
   rim(HOLE.chute, F_TOP);
   rim(HOLE.linen, A_TOP);
+
+  /*
+   * The box-room stairwell gets the same brass, but on its two LONG sides only.
+   *
+   * `rim` would wrap all four, and the x1 bar it adds would land at x
+   * 5.30..5.42 — inside the east gable's brick base, brass and brick sharing an
+   * x0 face over the whole 1.4 m. That side needs nothing anyway: it IS the
+   * gable. Nor does x0, which is where the top tread comes up flush with the
+   * boards and there is no drop to mark.
+   *
+   * The long sides do need it. Seven and a half metres of missing floor in a
+   * dark boarded room reads as a hole in the map rather than a hole in the
+   * house, and brass is the one thing this palette says "route" with — the
+   * chute and the linen hatch are marked the same way for the same reason.
+   */
+  for (const zEdge of [HOLE.boxroom.z0 - 0.06, HOLE.boxroom.z1 + 0.06]) {
+    level._box('brassTrim',
+      [(HOLE.boxroom.x0 + HOLE.boxroom.x1) / 2, A_TOP + 0.05, zEdge],
+      [HOLE.boxroom.x1 - HOLE.boxroom.x0, 0.1, 0.12], { collide: false, tile: 0.5 });
+  }
 
   /*
    * Broken joists round the collapse, so it reads as a failure and not a hatch.
@@ -859,8 +971,25 @@ function buildUpstairs(level) {
   level._box('walnut', [-10.0, y + 0.62, 6.8], [2.3, 1.24, 0.22], { tile: 1 });
   level._box('carpetOx', [-9.0, y + 0.025, 10.4], [4.4, 0.05, 3.0], { collide: false, tile: 2 });
   lamp(level, -10.0, F_CEIL, 8.6, 0.6, 0.7);
-  level._box('walnut', [-3.4, y + 1.1, 10.0], [0.5, 2.2, 2.4], { tile: 1 });
-  lamp(level, 0.8, F_CEIL, 9.4, 0.7, 0.7);
+  /*
+   * The press and the hall lamp both used to stand where the box-room stair
+   * now climbs, and both were moved rather than deleted.
+   *
+   * The press sat across the 1.42 m walk-around at the west end of the flight
+   * and left 0.77 m of it. A player is 0.70 m across, so that is not a route,
+   * it is a squeeze — and the walk-around is the only thing joining the hall's
+   * two bands. It is now in the north-west corner with its back 0.15 m off the
+   * plaster, which is where the rest of the house keeps its joinery.
+   *
+   * The lamp hung off ceiling the stairwell removes, and its shade sat at chest
+   * height in the middle of the climb.
+   */
+  level._box('walnut', [-3.4, y + 1.1, 11.3], [0.5, 2.2, 2.4], { tile: 1 });
+  lamp(level, 0.8, F_CEIL, 11.4, 0.7, 0.7);
+  // And a second fitting, because the flight cuts the room in two and the
+  // south band is the side both arch gaps open into. One lamp for two rooms
+  // would leave the busier of them dark.
+  lamp(level, 1.4, F_CEIL, 6.8, 0.7, 0.7);
 
   // Nursery, over the study.
   level._box('linenSoft', [12.4, y + 0.3, 10.4], [1.6, 0.6, 1.8], { tile: 1.2 });
@@ -905,7 +1034,12 @@ function buildProps(level) {
     [3.0, -11.6, 0], [2.4, -10.7, 0], [13.0, -11.8, 0],
     [7.0, -7.0, 0], [-13.6, -6.9, 0], [12.0, 3.6, 0],
     [-6.0, A_TOP, -8.0], [-4.9, A_TOP, -8.7], [0.2, A_TOP, -5.0],
-    [-10.0, A_TOP, 2.6], [2.0, A_TOP, 9.0],
+    // This one stood at [2.0, A_TOP, 9.0], which the box-room stairwell has
+    // since taken out of the boards — it would have spawned over the void and
+    // fallen four metres onto the treads. Moved north of the well, where it is
+    // cover for whoever arrives at the head of the new flight and, being
+    // pushable, something they can put into the well behind them.
+    [-10.0, A_TOP, 2.6], [3.2, A_TOP, 10.9],
   ];
   for (const [x, base, z] of chests) {
     const s = randRange(0.78, 0.95);
@@ -962,15 +1096,24 @@ function buildProps(level) {
  * Where the pickups sit.
  *
  * Armour is in the ATTIC, at the end of the longest climb in the house, and
- * both routes back down from it are one-way. Health is spread across the
- * ground floor where the respawns are, and one sits on the conservatory bridge
- * — the most overlooked square metre on the map, which is exactly what a
- * contested pickup should be.
+ * every route back down from it is a drop. Health is spread across the ground
+ * floor where the respawns are, and one sits on the conservatory bridge — the
+ * most overlooked square metre on the map, which is exactly what a contested
+ * pickup should be.
+ *
+ * NEITHER ARMOUR SITS ON A LANDING, and now that there are two stairs into the
+ * attic that has to be deliberate. The second one used to be at (-2.0, 8.0),
+ * which the box-room stair would have left 0.6 m off its top tread: one step
+ * off the flight, so the new route would have been strictly the fastest way to
+ * armour in the house and the loft stair would never have been worth taking
+ * again. Six metres of open boards out from each head is the tax both climbs
+ * pay — the loft stair is about seven from the one at (-8.0, 0.0) — and six
+ * metres of a room with no cover in it is a long way to be looked at.
  */
 function buildPickups(level) {
   level.pickupSpots = [
     { type: 'armor', pos: new THREE.Vector3(-8.0, A_TOP + 0.6, 0.0) },
-    { type: 'armor', pos: new THREE.Vector3(-2.0, A_TOP + 0.6, 8.0) },
+    { type: 'armor', pos: new THREE.Vector3(-8.2, A_TOP + 0.6, 10.2) },
     { type: 'health', pos: new THREE.Vector3(10.2, F_TOP + 0.6, -0.5) },
     { type: 'health', pos: new THREE.Vector3(-12.6, 0.6, -6.9) },
     { type: 'health', pos: new THREE.Vector3(0.0, 0.6, 8.2) },
@@ -992,7 +1135,7 @@ export const manorMap = Object.freeze({
   tagline: 'Sealed country house',
   description:
     'Three storeys of rooms, doorways and lamplight, with one glazed hall '
-    + 'running the full height of it. Three ways up. Nine ways down.',
+    + 'running the full height of it. Four ways up. Nine ways down.',
 
   /**
    * THIS MAP HAS A SCOUT DRONE ON IT, and this flag is the only thing that

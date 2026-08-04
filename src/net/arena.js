@@ -138,10 +138,17 @@ export const ARENAS = Object.freeze({
    * the map. `arenaFor` carries a single scalar `spawnY` per map, so mixing
    * floors is not expressible here anyway, and the house is built around the
    * consequence: every one-way route in it (six balustrade drops, the laundry
-   * chute, the linen hatch, the collapsed attic floor, the loft-stair opening)
-   * runs DOWNWARD, into the respawn traffic. You start downstairs and fight
-   * upward; the geometry keeps dragging the fight back down to meet the next
-   * wave, which is what stops the top of a three-storey map deciding it.
+   * chute, the linen hatch, the collapsed attic floor) runs DOWNWARD, into the
+   * respawn traffic, as does a drop through any of the four stairwell openings
+   * — the great stair, the service stair, the loft stair and the box-room
+   * stair. You start downstairs and fight upward; the geometry keeps dragging
+   * the fight back down to meet the next wave, which is what stops the top of a
+   * three-storey map deciding it.
+   *
+   * The box-room stair is the newest of the four and the reason there are four:
+   * the loft stair was the attic's only way in, off a landing with one door, so
+   * a single player in that doorway held the whole top storey. See the header
+   * of `maps/manor.js`.
    */
   manor: Object.freeze({
     spawnY: 1.1,
