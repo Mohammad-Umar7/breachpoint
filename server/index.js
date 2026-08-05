@@ -813,7 +813,16 @@ class Room {
     const arena = arenaFor(this.mapId);
     if (!arena.ctf) return;
     const touch = this.mode.flagTouchRadius;
-    const near = (p, o) => Math.hypot(p.x - o.x, p.z - o.z) < touch;
+    const lift = this.mode.flagTouchHeight;
+    /*
+     * A CYLINDER, not a circle on the floor.
+     *
+     * The height test is the whole point — see `flagTouchHeight`. Without it
+     * this is a column of infinite height, and on a house map that column
+     * passes through every floor above the flag.
+     */
+    const near = (p, o) => Math.hypot(p.x - o.x, p.z - o.z) < touch
+      && Math.abs(p.y - o.y) < lift;
 
     for (const flag of this.flags.values()) {
       // A flag nobody has touched goes home, so one punted into a corner
@@ -857,6 +866,9 @@ class Room {
 
       const [bx, bz] = arena.ctf.bases[p.team];
       if (Math.hypot(p.x - bx, p.z - bz) > this.mode.captureRadius) continue;
+      // And on the base's own floor. Same reasoning as `near` above: without
+      // this, the landing over your base scores exactly as well as the base.
+      if (Math.abs(p.y - arena.spawnY) > this.mode.flagTouchHeight) continue;
 
       /*
        * YOUR OWN FLAG MUST BE HOME.

@@ -210,8 +210,90 @@ async function soloWarmup() {
   await sleep(200);
 }
 
+/**
+ * You cannot score through a ceiling.
+ *
+ * Both proximity tests were measured on the FLOOR PLANE alone, which makes
+ * each of them a column of infinite height. On a flat arena nobody noticed. On
+ * a three-storey house every base has two more floors stacked directly over
+ * it, so a carrier standing on the landing ABOVE the enemy base captured
+ * through the ceiling — and it was reported as the light column being the
+ * trigger, because the beam rises out of the base through exactly those floors
+ * and is therefore where you are standing when it happens.
+ *
+ * Its own room and its own pair of clients, so it can move a player somewhere
+ * no normal sequence would put them without disturbing the match next door.
+ */
+async function ceilingCapture() {
+  const room = 'CTFCL';
+  const x = await join('XRAY', room);
+  const y = await join('YNKE', room);
+  live.push(x, y);
+  await sleep(900);
+
+  const foe = x.team === TEAM.RED ? TEAM.BLUE : TEAM.RED;
+  const enemyBase = BASES[foe];
+  const home = BASES[x.team];
+  const groundY = ARENAS[MAP].spawnY;
+
+  // Take the enemy flag with our own still safely at home.
+  await walk(x, [y], enemyBase);
+  await sleep(400);
+  check('the ceiling case starts with a flag in hand',
+    flagOf(x, foe)?.s === FLAG_STATE.CARRIED, flagOf(x, foe)?.s);
+  check('and our own flag at home, so nothing else can block a capture',
+    flagOf(x, x.team)?.s === FLAG_STATE.AT_BASE, flagOf(x, x.team)?.s);
+
+  /*
+   * Climb BEFORE walking home, a step at a time.
+   *
+   * Arriving at ground level would capture on the way in, and one 4 m jump is
+   * refused outright — the server range-checks how far a client claims to have
+   * moved between reports, so a teleport leaves the player where they were and
+   * the check below would pass having proved nothing.
+   */
+  for (let i = 0; i < 10; i++) {
+    x.at = [x.at[0], x.at[1] + 0.45, x.at[2]];
+    input(x); input(y);
+    await sleep(90);
+  }
+  const climbed = x.at[1] - groundY;
+
+  x.flagEvents.length = 0;
+  const before = (x.scores.at(-1)?.ts?.[x.team]) ?? 0;
+  await walk(x, [y], home);
+  for (let i = 0; i < 10; i++) { input(x); input(y); await sleep(90); }
+
+  check('standing above your own base does not capture',
+    !x.flagEvents.some((e) => e.ev === FLAG_EVENT.CAPTURED),
+    `${climbed.toFixed(1)} m up: ${x.flagEvents.map((e) => e.ev).join(', ') || 'nothing happened'}`);
+  check('and the flag is still in your hands',
+    flagOf(x, foe)?.s === FLAG_STATE.CARRIED, flagOf(x, foe)?.s);
+  check('and the score has not moved',
+    ((x.scores.at(-1)?.ts?.[x.team]) ?? 0) === before,
+    `${before} -> ${(x.scores.at(-1)?.ts?.[x.team]) ?? 0}`);
+
+  // And the positive half, without which the check above would pass just as
+  // well if capturing were broken outright: come down, and it scores.
+  x.flagEvents.length = 0;
+  for (let i = 0; i < 14 && x.at[1] > groundY; i++) {
+    x.at = [home[0], Math.max(groundY, x.at[1] - 0.45), home[1]];
+    input(x); input(y);
+    await sleep(90);
+  }
+  for (let i = 0; i < 8; i++) { input(x); input(y); await sleep(90); }
+  check('and coming down to the base itself scores',
+    x.flagEvents.some((e) => e.ev === FLAG_EVENT.CAPTURED),
+    x.flagEvents.map((e) => e.ev).join(', ') || 'still nothing');
+
+  x.ws.close(); y.ws.close();
+  live.length = 0;
+  await sleep(200);
+}
+
 async function main() {
   await soloWarmup();
+  await ceilingCapture();
 
   // Nobody idles out. Reports the position each client already believes it is
   // at, so it never fights `walk` — it just stops the socket going silent.

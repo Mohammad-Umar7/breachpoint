@@ -731,10 +731,22 @@ function buildBalustrades(level) {
    * Broken joists round the collapse, so it reads as a failure and not a hatch.
    * They sit ON the boards rather than level with them: a splintered oak end
    * flush with the floor it fell out of is two materials on one plane.
+   *
+   * EACH ONE HAS TO SPRING FROM THE SURVIVING FLOOR. They used to span
+   * z0+0.06 .. z0+1.06 — entirely inside the opening, with a six-centimetre
+   * gap between the boards' cut edge and the joist's near end. From the storey
+   * below, where this hole is a hole in the CEILING, that read as four dark
+   * timbers hanging in mid-air with nothing holding them: it was reported as
+   * stair treads floating in the ceiling, and floating is exactly what they
+   * were. Now they start 0.35 m back under the intact boards, so the eye can
+   * see what they are still attached to.
    */
+  const JOIST_BURIED = 0.35;   // how far each one reaches back under the floor
+  const JOIST_LEN = 1.0;
   for (const x of [-2.4, -1.6, -0.8, 0.0]) {
-    level._box('rafterOak', [x, A_TOP - 0.18, HOLE.collapse.z0 + 0.56],
-      [0.16, 0.24, 1.0], { collide: false, tile: 0.6 });
+    level._box('rafterOak',
+      [x, A_TOP - 0.18, HOLE.collapse.z0 - JOIST_BURIED + JOIST_LEN / 2],
+      [0.16, 0.24, JOIST_LEN], { collide: false, tile: 0.6 });
   }
   level._box('rafterOak', [(HOLE.collapse.x0 + HOLE.collapse.x1) / 2, A_TOP + 0.12,
     HOLE.collapse.z1 + 0.14], [3.5, 0.24, 0.28], { collide: false, tile: 0.6 });

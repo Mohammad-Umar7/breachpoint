@@ -142,6 +142,22 @@ export const MODES = Object.freeze({
     flagTouchRadius: 1.9,
     /** How close to your own base the capture is registered. */
     captureRadius: 2.4,
+    /**
+     * ...and how far above or below it you may be. THIS IS NOT OPTIONAL.
+     *
+     * Both radii above are measured on the FLOOR PLANE, which is a fair
+     * description of a flat arena and a completely wrong one for a house. On a
+     * three-storey map every base has two more floors stacked directly over it,
+     * so a carrier standing on the landing above the enemy base — or in the
+     * attic above that — was inside the capture radius and scored through the
+     * ceiling. Players read the light column rising out of the base as the
+     * thing they were touching; the beam is innocent, the missing Y is not.
+     *
+     * 1.8 m is chosen against the two numbers that bracket it: a jump apex is
+     * about 1.3 m, so you can still take a flag by vaulting over it, and the
+     * manor's storeys are 4.0 m apart, so the floor above is nowhere near.
+     */
+    flagTouchHeight: 1.8,
   }),
 });
 
