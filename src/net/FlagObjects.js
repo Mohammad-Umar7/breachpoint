@@ -188,6 +188,8 @@ export class FlagObjects {
         carrier: null,
         home: new THREE.Vector3(spot.x, spot.y - 1.05, spot.z),
         at: new THREE.Vector3(spot.x, spot.y - 1.05, spot.z),
+        /** Scratch, handed to the HUD each frame by `markers()`. */
+        mark: new THREE.Vector3(),
       });
     }
   }
@@ -201,6 +203,42 @@ export class FlagObjects {
       f.carrier = s.c ?? null;
       f.at.set(s.x, s.y - 1.05, s.z);
     }
+  }
+
+  /**
+   * Which flags deserve an on-screen marker, and where they are right now.
+   *
+   * ONLY CARRIED AND DROPPED FLAGS. A flag on its own stand is not marked: it
+   * is where it has been all match, both teams already know, and a permanent
+   * pair of icons burnt into the HUD is clutter rather than information. The
+   * two states worth interrupting someone for are "an enemy is running off
+   * with it" and "it is lying somewhere on the floor".
+   *
+   * Our OWN carried flag is excluded too — the camera is inside the body
+   * holding it, so the marker would sit in the middle of the crosshair. The
+   * carrying banner says it instead.
+   *
+   * Read AFTER `update()`, because it returns the group's live position: for a
+   * carried flag that is the interpolated position of whoever is holding it,
+   * which is the whole point.
+   */
+  markers() {
+    const out = [];
+    for (const f of this.flags.values()) {
+      if (!f.group.visible) continue;
+      if (f.state === FLAG_STATE.AT_BASE) continue;
+      if (f.state === FLAG_STATE.CARRIED && f.carrier === this.selfId) continue;
+      out.push({
+        team: f.team,
+        state: f.state,
+        carrier: f.state === FLAG_STATE.CARRIED ? f.carrier : null,
+        // Chest height rather than the group's origin, which is down at the
+        // carrier's feet — a marker at ankle level reads as being behind them.
+        pos: f.mark.set(f.group.position.x, f.group.position.y + 0.7,
+          f.group.position.z),
+      });
+    }
+    return out;
   }
 
   /**

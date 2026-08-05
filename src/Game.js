@@ -1343,6 +1343,15 @@ export class Game {
 
     // net.players is already a Map of exactly what sync() wants. Rebuilding it
     // here was allocating an array and a Map on every single frame for nothing.
+    /*
+     * Which side WE are on, read fresh each frame from the server's roster.
+     *
+     * Not cached at join: teams are rebalanced when players come and go, and a
+     * stale value here would mark the wrong half of the room as friendly —
+     * which is worse than marking nobody, because it is confidently wrong
+     * about the one call you cannot take back.
+     */
+    this.remotes.selfTeam = net.players?.get(net.selfId)?.team ?? TEAM.NONE;
     this.remotes.sync(this._netSample, net.players, dt, this.player.position);
 
     /*
@@ -1425,6 +1434,17 @@ export class Game {
         // The mouse is not ours yet. Worth saying out loud rather than leaving
         // the player to work out why looking around does nothing.
         needsClick: this.state === GAME_STATE.PLAYING && !this.input.pointerLocked,
+        /*
+         * Objective markers. Built HERE rather than in UIManager because the
+         * carrier's name lives on the network client, and gated on the mode
+         * because `flags` is built from the map's arena whether or not the
+         * mode uses it — in deathmatch there is no carrier to point at.
+         */
+        flagMarkers: getMode(this.modeId).teamBased
+          ? this.flagObjects?.markers().map((m) => ({
+            ...m, name: m.carrier != null ? this.net?.nameOf(m.carrier) : null,
+          }))
+          : null,
         weapon: this.weapons.hudState(),
         lean: this.lean.amount,
         match: this.net?.connected ? this.net.match : null,

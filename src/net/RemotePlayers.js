@@ -92,6 +92,8 @@ export class RemotePlayers {
     this.audio = audio;
     /** @type {Map<number, object>} id -> body record */
     this.bodies = new Map();
+    /** The viewer's own team, so a body can be told friend from foe. */
+    this.selfTeam = TEAM.NONE;
     this._available = assets.getModel?.('soldier') != null;
     this._tmp = new THREE.Vector3();
     // Scratch for the IK solver — allocating these per arm per player per
@@ -137,6 +139,12 @@ export class RemotePlayers {
    *   Omitted, everyone casts a shadow — correct, just more expensive.
    */
   sync(sample, roster, dt, viewer = null) {
+    /*
+     * `selfTeam` is set by Game before this runs. It is the one thing needed
+     * here that is not in the roster: the roster says what team EVERY player
+     * is on, and none of that means anything without knowing which one is
+     * ours. Defaults to NONE so free-for-all marks nobody as a friend.
+     */
     // Held for raycast(), so hit registration tests the exact positions that
     // were drawn this frame rather than a separately-sampled set.
     this._lastSample = sample;
@@ -192,10 +200,26 @@ export class RemotePlayers {
        * and setting a colour dirties the material.
        */
       const team = roster.get(id)?.team ?? TEAM.NONE;
-      if (team !== body.team) {
+      const friendly = team !== TEAM.NONE && team === this.selfTeam;
+      if (team !== body.team || friendly !== body.friendly) {
         body.team = team;
-        body.mats.body.color.setHex(
-          team === TEAM.NONE ? body.tint : TEAM_COLOR[team]);
+        body.friendly = friendly;
+        this._paintTeam(body);
+        /*
+         * A TEAMMATE'S TAG IS DRAWN THROUGH WALLS. AN ENEMY'S IS NOT.
+         *
+         * This asymmetry is the whole feature and it is deliberate. Seeing
+         * where your own side is through a floor is what stops you shooting
+         * them and what makes a team read as a team; doing the same for the
+         * other side is a wallhack, and it would take the entire game apart —
+         * there would be no reason to ever hold an angle or clear a room.
+         *
+         * So: friends are always visible, enemies only when you can actually
+         * see them, and anybody NOT wearing a tag through the wall is someone
+         * to shoot.
+         */
+        body.tag.material.depthTest = !friendly;
+        body.tag.renderOrder = friendly ? 12 : 0;
         // The tag is drawn into a canvas, so it has to be repainted to change.
         this._drawTag(body, s.hp);
       }
@@ -381,6 +405,16 @@ export class RemotePlayers {
       visor: this.assets.getMaterial('soldierVisor').clone(),
     };
     mats.body.color.setHex(tint);
+    /*
+     * The colours these started as, so a body can be put back.
+     * In free-for-all everyone wears their own tint again, and without a copy
+     * of the originals the team wash would be permanent from the first team
+     * match a body survived into.
+     */
+    const baseColors = {
+      helmet: mats.helmet.color.clone(),
+      gear: mats.gear.color.clone(),
+    };
 
     /**
      * Materials that can take a hit flash — i.e. that actually have an
@@ -406,7 +440,7 @@ export class RemotePlayers {
     group.name = `remote_${id}`;
 
     const record = {
-      id, name, tint, team: TEAM.NONE,
+      id, name, tint, team: TEAM.NONE, friendly: false, baseColors,
       group, mats, flashMats: flashable, flash: 0, phase: Math.random() * 6.28,
       head: null, legL: null, legR: null, armL: null, armR: null,
       // The model stands with its feet at y=0, but the server reports the
@@ -640,6 +674,33 @@ export class RemotePlayers {
     body.weaponGroup.add(model);
   }
 
+  /**
+   * Put a body in its team's colours.
+   *
+   * The fatigues take the colour outright; the helmet and webbing are only
+   * pulled PART of the way towards it. Painting every material the same flat
+   * red turns a soldier into a red blob — the silhouette stops reading as a
+   * person, and at that point you cannot tell which way they are facing or
+   * whether they are aiming at you. Keeping the gear mostly its own colour
+   * leaves the shape legible while the body still says "red" at a glance.
+   *
+   * The visor is deliberately untouched. `soldierVisor` is a MeshBasicMaterial
+   * and the reasons not to treat it like the others are set out in `_create`.
+   */
+  _paintTeam(record) {
+    const { mats, baseColors, team } = record;
+    if (team === TEAM.NONE) {
+      mats.body.color.setHex(record.tint);
+      mats.helmet.color.copy(baseColors.helmet);
+      mats.gear.color.copy(baseColors.gear);
+      return;
+    }
+    const c = new THREE.Color(TEAM_COLOR[team]);
+    mats.body.color.copy(c);
+    mats.helmet.color.copy(baseColors.helmet).lerp(c, 0.55);
+    mats.gear.color.copy(baseColors.gear).lerp(c, 0.30);
+  }
+
   _buildTag(record) {
     const canvas = document.createElement('canvas');
     canvas.width = 256;
@@ -676,8 +737,28 @@ export class RemotePlayers {
     ctx.lineWidth = 6;
     ctx.strokeStyle = 'rgba(2, 8, 14, 0.92)';
     ctx.strokeText(record.name, c.width / 2, 22);
-    ctx.fillStyle = '#dbe9f4';
+    ctx.fillStyle = record.friendly ? '#9fe8c0' : '#dbe9f4';
     ctx.fillText(record.name, c.width / 2, 22);
+
+    /*
+     * A chevron over a teammate's name.
+     *
+     * Colour alone is not enough on its own: it is the first thing lost to a
+     * dim room, a muzzle flash, or simply being colour-blind, and this is the
+     * one call in the game you must not get wrong. A shape survives all three.
+     */
+    if (record.friendly) {
+      ctx.beginPath();
+      ctx.moveTo(c.width / 2, 1);
+      ctx.lineTo(c.width / 2 - 9, 12);
+      ctx.lineTo(c.width / 2 + 9, 12);
+      ctx.closePath();
+      ctx.fillStyle = '#9fe8c0';
+      ctx.strokeStyle = 'rgba(2, 8, 14, 0.92)';
+      ctx.lineWidth = 3;
+      ctx.stroke();
+      ctx.fill();
+    }
 
     // Health bar under the name.
     const barW = 168;

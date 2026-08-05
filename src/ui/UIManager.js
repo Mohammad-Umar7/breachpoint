@@ -19,6 +19,39 @@ import {
 
 const SLOT_KEYS = ['1', '2', '3', '4'];
 
+/**
+ * Turn a PROJECTED point into where its objective marker goes on screen.
+ *
+ * Exported and pure so it can be tested without a browser: it is the one piece
+ * of this that is easy to get backwards and impossible to notice from a
+ * screenshot, since a marker pinned to the wrong edge looks completely normal
+ * — it just sends people the opposite way to the flag.
+ *
+ * `p` is normalised device coordinates, so x and y run -1..1 across the screen
+ * and z passes 1 at the camera plane. A point BEHIND the camera comes back
+ * with z > 1 and x and y MIRRORED, so both are negated to recover the true
+ * bearing before anything else is done with them.
+ *
+ * Anything off screen is pushed out along its own bearing until it touches the
+ * unit square, then held just inside the edge so the pill is not half cut off.
+ *
+ * @returns {{x: number, y: number, edge: boolean}} x/y still in -1..1
+ */
+export function markerScreenPos(p) {
+  const behind = p.z > 1;
+  let x = behind ? -p.x : p.x;
+  let y = behind ? -p.y : p.y;
+
+  const edge = behind || Math.abs(x) > 1 || Math.abs(y) > 1;
+  if (edge) {
+    // `|| 1` is for a carrier directly behind the camera and dead centre,
+    // where both components are zero and this would divide by it.
+    const s = Math.max(Math.abs(x), Math.abs(y)) || 1;
+    x /= s; y /= s;
+  }
+  return { x: clamp(x, -0.94, 0.94), y: clamp(y, -0.88, 0.88), edge };
+}
+
 export class UIManager {
   /** @param {import('../core/Settings.js').Settings} settings */
   constructor(settings) {
@@ -26,6 +59,8 @@ export class UIManager {
 
     this._killFeed = [];
     this._damageNumbers = [];
+    /** team -> the objective-marker pill for that team's flag. */
+    this._flagMarkerEls = new Map();
     this._toastCount = 0;
     this._bannerTimer = 0;
     this._damageFlash = 0;
@@ -307,6 +342,7 @@ export class UIManager {
 
     this._updateKillFeed(dt);
     this._updateDamageNumbers(dt, s.camera);
+    this._updateFlagMarkers(s.flagMarkers, s.camera);
   }
 
   // ------------------------------------------------------------ HUD events
@@ -468,6 +504,69 @@ export class UIManager {
       d.el.style.display = '';
       d.el.style.left = `${(p.x * 0.5 + 0.5) * window.innerWidth}px`;
       d.el.style.top = `${(-p.y * 0.5 + 0.5) * window.innerHeight}px`;
+    }
+  }
+
+  /**
+   * OBJECTIVE MARKERS — where the flags are, straight through the walls.
+   *
+   * A pill per marked flag, projected from its world position every frame. It
+   * is a DOM element on top of the canvas, so it is unoccluded by definition:
+   * there is no depth test to lose, which is exactly what was asked for —
+   * you should see the carrier through the floor and round the corner.
+   *
+   * Where on screen each pill goes, including when its carrier is behind you,
+   * is `markerScreenPos` above.
+   *
+   * @param {Array} markers  from FlagObjects.markers(), names already resolved
+   * @param {THREE.Camera} camera
+   */
+  _updateFlagMarkers(markers, camera) {
+    const live = new Set();
+
+    for (const m of markers ?? []) {
+      if (!camera) break;
+      live.add(m.team);
+
+      let el = this._flagMarkerEls.get(m.team);
+      if (!el) {
+        el = document.createElement('div');
+        el.className = 'flag-marker';
+        el.innerHTML = '<span class="fm-icon">⚑</span><span class="fm-text"></span>';
+        this.el.hud.appendChild(el);
+        this._flagMarkerEls.set(m.team, el);
+      }
+
+      /*
+       * Cloned because `project` mutates in place, and `m.pos` is a scratch
+       * vector FlagObjects owns and reuses — projecting it directly would
+       * leave screen coordinates where the next frame expects world ones.
+       * Two clones a frame, matching how the damage numbers above work; this
+       * class deliberately does not import THREE and takes vectors instead.
+       */
+      const v = m.pos.clone();
+      const dist = Math.round(v.distanceTo(camera.position));
+      const { x, y, edge } = markerScreenPos(v.project(camera));
+
+      el.style.left = `${(x * 0.5 + 0.5) * window.innerWidth}px`;
+      el.style.top = `${(-y * 0.5 + 0.5) * window.innerHeight}px`;
+      el.classList.toggle('edge', edge);
+      el.classList.toggle('red', m.team === TEAM.RED);
+      el.classList.toggle('blue', m.team === TEAM.BLUE);
+      el.classList.toggle('dropped', m.state === FLAG_STATE.DROPPED);
+
+      const label = m.state === FLAG_STATE.DROPPED ? 'DROPPED' : (m.name || 'ENEMY');
+      const text = `${label} · ${dist}m`;
+      // Only when it changes: this runs every frame, and writing textContent
+      // unconditionally re-lays out the pill sixty times a second.
+      if (el._fmText !== text) {
+        el.lastChild.textContent = text;
+        el._fmText = text;
+      }
+    }
+
+    for (const [team, el] of this._flagMarkerEls) {
+      if (!live.has(team)) { el.remove(); this._flagMarkerEls.delete(team); }
     }
   }
 
@@ -680,6 +779,8 @@ export class UIManager {
     this._killFeed.length = 0;
     for (const d of this._damageNumbers) d.el.remove();
     this._damageNumbers.length = 0;
+    for (const el of this._flagMarkerEls.values()) el.remove();
+    this._flagMarkerEls.clear();
     this.el.pickupToast.innerHTML = '';
     this.el.damageDirs.innerHTML = '';
     this._toastCount = 0;

@@ -1066,6 +1066,43 @@ kbd {
 #ctf-red.mine { background: linear-gradient(90deg, rgba(225, 85, 63, 0.30), transparent); }
 #ctf-blue.mine { background: linear-gradient(270deg, rgba(74, 144, 217, 0.30), transparent); }
 
+/* ------------------------------------------------ objective markers
+ *
+ * The pill that tracks whoever has a flag, through walls and floors.
+ *
+ * It is DOM over the canvas, so being unoccluded costs nothing — there is no
+ * depth test to defeat. `translate(-50%, -50%)` centres it on the projected
+ * point, so the coordinates UIManager writes are the carrier's chest and not
+ * the pill's top-left corner.
+ */
+.flag-marker {
+  position: absolute; left: 0; top: 0;
+  transform: translate(-50%, -50%);
+  display: flex; align-items: center; gap: 6px;
+  padding: 3px 8px 3px 6px;
+  font-size: 11px; letter-spacing: 1.5px; white-space: nowrap;
+  background: rgba(8, 14, 20, 0.72);
+  border: 1px solid currentColor;
+  border-radius: 2px;
+  /* Above the crosshair, below the respawn overlay. */
+  z-index: 3;
+}
+.flag-marker.red { color: #ff7a63; }
+.flag-marker.blue { color: #74b2f0; }
+.flag-marker .fm-icon { font-size: 14px; line-height: 1; }
+.flag-marker .fm-text { color: var(--ink); font-weight: 600; }
+
+/* Off screen: dimmed and stripped back to the icon, because a pill pinned to
+   the edge with a name and a distance on it is a banner, and there may be one
+   on each side. What it has to say there is only "turn this way". */
+.flag-marker.edge { opacity: 0.8; padding: 3px 5px; }
+.flag-marker.edge .fm-text { display: none; }
+
+/* A dropped flag is not going anywhere, so it pulses rather than sitting
+   still — it is the one that needs somebody to go and do something about it. */
+.flag-marker.dropped { border-style: dashed; animation: fm-pulse 1.1s infinite; }
+@keyframes fm-pulse { 50% { opacity: 0.45; } }
+
 .ctf-drop {
   display: block; margin-top: 2px;
   font-size: 10px; letter-spacing: 2px; font-weight: 400;
