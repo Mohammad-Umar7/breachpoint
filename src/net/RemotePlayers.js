@@ -730,9 +730,36 @@ export class RemotePlayers {
       // Smoothed, because interpolation makes the per-frame delta jittery;
       // fast enough to react inside a single step.
       body.speed = damp(body.speed ?? 0, Math.min(raw, 14), 12, dt);
+
+      /*
+       * WHICH WAY they are going, relative to which way they are FACING.
+       *
+       * The gait knew only a speed, so every direction of travel was animated
+       * as a forward run: a player strafing right pumped their legs forward
+       * while sliding sideways, and a player backing off ran forwards away
+       * from you. In a shooter that is most of the time — you strafe and
+       * back-pedal in every fight — so the figure spent most of every fight
+       * moving one way and running another.
+       *
+       * Yaw 0 faces -Z, so forward is (-sin, -cos) and right is (cos, -sin).
+       * Both come out as fractions of the current speed, which is what lets
+       * the pose below blend between running forward, back-pedalling and
+       * side-stepping with no extra states and no thresholds to fall between.
+       */
+      if (raw > 1e-4) {
+        const sy = Math.sin(s.yaw), cy = Math.cos(s.yaw);
+        const ux = dx / (raw * dt), uz = dz / (raw * dt);
+        body.fwd = damp(body.fwd ?? 0, ux * -sy + uz * -cy, 9, dt);
+        body.side = damp(body.side ?? 0, ux * cy + uz * -sy, 9, dt);
+      } else {
+        body.fwd = damp(body.fwd ?? 0, 0, 9, dt);
+        body.side = damp(body.side ?? 0, 0, 9, dt);
+      }
     } else {
       body.lastPos = body.group.position.clone();
       body.speed = 0;
+      body.fwd = 0;
+      body.side = 0;
     }
     body.lastPos.copy(body.group.position);
 
@@ -757,17 +784,39 @@ export class RemotePlayers {
     // ---------------------------------------------------------------- legs
     // Knees are not separate joints in this model, so the illusion comes from
     // swinging the leg and lifting the body — the classic low-poly walk.
-    if (body.legL) body.legL.rotation.x = swing * 0.80 * g;
-    if (body.legR) body.legR.rotation.x = -swing * 0.80 * g;
+    /*
+     * The swing is SPLIT between fore-aft and sideways by the direction of
+     * travel. Running forward is all rotation.x, side-stepping is all
+     * rotation.z — the legs scissor apart and together — and anything diagonal
+     * is both at once. Backing away reverses the fore-aft half, so the legs
+     * drive backwards instead of running the wrong way.
+     */
+    const fwd = body.fwd ?? 0;
+    const side = body.side ?? 0;
+    if (body.legL) {
+      body.legL.rotation.x = swing * 0.80 * g * fwd;
+      body.legL.rotation.z = -swing * 0.42 * g * side;
+    }
+    if (body.legR) {
+      body.legR.rotation.x = -swing * 0.80 * g * fwd;
+      body.legR.rotation.z = -swing * 0.42 * g * side;
+    }
 
     // ---------------------------------------------------------------- torso
-    // Vertical bob at twice stride frequency (one rise per footfall), plus a
-    // slight forward lean into the run and a roll onto the planted foot.
-    // These three are most of what separates "walking" from "gliding".
+    /*
+     * Vertical bob at twice stride frequency — one rise per footfall.
+     *
+     * THE ROOT STAYS UPRIGHT, and that is a fix rather than a preference. It
+     * used to carry both a forward pitch and a roll, and because the legs and
+     * the chest are its children, the pitch tilted the FEET off the floor and
+     * the roll compounded with the chest's own roll below it. Two rolls in
+     * phase put the upper body through about 3.7 degrees of cant every stride,
+     * which is what "the character looks tilted over to one side when it runs"
+     * actually was. A person leans from the hips; their boots stay flat.
+     */
     const bob = Math.abs(lift) * 0.055 * g;
-    const lean = g * 0.13;
-    body.group.rotation.x = lean;
-    body.group.rotation.z = swing * 0.035 * g;
+    body.group.rotation.x = 0;
+    body.group.rotation.z = 0;
 
     // ----------------------------------------------------------------- arms
     // The right arm holds the weapon and the left arm is SOLVED to reach it.
@@ -788,7 +837,9 @@ export class RemotePlayers {
     const aiming = (s.flags & FLAG.ADS) !== 0 || (s.flags & FLAG.FIRING) !== 0;
     body.aim = damp(body.aim ?? 0, aiming ? 1 : 0, 10, dt);
     const aim = body.aim;
-    const jog = swing * 0.09 * g * (1 - aim);   // suppressed while aiming
+    // Suppressed while aiming, and signed by travel so the arms swing with the
+    // stride they belong to rather than against it when backing away.
+    const jog = swing * 0.09 * g * (1 - aim) * (body.fwd ?? 0);
 
     // --- chest: the aim layer ---------------------------------------------
     // Pitches to the player's real aim while the legs below keep running
@@ -799,11 +850,27 @@ export class RemotePlayers {
       // has to come off: it adds directly to the barrel's cant, and a player
       // aiming at you whose muzzle points 20 degrees past your shoulder reads
       // as not aiming at you at all.
-      body.chest.rotation.y = THREE.MathUtils.lerp(0.26, 0.06, aim);
+      /*
+       * Blade angle, plus a counter-rotation against the hips.
+       *
+       * Shoulders swinging opposite the pelvis is the thing that reads as
+       * running rather than as a mannequin being slid along the floor. It is
+       * suppressed while aiming for the same reason the blade is: a shouldered
+       * weapon that swings six degrees off target every stride cannot be aimed.
+       */
+      body.chest.rotation.y = THREE.MathUtils.lerp(0.26, 0.06, aim)
+        - swing * 0.10 * g * (1 - aim) * fwd;
       // POSITIVE rotation.x tips the chest's -Z (its forward) UPWARD, and
       // negative pitch means looking down, so the two share a sign. Negating
       // it here pointed the weapon up whenever the player aimed down.
-      body.chest.rotation.x = s.pitch * (0.35 + 0.45 * aim) - lean * 0.5;
+      /*
+       * Aim pitch, and the lean into the run — which now lives HERE rather than
+       * on the root, so the legs stay under the body and the feet stay flat.
+       *
+       * Signed by the direction of travel, so backing away leans back. A figure
+       * that leans forward while retreating looks like it is being dragged.
+       */
+      body.chest.rotation.x = s.pitch * (0.35 + 0.45 * aim) + g * 0.15 * fwd;
 
       /*
        * --- peeking ------------------------------------------------------
@@ -831,7 +898,17 @@ export class RemotePlayers {
       // is the character's right (armR sits at +0.25). Getting this backwards
       // would show them peeking out of the opposite side of the wall, which is
       // worse than not showing it at all.
-      body.chest.rotation.z = swing * 0.03 * g - body.peek * PEEK_ROLL;
+      /*
+       * The only roll left on the figure, and it does two jobs.
+       *
+       * The stride term is the roll onto the planted foot. The `side` term
+       * banks into a side-step the way anybody changing direction at speed
+       * does — and because the stride term is scaled by `fwd`, a purely
+       * lateral shuffle has no planted-foot roll at all, which is correct.
+       */
+      body.chest.rotation.z = swing * 0.03 * g * fwd
+        + g * 0.10 * side
+        - body.peek * PEEK_ROLL;
       // Some of the travel comes from shifting the whole upper body, which is
       // what actually clears the corner. Roll alone needs a comical angle to
       // move the head as far as the camera really goes.
