@@ -136,14 +136,10 @@ const R = {
 /**
  * The great stair: one straight flight out of the hall, climbing north.
  *
- * THE TREAD DIMENSIONS ARE A CONTRACT, not a look. The scout drone's character
- * controller is tuned with a 0.14 m autostep and a 0.08 m minimum tread width
- * (see PhysicsWorld), which is a tenth of the numbers the player gets — so a
- * flight authored to the warehouse's proportions is a flight no drone can
- * climb, and on a sealed map that means two entire storeys it can never see.
- * 0.24 m of run and a rise DERIVED from the storey height rather than picked
- * keeps both this and the loft stair inside that envelope whatever the floor
- * heights become.
+ * THE TREAD DIMENSIONS ARE DERIVED, not picked. 0.24 m of run with a rise
+ * taken from the storey height keeps this flight and the loft stair at the
+ * same pitch whatever the floor heights become — change a storey and the
+ * stairs follow it instead of quietly becoming unclimbable.
  */
 const STAIR = {
   x: -6.4, w: 2.6, fromZ: 4.4, steps: 34, rise: F_TOP / 34, run: 0.24,
@@ -158,16 +154,11 @@ const LOFT_TOP_Z = LOFT.fromZ - LOFT.steps * LOFT.run;       // -4.28
  * west off the interior face of the x = 5.5 partition.
  *
  * Identical arithmetic to the loft stair — 32 steps, 0.24 m of run, the rise
- * derived from the storey height — because the contract above applies to it for
- * the same reason and then one more. A flight only players could climb would
- * still leave the scout shut out of the whole top storey the moment somebody
- * stood on the loft stair, which is the exact failure this route exists to fix.
- * 0.125 over 0.24 is 27.5 degrees against the player's 52 and the drone's 38.
- * That TIES the loft stair for the shallowest pitch in the house rather than
- * beating it — the two are the same expression, so they are the same angle to
- * the last digit, and they will still be if the storey height ever moves. Do
- * not re-pitch one to tell them apart: the loft stair clears the drone's 0.14 m
- * autostep by 15 mm as it is.
+ * derived from the storey height — for the reason above. 0.125 over 0.24 is
+ * 27.5 degrees against the player's 52 degree limit, which TIES the loft stair
+ * for the shallowest pitch in the house rather than beating it: the two are
+ * the same expression, so they are the same angle to the last digit, and they
+ * will still be if the storey height ever moves.
  *
  * It is the LONG way to the attic all the same, and the length is in the
  * APPROACH, not the climb. Both flights are 32 x 0.24 = 7.68 m of run for the
@@ -580,15 +571,13 @@ function buildStairs(level) {
   /*
    * The service stair, out of the rear lobby. Bare pine, no rail, half the
    * width and DELIBERATELY STEEP — a 0.20 m rise where the great stair has
-   * 0.13. It is the only flight in the house a drone cannot climb, which is a
-   * decision rather than an oversight: the back stair is a shortcut that costs
-   * you your scout, and the lobby is only 6.3 m deep so a drone-legal flight
-   * would not have fitted in it anyway.
+   * 0.13. It is a shortcut, and being unpleasant to climb is the price of it:
+   * the lobby is only 6.3 m deep, so a shallow flight would not have fitted
+   * there anyway.
    */
   level._stairs('pineStep', [4.3, 0, -12.32], [0, 1], 22, 0.2, 0.26, 1.4);
 
-  // The loft stair, hugging the west wall of the upper landing. Drone-legal,
-  // because otherwise the attic is a room only players can hold.
+  // The loft stair, hugging the west wall of the upper landing.
   level._stairs('pineStep', [-13.8, F_TOP, LOFT.fromZ], [0, -1],
     LOFT.steps, LOFT.rise, LOFT.run, 1.4);
 
@@ -1291,23 +1280,6 @@ export const manorMap = Object.freeze({
   description:
     'Three storeys of rooms, doorways and lamplight, with one glazed hall '
     + 'running the full height of it. Four ways up. Nine ways down.',
-
-  /**
-   * THIS MAP HAS A SCOUT DRONE ON IT, and this flag is the only thing that
-   * says so.
-   *
-   * The drone code contains no map id anywhere — `DroneSystem.onMapChanged`
-   * reads this, and the server reads `ARENAS.manor.drone`, which is this same
-   * decision mirrored into the file the server is allowed to import. A map
-   * that does not set it simply has no drone: an absent key rather than a
-   * false one, so the other two maps refuse it without being edited and a
-   * fourth map cannot switch it on by accident.
-   *
-   * It belongs HERE rather than in the drone, because whether a house is worth
-   * scouting is a fact about the house. A sealed three-storey building full of
-   * doorways is; a 70 m open yard is not.
-   */
-  drone: true,
 
   scale: 'SMALL',
   span: '30 m',

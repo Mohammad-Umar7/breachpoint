@@ -51,10 +51,6 @@ import { ensureThumbnail, getThumbnail } from './world/MapThumbnail.js';
 import { RemotePlayers } from './net/RemotePlayers.js';
 import { RemoteAudio } from './net/RemoteAudio.js';
 import { FlagObjects } from './net/FlagObjects.js';
-import { DroneSystem } from './drone/DroneSystem.js';
-import { DroneObjects } from './drone/DroneObjects.js';
-import { DroneFeed } from './drone/DroneFeed.js';
-import { DroneScreen } from './drone/DroneScreen.js';
 import { arenaFor } from './net/arena.js';
 import { TEAM, DEFAULT_MODE_ID, getMode } from './net/modes.js';
 import { wireNetwork } from './net/wireNetwork.js';
@@ -267,64 +263,6 @@ export class Game {
       this.menus.setLoadingProgress(0.93, 'Grinding lenses');
       this.scope = new ScopeRenderer(this.renderer, this.scene, this.settings);
 
-      /*
-       * The scout drone, in four pieces that know nothing about each other.
-       *
-       * DroneSystem owns the mode switch and is the ONLY one of them allowed
-       * to touch weapons, input, player, ads or lean — see its header. The
-       * other three draw: chassis in the world, a camera rendered to a
-       * texture, and the panel that texture lands on. Composing them is this
-       * function's job precisely so that none of them has to know the others
-       * exist.
-       */
-      this.drone = new DroneSystem({
-        physics: this.physics,
-        player: this.player,
-        weapons: this.weapons,
-        // Named `adsSystem` on Game and `ads` here, because DroneSystem is
-        // written against the role rather than against Game's field names.
-        ads: this.adsSystem,
-        lean: this.lean,
-        input: this.input,
-        net: this.net,
-        menus: this.menus,
-      });
-      // A CLOSURE, not the Map: `_netSample` is cleared and reused every frame,
-      // so a held reference would freeze every chassis where it first appeared.
-      // Same reason FlagObjects takes its sample source as a function.
-      this.droneObjects = new DroneObjects({
-        scene: this.scene,
-        sampleSource: () => this._droneSample,
-        fx: this.fx,
-      });
-      this.droneScreen = new DroneScreen();
-      this.droneFeed = new DroneFeed(this.renderer, this.scene, this.settings);
-      this.droneFeed.attach(this.droneScreen);
-      /*
-       * Parent the panel INTO the handset's view model, once, here.
-       *
-       * Every weapon is instantiated up front and keeps its own group for the
-       * life of the game — nothing is rebuilt on a swap — so attaching at boot
-       * means the screen shows and hides with the handset for free, through
-       * the same visibility the view model already applies to every weapon.
-       * Doing it on equip instead would re-parent a live mesh mid-frame, every
-       * single deploy, for no gain.
-       */
-      const handset = this.weapons?.pool?.get('dronectl');
-      if (handset) this.droneScreen.attach(handset.group);
-      else console.warn('[Drone] No "dronectl" weapon — the panel has nothing to sit on.');
-
-      /*
-       * And tell it which map it is already standing in.
-       *
-       * `_buildLevel` announces every map change, but the FIRST one happens
-       * during boot, several steps before this object exists — so a player who
-       * starts the game on a drone map and never switches would have had the
-       * key do nothing, with the flag sitting false and no way to notice.
-       */
-      this.drone.onMapChanged(this.level?.mapId ?? DEFAULT_MAP_ID);
-      /** Interpolated drone rows for this frame. Rebuilt in _updateNetwork. */
-      this._droneSample = null;
 
       this.menus.setLoadingProgress(0.96, 'Compiling shaders');
       this.postfx = new PostFX(this.renderer, this.scene, this.camera, this.settings, this.viewModel.camera);
@@ -882,7 +820,6 @@ export class Game {
   _resetWorld() {
     // Before the weapon reset: aborting hands the player's weapon back, and
     // doing it after would put the handset in their hands for the new round.
-    this.drone?.abort();
     this.pickups.reset();
     this.fx.reset();
     this.weapons.reset();
@@ -993,37 +930,17 @@ export class Game {
       }
     }
 
-    /*
-     * 0. The drone reads the sticks BEFORE the player does.
-     *
-     * `updateLook` drains the accumulated mouse delta whether or not it is
-     * enabled to use it — as does every other consume-and-clear on the input
-     * manager. Reading after it gives the drone zeroes, with no error
-     * anywhere: a robot that simply will not steer.
-     */
-    this.drone?.updateInput(dt);
-
     // 1. Look first: movement should use this frame's facing.
     this.player.updateLook(dt);
 
-    // 2. Fixed-step simulation. The drone steps inside the SAME closure, or it
-    //    freezes solid the moment its pilot stops being the thing being ticked.
-    this.physics.step(dt, (fdt) => {
-      this.player.fixedUpdate(fdt);
-      this.drone?.fixedUpdate(fdt);
-    });
+    // 2. Fixed-step simulation.
+    this.physics.step(dt, (fdt) => this.player.fixedUpdate(fdt));
 
     // 3. Dynamic meshes follow their bodies (interpolated).
     this.physics.syncMeshes();
 
     // 4. Camera (bob, recoil, lean, shake).
     this.player.update(dt, this.physics.alpha);
-    // The panel poses against this frame's final camera, so it goes after the
-    // camera transform and before the weapons that read it.
-    this.drone?.update(dt, this.physics.alpha);
-    // The panel's own animation — boot wipe, signal, static, battery — driven
-    // from the same state the HUD reads, so the two can never disagree.
-    this.droneScreen?.update(dt, this.drone?.hudState?.());
 
     // 5. Weapons need the final camera transform for accurate raycasts.
     this.weapons.update(dt);
@@ -1038,9 +955,6 @@ export class Game {
       this.flagObjects.selfId = this.net.selfId;
       this.flagObjects.update(dt);
     }
-    // Every drone in the room, ours included, drawn from the numbers that just
-    // drew everybody's bodies.
-    this.droneObjects?.sync(dt);
     this.minimap?.update(dt, this.player, this._netSample);
     this._updatePendingExplosions(dt);
     this.fx.update(dt, this.camera);
@@ -1183,25 +1097,6 @@ export class Game {
 
     // Pickups exist by the time a map is SWAPPED, but not on first boot —
     // Game builds the level before it builds them.
-    /*
-     * The drone does not survive a map change.
-     *
-     * Its collider is made outside Level, and `Level.dispose()` only reclaims
-     * what Level made — so an un-aborted drone leaves an invisible body
-     * standing in the middle of the next arena, blocking shots from a robot
-     * that is no longer anywhere.
-     */
-    this.drone?.abort();
-    this.droneObjects?.clear();
-    /*
-     * ...and then it asks the NEW map whether it has one at all.
-     *
-     * After the abort, never before: `onMapChanged` aborts too when the answer
-     * is no, and calling it first would leave the old map's drone alive across
-     * the rebuild on any map that also has one.
-     */
-    this.drone?.onMapChanged?.(map.id);
-
     this.pickups?.buildFromLevel?.(this.level);
 
     /*
@@ -1443,9 +1338,6 @@ export class Game {
     });
 
     this._netSample = net.sample(performance.now(), this._netSample);
-    // Drones interpolate on exactly the same clock as bodies, so a chassis and
-    // the player standing next to it are never a frame apart.
-    this._droneSample = net.sampleDrones(performance.now(), this._droneSample ?? undefined);
 
     // net.players is already a Map of exactly what sync() wants. Rebuilding it
     // here was allocating an array and a Map on every single frame for nothing.
@@ -1490,10 +1382,6 @@ export class Game {
 
   leaveMatch() {
     this.net?.disconnect();
-    // A drone belongs to a match. Leaving one with the handset still out would
-    // strand the player in a menu holding a screen with no weapon behind it.
-    this.drone?.abort();
-    this.droneObjects?.clear();
     this.remotes?.clear();
     // Or last match's shooters would still be on the map in the next one.
     this.minimap?.clear();
@@ -1532,16 +1420,6 @@ export class Game {
         // taken away — which is precisely the moment it would matter.
         spawnProtected: this.net?.connected
           && (this.net.selfFlags & FLAG.PROTECTED) !== 0,
-        /*
-         * "This view is not your body's."
-         *
-         * Piloting the drone is the only thing that sets it. It tells the
-         * health vignette and the crosshair to stand down: a crosshair aims a
-         * weapon you are not holding, and a damage vignette describes a body
-         * you are not looking out of. See UIManager.updateHud.
-         */
-        spectating: !!this.drone?.piloting,
-        drone: this.drone?.hudState?.() ?? null,
         // The mouse is not ours yet. Worth saying out loud rather than leaving
         // the player to work out why looking around does nothing.
         needsClick: this.state === GAME_STATE.PLAYING && !this.input.pointerLocked,
@@ -1582,19 +1460,6 @@ export class Game {
     // Reset here rather than at the top of the frame: `info.render` then
     // holds the *previous* frame's totals when the HUD reads it.
     this.renderer.info.reset();
-    /*
-     * The drone's own view, into its own texture.
-     *
-     * AFTER the counter reset on purpose: a second scene render is the most
-     * expensive thing this feature does, and hiding it from the draw-call
-     * readout would hide exactly the cost anyone debugging performance needs
-     * to see. It no-ops entirely when nobody is piloting.
-     */
-    if (this.drone?.piloting && this.drone.actor) {
-      this.droneFeed?.renderFeed(this.drone.actor.camera, true);
-    } else {
-      this.droneFeed?.renderFeed(null, false);
-    }
 
     // The scope's view is rendered first, into its own texture, by a camera
     // restricted to the world layer — so the weapon can never appear in it.
@@ -1613,10 +1478,6 @@ export class Game {
     this.input?.dispose();
     this.audio?.dispose();
     this.scope?.dispose();
-    this.drone?.dispose();
-    this.droneObjects?.dispose();
-    this.droneFeed?.dispose();
-    this.droneScreen?.dispose();
     this.postfx?.dispose();
     this.pickups?.dispose();
     this.weapons?.dispose();

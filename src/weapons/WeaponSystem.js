@@ -656,40 +656,16 @@ export class WeaponSystem {
    */
   _resolveRemoteHit(remote, direction, weapon) {
     const def = weapon.def;
-    /*
-     * What was hit, not just where.
-     *
-     * `remoteHitTest` is one hook with two things behind it — other players and
-     * drones — and a robot that bleeds is the tell that nobody thought about it.
-     * `kind` rides along from whichever test answered; absent means a player,
-     * because RemotePlayers has been answering this hook alone for far longer
-     * than drones have existed.
-     *
-     * It goes into the CLAIM as well as the effects. The server does not need
-     * it — a negative victim id already says "drone" on its own — but anything
-     * else reading a claim would otherwise have to infer it from the sign of
-     * an id, which is the reasoning this exists to spare them.
-     */
-    const isDrone = remote.kind === 'drone';
-    // A drone has no head. The server forces `part` to 'torso' for one anyway,
-    // so a client that claimed otherwise would be quietly overruled and the
-    // hitmarker would be the only thing that lied.
-    const headshot = !isDrone && remote.part === 'head';
+    const headshot = remote.part === 'head';
 
     this._tmp2.copy(direction).negate();
-    if (isDrone) {
-      this.fx.spawnImpact(remote.point, this._tmp2, SURFACE.METAL, 1);
-      this.audio.play(impactSoundFor(SURFACE.METAL), { position: remote.point, volume: 0.8 });
-    } else {
-      this.fx.spawnImpact(remote.point, this._tmp2, SURFACE.FLESH, headshot ? 1.6 : 1);
-      this.fx.spawnBloodBurst(remote.point, direction, headshot ? 1.5 : 1);
-      this.audio.play(impactSoundFor(SURFACE.FLESH), { position: remote.point, volume: 0.8 });
-    }
+    this.fx.spawnImpact(remote.point, this._tmp2, SURFACE.FLESH, headshot ? 1.6 : 1);
+    this.fx.spawnBloodBurst(remote.point, direction, headshot ? 1.5 : 1);
+    this.audio.play(impactSoundFor(SURFACE.FLESH), { position: remote.point, volume: 0.8 });
 
     const claim = {
       victimId: remote.id,
       part: remote.part,
-      kind: isDrone ? 'drone' : 'player',
       point: remote.point,
       distance: remote.distance,
       weaponId: def.id,
@@ -1058,7 +1034,7 @@ export class WeaponSystem {
         const r = this._resolveRemoteHit(remote, this._spreadDir, weapon);
         // Same reasoning as the impact branch above: a blade on a chassis is
         // the wall sound, not the flesh one.
-        this.audio.play(remote.kind === 'drone' ? 'knifeHitWall' : 'knifeHit',
+        this.audio.play('knifeHit',
           { position: remote.point });
         if (r?.hitPlayer) this._registerHit(r.damage, r.headshot, r.killed, r.point);
         return;

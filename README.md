@@ -468,13 +468,6 @@ src/
 │   ├── maps/manor.js           MANOR layout: sealed country house, 30 m, 3 storeys
 │   ├── MapThumbnail.js         The game photographs its own maps for the picker
 │   └── PickupManager.js        Health / armour / ammo pickups and drops
-├── drone/
-│   ├── DroneSystem.js          Deploy/recall, and the only seam into the game
-│   ├── DroneActor.js           The pilot's own drone: collider and camera
-│   ├── droneMotion.js          Steering arithmetic, pure and separately tested
-│   ├── DroneFeed.js            The drone's camera, rendered to a 20 Hz texture
-│   ├── DroneScreen.js          The field terminal's panel, where the feed shows
-│   └── DroneObjects.js         Every drone's chassis, drawn from the snapshot
 ├── player/
 │   ├── Player.js               Character controller, camera, vitals
 │   └── LeanSystem.js           Wall-clamped tactical peeking

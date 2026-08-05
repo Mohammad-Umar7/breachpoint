@@ -117,32 +117,6 @@ export class PhysicsWorld {
       minSlideSlope: 44,
       characterMass: 82,
     });
-    /*
-     * The scout drone: 0.39 m long, 0.28 m tall, and nothing like a person.
-     *
-     * It gets its own controller rather than borrowing the player's because
-     * every number here is a fraction of the player's, and a robot given a
-     * 0.45 m autostep climbs a kitchen counter.
-     */
-    this.droneController = this._makeController(0.02, {
-      // A kerb, a floor lip, a stair tread. Above the treads it has to climb
-      // and below the furniture it must not.
-      autostepHeight: 0.14,
-      // Must not exceed the depth of a single stair tread, exactly as the
-      // player's must not — the house authors its interior flights with a
-      // 0.24 m run specifically so a robot this size can climb them, so this
-      // has to sit comfortably below that or the drone grinds to a halt
-      // against the bottom step and the upper floors are unreachable.
-      autostepMinWidth: 0.08,
-      // Shorter than the player's, because a chassis 0.11 m off the ground
-      // that snapped down 0.35 m would be pulled through a stair nosing.
-      snapToGround: 0.12,
-      maxSlope: 38,
-      minSlideSlope: 34,
-      // Light enough that shoving a crate with it looks like a toy pushing
-      // furniture, which is what it is.
-      characterMass: 6,
-    });
 
     // Scratch objects — reused to keep the frame allocation-free.
     this._v = { x: 0, y: 0, z: 0 };
@@ -278,15 +252,15 @@ export class PhysicsWorld {
     return { body, collider };
   }
 
-  /** Kinematic capsule used by the player and by the scout drone. */
+  /** Kinematic capsule used by the player. */
   createCharacterBody(pos, halfHeight, radius, tag) {
     /*
      * This was the last collider factory with no guard on it, and the only one
      * whose caller is not level-building code that runs once at load.
      *
-     * A character capsule is built from a LIVE position — a spawn point, or in
-     * the drone's case wherever the server says its owner was standing — so
-     * unlike a wall it can be built from a number that arrived over a socket.
+     * A character capsule is built from a LIVE position — a spawn point the
+     * server chose — so unlike a wall it can be built from a number that
+     * arrived over a socket.
      * A single non-finite value here does not misplace one capsule; it poisons
      * the broad phase and every raycast on the map stops answering, so the
      * floor, the walls and hit registration all quietly cease to exist while

@@ -92,26 +92,6 @@ export const MSG = Object.freeze({
    * flag through a wall.
    */
   DROPFLAG: 'd',  // {}
-  /**
-   * Everything a client asks of its drone, in one message — see DRONE_CMD.
-   *
-   *   { c: DEPLOY }                        argument-free, deliberately
-   *   { c: DRIVE, q: seq, p: [x,y,z], y }  where the pilot has driven it to
-   *   { c: PILOT, on: 0|1 }                looking through it, or not
-   *   { c: RECALL }                        pack it up
-   *
-   * Its own message rather than fields on INPUT, which is the most
-   * security-critical function in the server and does not need a second
-   * validated position threaded through it to save one envelope. DRIVE is
-   * charged against the same per-second budget INPUT is, so 30 of each is 60
-   * against a ceiling of 90 and the rate limiting comes for free.
-   *
-   * DEPLOY carries no position for exactly the reason DROPFLAG carries none:
-   * the server places the drone at the pilot's own last-validated position,
-   * because a client that could name the point could post a drone through a
-   * wall and see the room on the other side of it.
-   */
-  DRONE: 'n',     // { c: DRONE_CMD, ... }
   PING: 'p',      // { c: clientClockMs }
   NAME: 'm',      // { n: name }
 
@@ -124,21 +104,7 @@ export const MSG = Object.freeze({
   // `{ t: type, ...payload }`, so a payload field called `t` silently
   // overwrites the message type and every snapshot goes out unlabelled —
   // which is exactly what happened, and it looked like the tick was dead.
-  /**
-   * `d` is the drones, and is OMITTED ENTIRELY when the room has none.
-   *
-   * That omission is the point: a snapshot goes out thirty times a second to
-   * every player, and every map without a drone on it — which is all of them
-   * but one, and every round on that one until somebody presses the key —
-   * pays not a single byte for the feature.
-   *
-   * Membership of this array is the ONLY thing that creates or destroys a
-   * chassis on any client. One writer, one channel, so two players cannot
-   * disagree about whether a drone exists. There is no pitch: a tracked robot
-   * does not tilt, and the chassis yaw is the camera yaw.
-   */
-  SNAPSHOT: 'S',  // { ts, p: [[id, x,y,z, yaw, pitch, flags, weapon, hp]],
-                  //   d?: [[droneId, x,y,z, yaw, hp, ownerId]] }
+  SNAPSHOT: 'S',  // { ts, p: [[id, x,y,z, yaw, pitch, flags, weapon, hp]] }
   JOINED: 'J',    // { p: playerSummary }
   LEFT: 'L',      // { id }
   HIT: 'H',       // { v: victimId, a: attackerId, d: damage, pt: part, hp, ar: armour }
@@ -195,32 +161,6 @@ export const MSG = Object.freeze({
    *   by whose doing
    */
   FLAG: 'G',      // { f: [flagState], ev: FLAG_EVENT|null, by: playerId|null, tm: team }
-  /**
-   * Something happened to a drone that the snapshot cannot say.
-   *
-   * The snapshot carries where every drone IS. This carries the events —
-   * see DRONE_EVENT — and some of them are deliberately PRIVATE: HIT is one
-   * attacker's hitmarker, DENIED is one player's refused key press, CORRECT is
-   * one pilot's snap-back. Broadcasting any of those would tell the whole room
-   * something only one person is entitled to know.
-   *
-   *   o    the owning player's id. Present on every event.
-   *   id   the drone's wire id, which is always -o. Sent anyway so a reader
-   *        never has to know the convention to route the message.
-   *   ev   DRONE_EVENT
-   *   hp   chassis health after the event
-   *   bt   battery remaining, in ms
-   *   by   whose doing — the attacker on DESTROYED and HIT
-   *   p    [x, y, z] and `y` the yaw: the authoritative pose, on the events
-   *        that place a drone (DEPLOYED) or correct one (CORRECT)
-   *   why  a sentence, on DENIED only
-   *
-   * NOTE that no field here is called `t`. Room.broadcast throws on that —
-   * a payload `t` shadows the message type and the frame arrives unroutable —
-   * but Player.send does NOT, and most of these are private sends. This is
-   * precisely where that bug would have shipped unnoticed.
-   */
-  DRONESTATE: 'D', // { o, id, ev, hp, bt, by, p, y, why }
   MATCH: 'M',     // { st, tl, kt: scoreTarget, w: winnerId|null, gm: modeId, ts: teamScores }
   PONG: 'P',      // { c: echoedClientClock, s: serverTimeMs }
   DENIED: 'E',    // { why: string }
@@ -392,134 +332,6 @@ export function multiKillName(n) {
  */
 export const STREAK_ANNOUNCE_AT = STREAK_TIERS[0][0];
 
-/*
- * ---------------------------------------------------------------------------
- * THE SCOUT DRONE
- * ---------------------------------------------------------------------------
- * A small tracked robot a player deploys and drives from a handheld terminal,
- * to look round a corner they do not want to walk round.
- *
- * All of it lives here rather than in the client because the SERVER owns the
- * parts that must not be client-decided — that a drone exists at all, its
- * health, its battery, how far one drive report may move it — and it cannot
- * import THREE. Numbers the two ends had separately would not disagree loudly;
- * they would disagree by a few centimetres a second, which reads as lag.
- */
-
-/**
- * Tuning both ends share.
- *
- * `hitHalf` is the half-extent of the chassis' hit box in its OWN axes, so it
- * is oriented by the drone's yaw rather than axis-aligned — a robot broadside
- * is a much wider target than one facing you, and that has to be true of the
- * box people actually shoot at as well as of the mesh they see.
- *
- * `camHeight` of 0.19 m is the whole point of the feature and the reason the
- * house has to be authored to be read from the floor: a camera that low sees
- * under furniture and cannot see over anything.
- *
- * `staleMs` is the deadline the SERVER holds a silent client to. The drive
- * reports are what keep a drone alive, so a wedged or alt-tabbed client cannot
- * leave a permanent free sensor sitting in a doorway. It is comfortably more
- * than a few dropped packets (reports go at INPUT_HZ) and comfortably less
- * than a round.
- */
-export const DRONE = Object.freeze({
-  maxHealth: 40,
-  /** Half-extents in the chassis' own axes: [right, up, forward]. */
-  hitHalf: Object.freeze([0.20, 0.13, 0.24]),
-  /** Metres per second, and the rate the server's drive budget refills at. */
-  speed: 3.2,
-  /** Radians per second of yaw under full steering. */
-  turnRate: 3.4,
-  batteryMs: 90000,
-  /** No drive report for this long and the server despawns it. */
-  staleMs: 3000,
-  redeployCooldownMs: 12000,
-  camHeight: 0.19,
-  /** Degrees, tilted up: from the floor, everything worth seeing is above. */
-  camPitch: 4,
-  camFov: 78,
-  /** Feed refreshes per second. A panel this small hides the held frames. */
-  feedHz: 20,
-  /** Pull-it-out-of-your-pocket animation. The deploy round trip hides inside
-   *  this, which is what lets creation be a server event rather than a
-   *  prediction two players can disagree about. */
-  deployMs: 900,
-  stowMs: 180,
-});
-
-/** What a MSG.DRONE from a client is asking for. */
-export const DRONE_CMD = Object.freeze({
-  /**
-   * Deliberately argument-free, exactly as MSG.DROPFLAG is and for the same
-   * reason: the server places the drone at the pilot's own last-validated
-   * position, because a client that could name the point could post a drone
-   * through a wall and see the room on the other side of it.
-   */
-  DEPLOY: 0,
-  DRIVE: 1,
-  PILOT: 2,
-  RECALL: 3,
-});
-
-/** What a MSG.DRONESTATE from the server is reporting. */
-export const DRONE_EVENT = Object.freeze({
-  DEPLOYED: 0,
-  /** Private to the attacker — this is the hitmarker, not a broadcast. */
-  HIT: 1,
-  DESTROYED: 2,
-  RECALLED: 3,
-  /** Out of range of the operator, or the link otherwise gave out. */
-  LOST: 4,
-  EXPIRED: 5,
-  /** Private, with `why`: no drone on this map, one already out, still on
-   *  cooldown, or dead. Silence would read as a broken key. */
-  DENIED: 6,
-  /** Private to the pilot: a drive report was refused, here is the truth.
-   *  Dropping a bad report without answering is how two machines diverge
-   *  without limit — the same reasoning as handleInput's snap-back. */
-  CORRECT: 7,
-});
-
-/*
- * THE ID CONVENTION, and why a drone's id is simply minus its owner's.
- *
- * Player ids come from a process-global counter that starts at 1 and only ever
- * increments (server/index.js `nextPlayerId`), including across reconnects — a
- * returning player is issued a fresh id, never a recycled one. So no player id
- * is ever negative, and negative ids are structurally unreachable for as long
- * as that counter is the only source of them.
- *
- * That buys three things at once. There is no second id allocator and no
- * collision bookkeeping. A drone's owner is recoverable from the id alone, so
- * `Room.drones` can be keyed by owner, which is what makes "one drone per
- * player" a property of the data structure rather than a rule somebody has to
- * remember to enforce. And a hit claim `{v: -7, pt: 'torso'}` is entirely
- * self-describing, so the per-shot dedupe Set keys on `v` unchanged — the
- * alternative was a `k:` discriminator field and a composite `${v}:${k}` key,
- * which is a bug waiting to be written.
- *
- * The cost is that a negative id looks like corruption to a reader who does not
- * know this. Hence these three functions, and hence this paragraph: anywhere in
- * this codebase, a negative entity id means a drone.
- */
-
-/** The wire id of `playerId`'s drone. */
-export function droneIdFor(playerId) {
-  return -playerId;
-}
-
-/** The player a drone id belongs to. */
-export function ownerOfDroneId(id) {
-  return -id;
-}
-
-/** True when an entity id names a drone rather than a player. */
-export function isDroneId(id) {
-  return typeof id === 'number' && id < 0;
-}
-
 /**
  * Server-side sanity limits.
  *
@@ -601,30 +413,6 @@ export const LIMITS = Object.freeze({
    * about a second — it just cannot be fooled by packet timing.
    */
   moveBurstMetres: 14.24,
-  /**
-   * The same bucket, for a drone, in metres.
-   *
-   * A drive report is validated exactly as a player's movement report is, and
-   * for exactly the reason above: arrival times cannot measure speed, so the
-   * budget banked while a packet was delayed is what pays for the burst when it
-   * and the next one land together. Deriving this from DRONE.speed would have
-   * been tidier and wrong — the number has to cover network bunching, which has
-   * nothing to do with how fast the robot drives.
-   *
-   * 5.1 m is about 1.6 seconds of banked travel at DRONE.speed. Sustained speed
-   * is still capped by the refill rate, so this cannot be driven faster than
-   * the server allows; it can only be driven in gusts.
-   */
-  droneBurstMetres: 5.1,
-  /**
-   * And a hard ceiling on ONE report, however much budget is banked.
-   *
-   * Without it a client that sat still for two seconds could spend the whole
-   * bucket as a single 5 m jump through a wall — legal by the budget, and a
-   * teleport by any other name. 3.0 m is far above one tick of honest travel
-   * (about 0.11 m at 30 Hz) and far below a room.
-   */
-  droneMaxStep: 3.0,
   /** Hard ceiling on any one damage application. */
   maxDamagePerHit: 400,
   /** Fire-rate allowance: 0.8 lets a client be 20% early, absorbing timer

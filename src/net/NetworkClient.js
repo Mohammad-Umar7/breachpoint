@@ -29,7 +29,7 @@
 
 import {
   MSG, FLAG, PROTOCOL_VERSION, INTERP_DELAY_MS, INPUT_HZ,
-  MATCH_STATE, DRONE_CMD, sanitizeName,
+  MATCH_STATE, sanitizeName,
 } from './protocol.js';
 import { DEFAULT_MAP_ID, isValidMapId } from './arena.js';
 import {
@@ -105,18 +105,6 @@ export class NetworkClient {
     /** Server-reported roster: id -> { id, name, kills, deaths, ping, alive } */
     this.players = new Map();
     /**
-     * Drones currently in the room: droneId -> { id, ownerId, hp, battery }.
-     *
-     * Maintained from the snapshot's `d` array and NOTHING ELSE, because that
-     * array is the only thing the server lets create or destroy a drone — see
-     * MSG.SNAPSHOT. Mutated in place rather than replaced, so anything holding
-     * a reference keeps seeing the live registry rather than a frozen copy of
-     * whatever it was one frame ago.
-     */
-    this.drones = new Map();
-    /** The last DRONESTATE the server sent, whatever it was about. */
-    this.lastDroneEvent = null;
-    /**
      * Our own flag bits, straight off the last snapshot. See _handleSnapshot —
      * `sample()` skips our row, so this is the only place they survive.
      */
@@ -152,7 +140,6 @@ export class NetworkClient {
     this.onFlags = null;         // ({ flags, event, by, byName, team, isSelf })
     this.onDenied = null;        // (reason)
     this.onProgress = null;      // (message) slow-connect progress, for the lobby
-    this.onDroneState = null;    // ({ owner, id, event, hp, battery, by, position, yaw, why })
   }
 
   get connected() { return this.state === NET_STATE.CONNECTED; }
@@ -362,10 +349,8 @@ export class NetworkClient {
     }
     this.players.clear();
     // Or the chassis from the last match is still in the registry the next one
-    // syncs against, and a drone belonging to a room we have left is drawn in
+    // syncs against
     // the room we have joined.
-    this.drones.clear();
-    this.lastDroneEvent = null;
     this.snapshots.length = 0;
     this.selfId = null;
     this.selfFlags = 0;
@@ -443,41 +428,7 @@ export class NetworkClient {
     }
   }
 
-  /**
-   * Ask something of our drone. See MSG.DRONE and DRONE_CMD.
-   *
-   * Nothing is changed locally by DEPLOY or RECALL, on purpose: a drone
-   * existing is a server event and is never predicted, so both of those are
-   * requests whose answer arrives as a DRONESTATE and a snapshot row. That is
-   * what makes it impossible for two players to disagree about whether a drone
-   * is in the room, and it costs nothing because the round trip hides inside
-   * the pull-it-out-of-your-pocket animation.
-   *
-   * DRIVE is the exception and is the only thing about a drone this client
-   * predicts — exactly the trust the server already places in us about our own
-   * body, and validated the same way.
-   */
-  sendDroneCmd(cmd, payload = {}) {
-    if (!this.connected) return;
-    this._send(MSG.DRONE, { c: cmd, ...payload });
-  }
 
-  /**
-   * Report where we have driven our drone.
-   *
-   * Deliberately identical in shape to sendInput — same sequence counter, same
-   * rounding — because the server validates it with the same token bucket and
-   * answers a refusal with the same kind of snap-back. Sharing the counter is
-   * what lets the server see one monotonic stream from this client rather than
-   * two that it has to reason about separately.
-   */
-  sendDroneDrive({ position, yaw }) {
-    this.sendDroneCmd(DRONE_CMD.DRIVE, {
-      q: ++this._inputSeq,
-      p: [round2(position.x), round2(position.y), round2(position.z)],
-      y: round3(yaw),
-    });
-  }
 
   setName(name) {
     this.name = sanitizeName(name, this.name);
@@ -659,39 +610,6 @@ export class NetworkClient {
         break;
       }
 
-      /*
-       * Something happened to a drone that the snapshot cannot say.
-       *
-       * Note what this deliberately does NOT do: it never adds to or removes
-       * from `this.drones`. Membership of the snapshot's `d` array is the only
-       * thing allowed to do that, so a DEPLOYED that arrived before the first
-       * snapshot carrying the drone cannot produce a chassis the server does
-       * not yet think exists — and a DESTROYED that arrived first cannot leave
-       * one drawn from a row that is still on the wire. One writer.
-       */
-      case MSG.DRONESTATE: {
-        const known = this.drones.get(msg.id);
-        if (known) {
-          if (typeof msg.hp === 'number') known.hp = msg.hp;
-          if (typeof msg.bt === 'number') known.battery = msg.bt;
-        }
-        const state = {
-          owner: msg.o,
-          id: msg.id,
-          event: msg.ev,
-          hp: typeof msg.hp === 'number' ? msg.hp : null,
-          battery: typeof msg.bt === 'number' ? msg.bt : null,
-          by: msg.by ?? null,
-          position: Array.isArray(msg.p) && msg.p.length === 3 ? msg.p : null,
-          yaw: typeof msg.y === 'number' ? msg.y : null,
-          why: msg.why ?? null,
-          isSelfOwner: msg.o === this.selfId,
-          isSelfAttacker: msg.by != null && msg.by === this.selfId,
-        };
-        this.lastDroneEvent = state;
-        this.onDroneState?.(state);
-        break;
-      }
 
       case MSG.DENIED:
         this.lastError = msg.why;
@@ -725,35 +643,7 @@ export class NetworkClient {
       }
     }
 
-    /*
-     * Drones, and the `d` key is ABSENT rather than empty when there are none
-     * — see MSG.SNAPSHOT. So `msg.d ?? []` is not defensive coding; it is the
-     * normal case on every map without a drone on it.
-     */
-    const drones = new Map();
-    for (const row of msg.d ?? []) {
-      const [id, x, y, z, yaw, hp, ownerId] = row;
-      drones.set(id, { id, x, y, z, yaw, hp, ownerId });
-    }
-
-    /*
-     * The live registry, mutated in place.
-     *
-     * Membership here is exactly membership of the newest snapshot, because
-     * that is the only channel the server creates or destroys a drone through.
-     * Anything absent is gone: a drone does not linger the way a player's body
-     * does, since there is no death animation to play out.
-     */
-    for (const [id, d] of drones) {
-      const known = this.drones.get(id);
-      if (known) { known.hp = d.hp; known.ownerId = d.ownerId; }
-      else this.drones.set(id, { id, ownerId: d.ownerId, hp: d.hp, battery: null });
-    }
-    for (const id of [...this.drones.keys()]) {
-      if (!drones.has(id)) this.drones.delete(id);
-    }
-
-    this.snapshots.push({ ts: msg.ts, at: now, players, drones });
+    this.snapshots.push({ ts: msg.ts, at: now, players });
     if (this.snapshots.length > SNAPSHOT_BUFFER) this.snapshots.shift();
   }
 
@@ -822,11 +712,9 @@ export class NetworkClient {
   /**
    * The two snapshots either side of the render time, and how far between.
    *
-   * Extracted so players and drones are interpolated by ONE implementation.
+   * Extracted so the bracket search has one implementation.
    * A second copy of this would agree with the first today and drift the first
    * time either was touched, and the symptom of two interpolators that
-   * disagree by a few milliseconds is a drone that swims relative to the room
-   * it is standing in — visible, unmistakable, and impossible to attribute.
    *
    * @returns {{older: object, newer: object|null, span: number, k: number}|null}
    */
@@ -887,49 +775,6 @@ export class NetworkClient {
     return out;
   }
 
-  /**
-   * Interpolated state of EVERY drone at the current render time, including
-   * our own.
-   *
-   * The missing `if (id === this.selfId) continue` above is deliberate and is
-   * the whole reason drones are simple. `sample()` skips our own body because
-   * we simulate it locally and adding a round trip to our own movement would
-   * feel awful. A drone is different: the pilot predicts where it IS, but the
-   * chassis everyone sees — and the box everyone shoots at, the pilot included
-   * — is drawn from this. One create rule, one interpolation rule, one
-   * raycast, and no `selfId` special case anywhere in any of the three.
-   *
-   * @returns {Map<number, {id,x,y,z,yaw,hp,ownerId,moving:number}>}
-   */
-  sampleDrones(nowMs = performance.now(), out = new Map()) {
-    out.clear();
-    const at = this._bracket(nowMs);
-    if (!at) return out;
-    const { older, newer, span, k } = at;
-
-    for (const [id, a] of older.drones) {
-      const b = newer?.drones.get(id);
-      if (!b) {
-        out.set(id, { ...a, moving: 0 });
-        continue;
-      }
-      const dx = b.x - a.x;
-      const dz = b.z - a.z;
-      out.set(id, {
-        id,
-        x: a.x + dx * k,
-        y: a.y + (b.y - a.y) * k,
-        z: a.z + dz * k,
-        yaw: lerpAngle(a.yaw, b.yaw, k),
-        // Newest authoritative value rather than an interpolated one: blending
-        // an integer health produces a number that was never true.
-        hp: b.hp,
-        ownerId: b.ownerId,
-        moving: span > 0 ? Math.hypot(dx, dz) / (span / 1000) : 0,
-      });
-    }
-    return out;
-  }
 
   // ----------------------------------------------------------------- roster
   _upsert(summary) {

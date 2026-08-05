@@ -193,9 +193,8 @@ console.log('\n--- the keyboard ---');
  * `KEY_BINDINGS` and RETURN FALSE for a name that is not there. No throw, no
  * warning — the key simply never does anything, for ever. That is the same
  * silent-lookup failure as a missing DOM id or a missing sound, and it is worse
- * for a whole feature hung off a single key: the scout drone is reached only by
- * `wasPressed('drone')`, so a typo or a dropped binding takes the entire
- * subsystem off the map while every one of its own tests still passes.
+ * for anything hung off a single key: a typo or a dropped binding takes the
+ * whole feature away while every one of its own tests still passes.
  *
  * The table is also FROZEN and `BOUND_KEYS` is derived from it once at module
  * load, so a binding cannot be added at runtime to paper over this — it would
@@ -217,11 +216,6 @@ check('every action the game asks about is one the keyboard binds',
   unboundActions.length === 0 && boundActions.length > 10,
   unboundActions.length ? unboundActions.map(([a, f]) => `${a} (${f})`).join(', ')
                         : `${queriedActions.size} actions queried`);
-
-// And the drone specifically, because it is the one feature that is entirely
-// unreachable without its key and has no other way in.
-check('the scout drone has a key', boundActions.includes('drone'),
-  bindingBlock.match(/drone: \[([^\]]*)\]/)?.[1] ?? 'no `drone` binding');
 
 console.log('\n--- the network protocol ---');
 
@@ -449,39 +443,6 @@ check('the map picker is built from the registry, not written in HTML',
   hardCoded.length ? `hard-coded: ${hardCoded.join(', ')}`
                    : 'one empty grid, filled from MAPS');
 
-/*
- * A map's drone flag and the arena's mirror of it must agree.
- *
- * The client gates the feature on `getMap(id).drone`, the server on
- * `arenaFor(id).drone` — two files, because the server cannot import THREE and
- * so cannot read a map module at all. A map that says yes with an arena that
- * says no is a key that silently does nothing; the other way round is a server
- * accepting drones on a map whose geometry was never built with one in mind.
- */
-{
-  const mapDrone = new Set();
-  for (const { file, text } of ALL_SRC) {
-    if (!/src\/world\/maps\/[a-z]+\.js$/.test(file)) continue;
-    if (!/^\s*drone:\s*true\s*,/m.test(text)) continue;
-    const id = text.match(/^\s*id:\s*'([a-z]+)'/m)?.[1];
-    if (id) mapDrone.add(id);
-  }
-  // Each arena entry opens with `  <id>: Object.freeze({`, so splitting on that
-  // gives id and body in alternating slots.
-  const arenaDrone = new Set();
-  const blocks = read('src/net/arena.js').split(/\r?\n {2}([a-z]+): Object\.freeze\(\{/);
-  for (let i = 1; i < blocks.length; i += 2) {
-    if (/\r?\n\s*drone: Object\.freeze\(/.test(blocks[i + 1] ?? '')) arenaDrone.add(blocks[i]);
-  }
-  const onlyMap = [...mapDrone].filter((id) => !arenaDrone.has(id));
-  const onlyArena = [...arenaDrone].filter((id) => !mapDrone.has(id));
-  check('every map declaring a drone has one in arena.js too',
-    onlyMap.length === 0 && onlyArena.length === 0,
-    (onlyMap.length || onlyArena.length)
-      ? `map only: ${onlyMap.join(', ') || 'none'}; arena only: ${onlyArena.join(', ') || 'none'}`
-      : `${mapDrone.size} map(s) carry a drone`);
-}
-
 console.log('\n--- the world ---');
 
 /*
@@ -703,7 +664,7 @@ check('every collider factory guards its dimensions before touching the world',
  * 0.2 m minimum tread width, against a mezzanine whose stairs have a 0.18 m
  * run, so it could not have climbed them. Unreferenced scaffolding like that
  * gets reused by the next person who needs "a controller that already exists",
- * and the drone was exactly that person. It has its own.
+ *
  */
 const npcLeftovers = [...ALL_SRC, { file: 'server/index.js', text: serverSrc }]
   .filter(({ text }) => /npcController/.test(text))
@@ -711,111 +672,6 @@ const npcLeftovers = [...ALL_SRC, { file: 'server/index.js', text: serverSrc }]
 check('the dead NPC character controller is gone, not lying around to be reused',
   npcLeftovers.length === 0,
   npcLeftovers.join(', ') || 'no npcController in src/ or server/');
-
-console.log('\n--- the drone feed ---');
-
-/*
- * The drone's panel is a second camera drawn onto a surface, which is exactly
- * what the sniper scope is — and the scope carries two bugs that copying it
- * would inherit, plus one it deliberately does not have. None of the three is
- * reachable from a headless test: they are a brightness error, a listener leak
- * and a texture that is only disposed when the frame rate drops. So they are
- * checked here, from the source, which is how this file already guards
- * everything else that no runtime test can see.
- */
-const screenSrc = read('src/drone/DroneScreen.js');
-const feedSrc = read('src/drone/DroneFeed.js');
-
-/** A method body out of DroneFeed, by name. */
-const feedMethod = (name) =>
-  feedSrc.match(new RegExp(`\\n {2}${name}\\([^)]*\\) \\{([\\s\\S]*?)\\n {2}\\}`))?.[1] ?? '';
-
-/*
- * 1. The panel must NOT transform its own colour.
- *
- * `SCOPE_FRAG` tone maps and sRGB-encodes the image it captured, because the
- * scope is composited straight to the canvas after the composer has finished
- * and nothing else was ever going to do it. The drone panel is ordinary
- * view-model geometry drawn INSIDE the composer, so OutputPass transforms it
- * with the rest of the frame — and on the Low preset, where the composer is
- * skipped, three does it. Doing it here as well applies the curve twice, and
- * the scope's own comment records what that is worth: a 2-4x brightness error
- * that no exposure control affects. Copy-paste from the file next door is
- * exactly how it would arrive, which is why this is checked by name.
- */
-const manualTransform = ['acesFilmic', 'linearToSRGB', 'outputColorSpace']
-  .filter((name) => screenSrc.includes(name));
-check('the drone panel leaves the colour transform to the pipeline',
-  manualTransform.length === 0 && /uFeed/.test(screenSrc),
-  manualTransform.length ? `DroneScreen.js contains ${manualTransform.join(', ')}`
-                         : 'no hand-written tone map or encode in DroneScreen.js');
-
-/*
- * 2. Every settings listener the feed takes out is released again.
- *
- * `ScopeRenderer` subscribes to `quality` and `renderScale` and throws both
- * unsubscribe closures away, so a Game that is disposed and rebuilt leaves a
- * dead renderer rebuilding a disposed target for the life of the page. The
- * whole point of not copying that class wholesale is not copying this.
- */
-const onChangeLines = feedSrc.split(/\r?\n/).filter((l) => l.includes('settings.onChange('));
-const unstoredListeners = onChangeLines.filter((l) => !/(\.push\(|=)/.test(l));
-const feedDispose = feedMethod('dispose');
-check('every drone-feed settings listener is stored and released',
-  onChangeLines.length >= 2 && unstoredListeners.length === 0
-  && /of this\._unsubscribes\)\s*\w+\(\)/.test(feedDispose),
-  unstoredListeners.length ? unstoredListeners.map((l) => l.trim()).join('; ')
-    : `${onChangeLines.length} listeners, all released in dispose()`);
-
-/*
- * 3. A rebuilt target is handed to the panel that samples it.
- *
- * The `PerformanceGovernor` steps the quality preset down mid-match with no
- * user action at all. That disposes the render target whose texture the panel's
- * material is still holding — and a disposed render-target texture does not
- * keep showing the last good frame, it goes black, with nothing thrown and
- * nothing logged. The symptom is "the drone screen died when the game got
- * busy", which points nowhere near a settings listener.
- */
-const feedCreate = feedMethod('_createTarget');
-const feedRepoint = feedMethod('_pointScreenAtTarget');
-const repointGaps = [
-  ['_createTarget calls _pointScreenAtTarget', /_pointScreenAtTarget\(\)/.test(feedCreate)],
-  ['it assigns this.target.texture', /uFeed\.value\s*=\s*this\.target\.texture/.test(feedRepoint)],
-  ['it sets needsUpdate', /material\.needsUpdate\s*=\s*true/.test(feedRepoint)],
-].filter(([, ok]) => !ok).map(([what]) => what);
-check('a rebuilt feed target is re-pointed at the panel that samples it',
-  repointGaps.length === 0 && feedRepoint.length > 0,
-  repointGaps.length ? `not true that: ${repointGaps.join('; ')}`
-    : 'rebuild -> _pointScreenAtTarget -> uFeed + needsUpdate');
-
-/*
- * 4. The extra pass gives the renderer back exactly what it borrowed.
- *
- * `renderFeed` runs in the middle of `Game._render`, between the info reset and
- * the composer. Leaving the drone's target bound sends the whole main frame
- * into a 640x480 texture; restoring `shadowMap.autoUpdate` to a hardcoded
- * `true` instead of to what it was silently turns shadows back on for anybody
- * who had switched them off. Both are corruption of state this file does not
- * own, which is the one thing a save-and-restore idiom exists to prevent.
- */
-const feedRender = feedMethod('renderFeed');
-const binds = (feedRender.match(/setRenderTarget\(/g) ?? []).length;
-const borrowGaps = [
-  ['it binds and restores exactly once each', binds === 2],
-  ['the previous target is read', /const prevTarget = renderer\.getRenderTarget\(\)/.test(feedRender)],
-  ['and put back', /setRenderTarget\(prevTarget\)/.test(feedRender)],
-  ['autoClear is read', /const prevAutoClear = renderer\.autoClear/.test(feedRender)],
-  ['and put back', /autoClear = prevAutoClear/.test(feedRender)],
-  ['shadowMap.autoUpdate is read', /const prevShadowAutoUpdate = renderer\.shadowMap\.autoUpdate/.test(feedRender)],
-  ['and put back to what it read, not to a literal',
-    /shadowMap\.autoUpdate = prevShadowAutoUpdate/.test(feedRender)
-    && !/shadowMap\.autoUpdate = true/.test(feedRender)],
-].filter(([, ok]) => !ok).map(([what]) => what);
-check('the drone feed hands the renderer back exactly what it borrowed',
-  borrowGaps.length === 0 && feedRender.length > 0,
-  borrowGaps.length ? `not true that: ${borrowGaps.join('; ')} (${binds} setRenderTarget calls)`
-    : 'render target, autoClear and shadowMap.autoUpdate all saved and restored');
 
 console.log('\n--- hygiene ---');
 

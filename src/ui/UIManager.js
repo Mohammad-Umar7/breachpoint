@@ -168,20 +168,15 @@ export class UIManager {
     this.el.armorNum.textContent = Math.ceil(s.armor);
 
     /*
-     * The low-health pulse describes OUR condition, and while the drone is up
-     * the screen is not ours.
-     *
-     * Left on, a pilot on low health watches the whole flight through a
-     * throbbing red vignette at up to 0.43 opacity, which reads as a broken or
-     * half-rendered picture rather than as a camera somewhere else.
+     * The low-health pulse describes OUR condition, so it stands down whenever
+     * the view on screen is not our own body's.
      */
     this.el.lowHealth.style.opacity =
       (hp < 0.3 && !s.spectating)
         ? String(0.25 + Math.sin(performance.now() / 240) * 0.18 * (1 - hp / 0.3))
         : '0';
 
-    // Same reasoning for the crosshair: it aims OUR weapon, and while the
-    // drone is out that weapon is in a pocket.
+    // Same reasoning for the crosshair: it aims a weapon we are holding.
     if (this.el.crosshair) {
       this.el.crosshair.style.visibility = s.spectating ? 'hidden' : '';
     }

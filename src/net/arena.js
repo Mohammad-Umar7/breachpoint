@@ -212,23 +212,6 @@ export const ARENAS = Object.freeze({
      * both teams' mean and maximum own-base distances agree to within a metre,
      * and that no spawn is nearer the enemy base than its own.
      */
-    /**
-     * The scout drone, mirrored from `manorMap.drone` in maps/manor.js.
-     *
-     * The server cannot import THREE and therefore cannot read a map module,
-     * so the one decision lives in the map and its consequence is copied here.
-     * `test/contracts.mjs` asserts the two agree, because a map that says yes
-     * and an arena that says no is a key that does nothing with no error.
-     *
-     *   maxY   the drone is a GROUND robot. This is just above the attic floor
-     *          so a client cannot claim to have driven one up the stairwell
-     *          void and parked it against the ridge, watching the whole house.
-     *   leash  how far it may get from where the server deployed it. Measured
-     *          from the deploy point, never from the last accepted position —
-     *          a leash that walks with the drone is not a leash.
-     */
-    drone: Object.freeze({ maxY: 8.6, leash: 26 }),
-
     ctf: Object.freeze({
       bases: Object.freeze({
         [TEAM.RED]: Object.freeze([-10.0, -9.4]),
