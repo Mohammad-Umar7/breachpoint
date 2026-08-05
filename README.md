@@ -465,6 +465,7 @@ src/
 │   ├── maps/index.js           Map registry — add a map here and nowhere else
 │   ├── maps/warehouse.js       WAREHOUSE layout: industrial yard, 70 m
 │   ├── maps/outpost.js         OUTPOST layout: desert trading post, 50 m
+│   ├── maps/lodge.js           LODGE layout: two-storey house, 24 m
 │   ├── MapThumbnail.js         The game photographs its own maps for the picker
 │   └── PickupManager.js        Health / armour / ammo pickups and drops
 ├── player/

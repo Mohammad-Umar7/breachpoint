@@ -131,6 +131,54 @@ export const ARENAS = Object.freeze({
     }),
   }),
 
+  /**
+   * LODGE — a house, so every spawn is inside a room rather than in the open.
+   *
+   * All ten are on the GROUND floor, because `spawnY` is one number for the
+   * whole arena and the upper floor is 3.6 m up; a shared spawnY of 1.1 with
+   * upstairs points would drop those players through the plate.
+   *
+   * Two per room and two in the hall. None is within a player's width of the
+   * furniture — the counter, the car, the barrels — because a spawn inside a
+   * prop is a player stuck in it, and `test/maps.mjs` checks every one of
+   * these against the map's own boxes for exactly that.
+   */
+  lodge: Object.freeze({
+    spawnY: 1.1,
+    spawnPoints: Object.freeze([
+      [-9.5, -6.8], [-5.5, -3.0],     // kitchen
+      [-9.5, 6.6], [-5.5, 1.8],       // living
+      [9.6, -8.0], [5.5, -3.0],       // garage
+      [8.4, 6.4], [5.5, 1.8],         // den
+      [0, 7.6], [0, -6.4],            // hall, south and north
+    ]),
+    bounds: Object.freeze({
+      minX: -14, maxX: 14,
+      minY: -8, maxY: 24,
+      minZ: -11, maxZ: 11,
+    }),
+
+    /*
+     * Bases at the two ends of the hall.
+     *
+     * Everything between them is the hall's clear sightline and the staircase
+     * standing in the middle of it, so a flag run is made down the one part of
+     * the map both teams can already see into — never round the outside.
+     */
+    ctf: Object.freeze({
+      bases: Object.freeze({
+        [TEAM.RED]: Object.freeze([0, -7.4]),
+        [TEAM.BLUE]: Object.freeze([0, 7.8]),
+      }),
+      spawns: Object.freeze({
+        [TEAM.RED]: Object.freeze([[0, -6.4], [-5.5, -3.0], [5.5, -3.0],
+          [-9.5, -6.8], [9.6, -8.0]]),
+        [TEAM.BLUE]: Object.freeze([[0, 7.6], [-5.5, 1.8], [5.5, 1.8],
+          [-9.5, 6.6], [8.4, 6.4]]),
+      }),
+    }),
+  }),
+
 });
 
 /** Every map id, in menu order. */

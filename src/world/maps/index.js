@@ -20,9 +20,10 @@
 import { DEFAULT_MAP_ID, MAP_IDS } from '../../net/arena.js';
 import { warehouseMap } from './warehouse.js';
 import { outpostMap } from './outpost.js';
+import { lodgeMap } from './lodge.js';
 
 /** Every playable map, in the order the picker shows them. */
-export const MAPS = Object.freeze([warehouseMap, outpostMap]);
+export const MAPS = Object.freeze([warehouseMap, outpostMap, lodgeMap]);
 
 export { DEFAULT_MAP_ID };
 
