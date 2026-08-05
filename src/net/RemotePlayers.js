@@ -22,6 +22,9 @@ import { getWeaponDef } from '../weapons/WeaponDefinitions.js';
 import { FLAG, PLAYER_MAX_HEALTH } from './protocol.js';
 import { TEAM, TEAM_COLOR } from './modes.js';
 
+/** Lerp target for lightening a team colour into readable text. Reused. */
+const WHITE = new THREE.Color(0xffffff);
+
 /** Parts that make up a body, and which material role each takes. */
 const BODY_PARTS = [
   ['torso', 'body'], ['vest', 'gear'],
@@ -737,7 +740,25 @@ export class RemotePlayers {
     ctx.lineWidth = 6;
     ctx.strokeStyle = 'rgba(2, 8, 14, 0.92)';
     ctx.strokeText(record.name, c.width / 2, 22);
-    ctx.fillStyle = record.friendly ? '#9fe8c0' : '#dbe9f4';
+    /*
+     * IN A TEAM MODE THE NAME WEARS THE TEAM'S COLOUR, matching the body under
+     * it — so a red player is red from their boots to their callsign and there
+     * is nothing left on them that says otherwise.
+     *
+     * Lightened towards white on the way in. The body colour is chosen to look
+     * right on cloth in daylight, and text is thin: the same red at full
+     * saturation goes muddy against the dark outline behind it and stops being
+     * readable at the range where you most need to read it.
+     *
+     * Free-for-all keeps the plain off-white, because there is no team to
+     * stand for and eight different name colours is the noise team colours
+     * exist to replace.
+     */
+    const teamed = record.team !== TEAM.NONE;
+    const teamCol = teamed ? new THREE.Color(TEAM_COLOR[record.team]) : null;
+    ctx.fillStyle = teamed
+      ? `#${teamCol.clone().lerp(WHITE, 0.22).getHexString()}`
+      : '#dbe9f4';
     ctx.fillText(record.name, c.width / 2, 22);
 
     /*
@@ -768,7 +789,27 @@ export class RemotePlayers {
     const frac = Math.max(0, Math.min(1, hp / PLAYER_MAX_HEALTH));
     ctx.fillStyle = 'rgba(2, 8, 14, 0.85)';
     ctx.fillRect(x - 2, 44, barW + 4, 12);
-    ctx.fillStyle = frac > 0.5 ? '#63d19a' : frac > 0.25 ? '#e0b64f' : '#e05f52';
+
+    /*
+     * The MISSING part of the bar is drawn in NEUTRAL GREY before the fill.
+     *
+     * The bar used to run green-amber-red by health, which said "this one is
+     * nearly dead" in a colour you could read without measuring anything. A
+     * team-coloured bar throws that away, so the gap has to carry it instead.
+     *
+     * Grey, and not the obvious red, because the red team's bar IS red: a
+     * healthy red player and a dying one came out the same solid red block,
+     * which is worse than the problem it was meant to solve and shows up the
+     * moment you look at a full-health teammate. Grey reads against both
+     * colours and favours neither.
+     */
+    if (frac < 1) {
+      ctx.fillStyle = 'rgba(126, 138, 148, 0.6)';
+      ctx.fillRect(x + barW * frac, 46, barW * (1 - frac), 8);
+    }
+    ctx.fillStyle = teamed
+      ? `#${teamCol.getHexString()}`
+      : (frac > 0.5 ? '#63d19a' : frac > 0.25 ? '#e0b64f' : '#e05f52');
     ctx.fillRect(x, 46, barW * frac, 8);
 
     record.tagTexture.needsUpdate = true;
