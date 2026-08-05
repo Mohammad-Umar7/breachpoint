@@ -603,9 +603,23 @@ export class AudioManager {
    * named after a sound — `public/audio/shootRifle.wav` — and `play()` will
    * use it instead, because `play()` checks `this.buffers` before `SYNTHS`.
    *
-   * Every file is optional and every failure is silent. A missing or broken
-   * file just means that sound keeps using its synth, so the game always has
-   * working audio and files can be added one at a time.
+   * WHAT IS THERE IS DECLARED, NOT DISCOVERED.
+   *
+   * This used to probe for every name in three extensions and let the misses
+   * fail quietly. The fallback worked perfectly and the console did not: a
+   * browser logs a failed request whatever the code does with it, so a player
+   * who opened dev tools met twenty-four red 404s on a game with nothing wrong
+   * with it — and paid for twenty-four round-trips on every single load to
+   * discover the same nothing. `try/catch` cannot suppress those; the only
+   * way not to be told about a request is not to make it.
+   *
+   * So `public/audio/manifest.json` lists what is actually there. It ships
+   * empty, and adding a sample means dropping in the file and adding its name.
+   * The escape hatch is unchanged; it just no longer guesses.
+   *
+   * Every file is still optional and every failure is still silent. A missing
+   * or broken one means that sound keeps its synth, so the game always has
+   * working audio.
    *
    * @param {string[]} names sound names to look for
    * @param {string} [dir]
@@ -613,8 +627,22 @@ export class AudioManager {
    */
   async loadSamples(names, dir = 'audio/') {
     if (!this.ready) return [];
+
+    /*
+     * No manifest, or an empty one, means no recorded samples — and, crucially,
+     * NO REQUESTS. Its own failure is caught here so a missing manifest costs
+     * one quiet miss rather than being the twenty-fifth error.
+     */
+    let available = [];
+    try {
+      const res = await fetch(`${dir}manifest.json`);
+      if (res.ok) available = await res.json();
+    } catch { /* no manifest: synths only, which is the normal case */ }
+    if (!Array.isArray(available) || available.length === 0) return [];
+
+    const wanted = names.filter((n) => available.includes(n));
     const loaded = [];
-    await Promise.all(names.map(async (name) => {
+    await Promise.all(wanted.map(async (name) => {
       for (const ext of ['ogg', 'wav', 'mp3']) {
         try {
           const res = await fetch(`${dir}${name}.${ext}`);
