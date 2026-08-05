@@ -134,9 +134,8 @@ export const ARENAS = Object.freeze({
   /**
    * LODGE — a house, so every spawn is inside a room rather than in the open.
    *
-   * All ten are on the GROUND floor, because `spawnY` is one number for the
-   * whole arena and the upper floor is 3.6 m up; a shared spawnY of 1.1 with
-   * upstairs points would drop those players through the plate.
+   * All ten of the free-for-all points are on the GROUND floor. The CTF ones
+   * are not — see blue's below, which carry their own height.
    *
    * Two per room and two in the hall. None is within a player's width of the
    * furniture — the counter, the car, the barrels — because a spawn inside a
@@ -174,9 +173,29 @@ export const ARENAS = Object.freeze({
      * walls and a doorway each way. That is a flag run; the hall was a sprint.
      */
     ctf: Object.freeze({
+      /*
+       * ONE UP, ONE DOWN. Red is on the ground in the garage; blue is a storey
+       * up in the south-west bedroom, hence the third number.
+       *
+       * The house has two floors and CTF was using one of them. Putting a base
+       * upstairs is what forces the run through the staircase — the one route
+       * up, standing in the middle of a double-height hall in full view — and
+       * makes the balcony vault worth taking on the way back, since a carrier
+       * who drops off the edge is in the hall a second later.
+       *
+       * 4.65 is the upper floor at 3.6 plus the 1.05 that puts a base under a
+       * standing player's centre, so it matches what `spawnY` means downstairs.
+       *
+       * This is DELIBERATELY not symmetric, and it is the one thing here worth
+       * watching in play: an upstairs flag is harder to attack, so blue holds
+       * the better ground. The compensation is that it is equally awkward for
+       * blue to get back to, which is why the walk test measures the real
+       * on-foot time from each team's spawns rather than trusting the 2-D
+       * numbers below.
+       */
       bases: Object.freeze({
         [TEAM.RED]: Object.freeze([8.5, -7.5]),
-        [TEAM.BLUE]: Object.freeze([-8.5, 7.5]),
+        [TEAM.BLUE]: Object.freeze([-8.5, 6.5, 4.65]),
       }),
       /*
        * Split along the OTHER diagonal, the one running north-west to
@@ -185,11 +204,25 @@ export const ARENAS = Object.freeze({
        * hall — including one spawn in the far corner room, which both teams
        * have exactly one of.
        */
+      /*
+       * EACH TEAM SPAWNS ON ITS FLAG'S OWN FLOOR — red on the ground, blue a
+       * storey up, hence blue's third number.
+       *
+       * This is not decoration. With blue's base upstairs and blue's spawns
+       * left on the ground, the walk test measured red reaching its own flag
+       * in about a second and blue taking eight: red could defend instantly
+       * after every death and blue could not defend at all. A team that cannot
+       * get back to its own flag is not playing Capture the Flag.
+       *
+       * Blue's five are the two upstairs bedrooms and the landing; none is on
+       * the wrong side of the midpoint, which `test/maps.mjs` checks, and none
+       * is inside the beds or the balustrade, which it now also checks.
+       */
       spawns: Object.freeze({
         [TEAM.RED]: Object.freeze([[9.6, -8.0], [5.5, -3.0], [0, -6.4],
           [5.5, 1.8], [8.4, 6.4]]),
-        [TEAM.BLUE]: Object.freeze([[-9.5, 6.6], [-5.5, 1.8], [0, 7.6],
-          [-5.5, -3.0], [-9.5, -6.8]]),
+        [TEAM.BLUE]: Object.freeze([[-6.0, 7.6, 4.65], [-9.5, 2.2, 4.65],
+          [-7.7, -2.5, 4.65], [-7.7, -7.0, 4.65], [-2.0, -1.0, 4.65]]),
       }),
     }),
   }),
@@ -212,6 +245,32 @@ export function isValidMapId(id) {
  */
 export function arenaFor(mapId) {
   return ARENAS[mapId] ?? ARENAS[DEFAULT_MAP_ID];
+}
+
+/**
+ * Where a CTF base stands, in FULL 3-D.
+ *
+ * Base tuples are `[x, z]` for a base on the ground, or `[x, z, y]` for one
+ * that is not. Everything that needs a base position goes through here — the
+ * server when it plants a flag, sends one home, or decides whether you are
+ * standing on your base; the client when it builds the markers.
+ *
+ * It exists because the height used to be `arena.spawnY` at three separate
+ * call sites, which silently means "every base in the game is on the ground
+ * floor". That was invisible until a base went upstairs: two of those three
+ * sites would have kept the flag on the ground while the third judged captures
+ * against the wrong storey, and the mode would have half-worked in a way that
+ * is very hard to read from the symptoms.
+ *
+ * The Y is the PLAYER-CENTRE height a person standing on that floor has, not
+ * the floor itself, because that is what the capture test compares against.
+ *
+ * @returns {{x: number, y: number, z: number}|null}
+ */
+export function baseSpot(arena, team) {
+  const b = arena?.ctf?.bases?.[team];
+  if (!b) return null;
+  return { x: b[0], z: b[1], y: b[2] ?? arena.spawnY };
 }
 
 export function isInsideArena(x, y, z, mapId = DEFAULT_MAP_ID) {
@@ -239,17 +298,24 @@ export function pickSpawn(occupied, rand = Math.random, mapId = DEFAULT_MAP_ID, 
    * putting everybody at the origin.
    */
   const points = (team !== TEAM.NONE && arena.ctf?.spawns?.[team]) || arena.spawnPoints;
-  const y = arena.spawnY;
+  /*
+   * A spawn point is [x, z], or [x, z, y] when it is not on the ground floor.
+   *
+   * Same rule as `baseSpot`, and it exists for the same reason: once one team
+   * defends a flag on the upper storey, a team-wide `spawnY` means they alone
+   * respawn a full staircase away from the thing they are meant to be
+   * defending. Measured before this existed, red reached its own flag in about
+   * a second and blue took eight.
+   */
+  const at = (pt) => ({ x: pt[0], z: pt[1], y: pt[2] ?? arena.spawnY });
 
   const living = occupied.filter((p) => p.alive);
-  if (!living.length) {
-    const [x, z] = points[Math.floor(rand() * points.length)];
-    return { x, y, z };
-  }
+  if (!living.length) return at(points[Math.floor(rand() * points.length)]);
 
   let best = null;
   let bestScore = -Infinity;
-  for (const [x, z] of points) {
+  for (const pt of points) {
+    const [x, z] = pt;
     let nearest = Infinity;
     for (const p of living) {
       const d = Math.hypot(p.x - x, p.z - z);
@@ -259,7 +325,7 @@ export function pickSpawn(occupied, rand = Math.random, mapId = DEFAULT_MAP_ID, 
     const score = nearest + rand() * 2.0;
     if (score > bestScore) {
       bestScore = score;
-      best = { x, y, z };
+      best = at(pt);
     }
   }
   return best;

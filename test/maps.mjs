@@ -124,6 +124,9 @@ function buildMap(map) {
     boxes.push({
       mat: material, x: pos[0], y: pos[1], z: pos[2],
       hx: size[0] / 2, hy: size[1] / 2, hz: size[2] / 2, rotY: opts.rotY || 0,
+      // Needed by the spawn check: a rug and a floor tile are boxes too, and
+      // standing "inside" one is what everybody does all the time.
+      solid: opts.collide !== false,
     });
     return realBox(material, pos, size, opts);
   };
@@ -219,14 +222,56 @@ for (const map of MAPS) {
     return Math.abs(lx) < sh.hx + pad && Math.abs(lz) < sh.hz + pad;
   };
 
+  /*
+   * EVERY spawn, including the per-team CTF ones, and each at ITS OWN height.
+   *
+   * This used to check `arena.spawnPoints` alone — the free-for-all list — so
+   * the ten points a deathmatch uses were verified and the ten a CTF match
+   * uses were not. That was survivable only while the two lists were the same
+   * points; the moment a team's spawns moved to an upper storey they became
+   * the ONLY spawns in the game nothing looked at, which is precisely where a
+   * player wedged inside a bed or a balustrade would have gone unnoticed.
+   */
   const spawnY = arena.spawnY;
+  const everySpawn = [
+    ...arena.spawnPoints,
+    ...Object.values(arena.ctf?.spawns ?? {}).flat(),
+  ];
   // A little margin, because a spawn flush against a wall is also unplayable.
-  const buried = arena.spawnPoints.filter(([x, z]) =>
-    level.mapShapes.some((sh) => inside(sh, x, spawnY, z, 0.4)));
-  check(`${map.name} spawns are in open ground, not inside the geometry`,
+  /*
+   * Tested over the CAPSULE'S WHOLE HEIGHT, not at one point.
+   *
+   * `inside` samples a single y, and a spawn's y is the player's CENTRE — so
+   * anything shorter than about a metre passed straight through it. A spawn
+   * placed squarely inside the upstairs bed was reported clear, because the
+   * bed's top is at 4.2 and the sampled point was at 4.65, floating above it
+   * while the bottom half of the capsule sat in the mattress. Same blind spot
+   * for the sofa, the crates and the kitchen counter downstairs.
+   *
+   * 0.95 is the capsule half-height: 0.60 of cylinder plus the 0.35 cap.
+   */
+  const HALF_CAPSULE = 0.95;
+  /*
+   * ...and against EVERY SOLID BOX, not `mapShapes`.
+   *
+   * `mapShapes` is the minimap's list, so `_box` only files things at least
+   * 0.7 m tall. The bed is 0.6, the coffee table 0.48 — so a spawn placed
+   * squarely inside a bed was reported clear twice over: once because the
+   * sampled point floated above it, and once because the bed was never in the
+   * list being searched. Both had to be fixed before the check could fail.
+   */
+  const solids = built.boxes.filter((s) => s.solid && !s.rotY);
+  const buried = everySpawn.filter((pt) => {
+    const y = pt[2] ?? spawnY;
+    return solids.some((s) =>
+      y - HALF_CAPSULE < s.y + s.hy && y + HALF_CAPSULE > s.y - s.hy
+      && Math.abs(pt[0] - s.x) < s.hx + 0.4
+      && Math.abs(pt[1] - s.z) < s.hz + 0.4);
+  });
+  check(`${map.name} every spawn is in open ground, not inside the geometry`,
     buried.length === 0,
     buried.length ? `${buried.length} buried: ${JSON.stringify(buried)}`
-                  : `${arena.spawnPoints.length} points clear`);
+                  : `${everySpawn.length} points clear`);
 
   /*
    * The same for pickups: one inside a wall is one nobody can ever take.

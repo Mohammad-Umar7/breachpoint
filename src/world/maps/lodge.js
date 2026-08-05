@@ -394,7 +394,10 @@ function buildPickups(level) {
     { type: 'armor', pos: new THREE.Vector3(0, 0.6, 6.0) },
     { type: 'health', pos: new THREE.Vector3(-6.0, 0.6, -7.5) },
     { type: 'health', pos: new THREE.Vector3(8.0, 0.6, 7.5) },
-    { type: 'health', pos: new THREE.Vector3(-7.5, F1 + 0.6, 5.5) },
+    // Moved north out of the south-west bedroom's far end: blue's CTF base
+    // stands at (-8.5, 6.5) up here, and a health pack 1.4 m from a flag is
+    // one pickup prompt fighting another every time anyone defends it.
+    { type: 'health', pos: new THREE.Vector3(-7.5, F1 + 0.6, 3.0) },
     { type: 'ammo', pos: new THREE.Vector3(-6.0, 0.6, 3.0) },
     { type: 'ammo', pos: new THREE.Vector3(6.0, 0.6, -2.6) },
     { type: 'ammo', pos: new THREE.Vector3(7.5, F1 + 0.6, 4.0) },

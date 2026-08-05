@@ -215,6 +215,45 @@ const ROUTES = {
       [-7.7, UPPER, 4.0], [[-7.7, UPPER, -2.5], [-7.7, UPPER, -4.9],
         [-2.0, UPPER, -4.9], [0, UPPER, 0.3], [0, GROUND, 7.6]]],
 
+    /*
+     * THE CTF RUN, BOTH WAYS.
+     *
+     * Blue's base is a storey up, in the south-west bedroom, and red's is on
+     * the ground in the garage. `test/maps.mjs` checks those two are a fair
+     * distance apart, but it measures on the FLOOR PLANE — to it, a base three
+     * and a half metres in the air is simply nearer than it is. These are the
+     * routes a carrier actually runs, and they are here so the asymmetry is
+     * something measured rather than something assumed.
+     */
+    ['red spawn, to red base, then the whole run to blue base upstairs',
+      [9.6, GROUND, -8.0], [[8.5, GROUND, -7.5], [2.3, GROUND, -4.9],
+        [0, GROUND, 7.0], [0, UPPER, 0.3], [0, UPPER, -4.9],
+        [-7.7, UPPER, -4.9], [-8.5, UPPER, 6.5]]],
+    ['blue spawn upstairs, to blue base, then all the way down to red base',
+      [-7.7, UPPER, -2.5], [[-8.5, UPPER, 6.5], [-7.7, UPPER, -4.9],
+        [0, UPPER, -4.9], [0, UPPER, 0.3], [0, GROUND, 7.0],
+        // Round the stair, not through it: aimed straight up x=0 from the foot
+        // of the flight, the walker turns round and climbs it again.
+        [2.3, GROUND, 6.0], [2.3, GROUND, -4.9],
+        [5.5, GROUND, -7.6], [8.5, GROUND, -7.5]]],
+
+    /*
+     * AND THE DEFENDER'S ROUTE: each team's WORST spawn back to its own flag.
+     *
+     * This is the number that decides whether the one-up-one-down layout is
+     * playable at all. A team that cannot get back to its own base before an
+     * attacker walks out with the flag is not defending, it is spectating —
+     * and when blue's base first went upstairs while blue's spawns stayed on
+     * the ground, this measured about one second for red and about eight for
+     * blue. Both are hand-routed from the FURTHEST spawn each team has.
+     */
+    ['red\'s furthest spawn back to red\'s own flag',
+      [8.4, GROUND, 6.4], [[5.5, GROUND, 4.3], [2.3, GROUND, 4.3],
+        [2.3, GROUND, -4.9], [5.5, GROUND, -4.9], [5.5, GROUND, -7.6],
+        [8.5, GROUND, -7.5]]],
+    ['blue\'s furthest spawn back to blue\'s own flag',
+      [-7.7, UPPER, -7.0], [[-8.0, UPPER, 0.5], [-8.5, UPPER, 6.5]]],
+
     ['past the staircase on the west side of the hall',
       [0, GROUND, 7.6], [[-2.3, GROUND, 6.0], [-2.3, GROUND, 0.0], [0, GROUND, -6.0]]],
     ['past the staircase on the east side of the hall',

@@ -38,7 +38,7 @@ import {
   isValidRoomCode, sanitizeName, damageFor,
 } from '../src/net/protocol.js';
 import {
-  pickSpawn, isInsideArena, isValidMapId, DEFAULT_MAP_ID, arenaFor,
+  pickSpawn, isInsideArena, isValidMapId, DEFAULT_MAP_ID, arenaFor, baseSpot,
 } from '../src/net/arena.js';
 import {
   TEAM, PLAYING_TEAMS, TEAM_NAME, opposingTeam, sameTeam,
@@ -290,14 +290,16 @@ class Room {
   resetFlags() {
     this.flags.clear();
     if (!this.mode.teamBased) return;
-    const bases = arenaFor(this.mapId).ctf?.bases;
-    if (!bases) return;
+    const arena = arenaFor(this.mapId);
+    if (!arena.ctf?.bases) return;
     for (const team of PLAYING_TEAMS) {
-      const [x, z] = bases[team];
+      // Its OWN height, not the arena's: bases are no longer all on one floor.
+      const spot = baseSpot(arena, team);
+      if (!spot) continue;
       this.flags.set(team, {
         team,
         state: FLAG_STATE.AT_BASE,
-        x, y: arenaFor(this.mapId).spawnY, z,
+        x: spot.x, y: spot.y, z: spot.z,
         carrier: null,
         returnAt: 0,
         /**
@@ -650,10 +652,10 @@ class Room {
   }
 
   sendFlagHome(flag, by = null) {
-    const [x, z] = arenaFor(this.mapId).ctf.bases[flag.team];
+    const spot = baseSpot(arenaFor(this.mapId), flag.team);
     flag.state = FLAG_STATE.AT_BASE;
     flag.carrier = null;
-    flag.x = x; flag.y = arenaFor(this.mapId).spawnY; flag.z = z;
+    flag.x = spot.x; flag.y = spot.y; flag.z = spot.z;
     flag.returnAt = 0;
     flag.noPickupBy = 0;
     flag.noPickupUntil = 0;
@@ -733,11 +735,18 @@ class Room {
       const carried = this.carriedBy(p);
       if (!carried) continue;
 
-      const [bx, bz] = arena.ctf.bases[p.team];
-      if (Math.hypot(p.x - bx, p.z - bz) > this.mode.captureRadius) continue;
-      // And on the base's own floor. Same reasoning as `near` above: without
-      // this, the landing over your base scores exactly as well as the base.
-      if (Math.abs(p.y - arena.spawnY) > this.mode.flagTouchHeight) continue;
+      const base = baseSpot(arena, p.team);
+      if (Math.hypot(p.x - base.x, p.z - base.z) > this.mode.captureRadius) continue;
+      /*
+       * And on the BASE'S floor, which is its own and not the arena's ground.
+       *
+       * Same reasoning as `near` above: without a height test, the landing
+       * over your base scores exactly as well as the base does. Reading that
+       * height off the arena was correct only while every base sat on the
+       * ground. With one upstairs it would mean blue can never score at their
+       * own flag, and CAN score by standing in the living room underneath it.
+       */
+      if (Math.abs(p.y - base.y) > this.mode.flagTouchHeight) continue;
 
       /*
        * YOUR OWN FLAG MUST BE HOME.

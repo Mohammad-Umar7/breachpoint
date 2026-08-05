@@ -22,6 +22,7 @@
 
 import * as THREE from 'three';
 import { TEAM, TEAM_COLOR, FLAG_STATE } from './modes.js';
+import { baseSpot } from './arena.js';
 
 /** How high the flag rides above a carrier's feet. Clear of the head. */
 const CARRY_HEIGHT = 2.05;
@@ -61,8 +62,10 @@ export class FlagObjects {
   /**
    * Build the two flags and their base markers for a map.
    *
-   * @param {{[team:number]: [number, number]}} bases  from arena.js
-   * @param {number} groundY
+   * @param {object} arena  the arena entry, NOT its `bases` — the height of a
+   *   base is the base's own business now that they are not all on one floor,
+   *   and `baseSpot` in arena.js is the single place that knows how to read it.
+   *   Passing `bases` alone is what made every marker sit on the ground.
    * @param {number} beamHeight  how tall the marker column is, or 0 for none.
    *   INDOOR MAPS MUST PASS 0. The default assumes open sky above the base;
    *   inside a house the floor above is 3.3 m up, so a 15 m column spears
@@ -71,18 +74,18 @@ export class FlagObjects {
    *   The ring and plinth on the floor are the marker indoors, and they are
    *   enough — you are never more than a room away from a base in a house.
    */
-  build(bases, groundY = 1.1, beamHeight = BEAM_HEIGHT) {
+  build(arena, beamHeight = BEAM_HEIGHT) {
     this.dispose();
-    if (!bases) return;
+    if (!arena?.ctf?.bases) return;
 
     for (const team of [TEAM.RED, TEAM.BLUE]) {
-      const spot = bases[team];
+      const spot = baseSpot(arena, team);
       if (!spot) continue;
       const colour = TEAM_COLOR[team];
 
       // --- the base: a ring on the floor and a low plinth --------------------
       const base = new THREE.Group();
-      base.position.set(spot[0], groundY - 1.05, spot[1]);
+      base.position.set(spot.x, spot.y - 1.05, spot.z);
 
       const ring = new THREE.Mesh(
         new THREE.RingGeometry(2.1, 2.5, 40),
@@ -183,8 +186,8 @@ export class FlagObjects {
         team, group, cloth, pole,
         state: FLAG_STATE.AT_BASE,
         carrier: null,
-        home: new THREE.Vector3(spot[0], groundY - 1.05, spot[1]),
-        at: new THREE.Vector3(spot[0], groundY - 1.05, spot[1]),
+        home: new THREE.Vector3(spot.x, spot.y - 1.05, spot.z),
+        at: new THREE.Vector3(spot.x, spot.y - 1.05, spot.z),
       });
     }
   }
