@@ -668,6 +668,40 @@ export function fovForMagnification(baseFovDeg, magnification) {
  * browser, which is generated from that list.
  */
 export const HAZARD_DEFS = [
+  /*
+   * Falling out of the world.
+   *
+   * A hazard rather than a special case in the server, so a void death takes
+   * the SAME route as any other: the killfeed prints, the death counts, the
+   * respawn timer starts, and none of that needed new code to say so.
+   *
+   * `selfHarm` is required — `applyDamage` drops self-inflicted damage from
+   * anything without it, which is what stops you shooting yourself, and would
+   * otherwise silently swallow this too. `armorPen: 1` because armour is not
+   * going to help; the damage is past any survivable total for the same
+   * reason.
+   */
+  {
+    id: 'void',
+    name: 'THE VOID',
+    short: 'VOID',
+    category: 'hazard',
+    damage: 1000, headMul: 1, limbMul: 1, armorPen: 1,
+    /*
+     * The falloff fields are not decoration — `damageFor` reads all three, and
+     * `test/contracts.mjs` rejected the first version of this def for missing
+     * them. Left out, the range maths runs on undefined and the "damage" that
+     * comes back is NaN, which compares false against every threshold: the
+     * player would have taken no damage at all and gone right back to falling.
+     *
+     * The numbers put the whole curve far beyond any distance that can occur,
+     * so the damage is always flat, and start and end differ so nothing can
+     * divide by their difference.
+     */
+    range: 1000,
+    falloffStart: 1000, falloffEnd: 2000, falloffMinScale: 1,
+    selfHarm: true,
+  },
   {
     id: 'barrel',
     name: 'EXPLOSION',

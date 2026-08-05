@@ -46,6 +46,9 @@ import {
 } from '../src/net/modes.js';
 import { WEAPON_DEFS, HAZARD_DEFS } from '../src/weapons/WeaponDefinitions.js';
 
+/** Looked up once: the kill plane is checked on every input from every player. */
+const VOID_HAZARD = HAZARD_DEFS.find((h) => h.id === 'void');
+
 const PORT = Number(process.env.PORT || 8787);
 
 /**
@@ -985,6 +988,29 @@ function handleInput(player, msg) {
       ...room.matchPayload(), sp: [player.x, player.y, player.z],
     });
   };
+
+  /*
+   * FALLING OUT OF THE WORLD KILLS YOU. It must not merely be refused.
+   *
+   * Rejecting is right for a position that cannot be reached by playing, and
+   * catastrophically wrong for the one that CAN: a player who goes over the
+   * edge falls past the floor of the arena, the server refuses the position
+   * and snaps them back to the last one it accepted — which is in mid-air, a
+   * few metres higher. They fall again. It refuses again. That is the loop,
+   * and from inside it you are stuck in the sky over the map with the ground
+   * jittering below you and no way out but to close the tab.
+   *
+   * So the underside of the arena is a kill plane, checked BEFORE the general
+   * rejection and at exactly the height that rejection starts — leaving no
+   * band where a player is out of bounds but not yet dead. Death runs the
+   * ordinary path from there: killfeed, respawn timer, back on a spawn point.
+   */
+  const floorY = arenaFor(room.mapId).bounds.minY;
+  if (y < floorY) {
+    if (player.alive) room.applyDamage(player, player, VOID_HAZARD, 'body');
+    reject();
+    return;
+  }
 
   // Outside the arena by a wide margin — impossible through normal play.
   if (!isInsideArena(x, y, z, room.mapId)) { reject(); return; }
