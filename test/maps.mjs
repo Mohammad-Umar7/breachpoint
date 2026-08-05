@@ -566,5 +566,152 @@ console.log('\n--- one map can replace another ---');
     `${afterFirst} -> 0 -> ${afterSecond} -> ${physics.bodies.length}`);
 }
 
+
+/* ===========================================================================
+ * CAN YOU ACTUALLY WALK ANYWHERE FROM WHERE YOU SPAWN?
+ * ===========================================================================
+ *
+ * Every check above asks whether a PART is well formed: is this spawn inside a
+ * solid, do these two surfaces shimmer, does this flight reach the floor above.
+ * VILLA passed all eighty-one of them and was unplayable, because not one of
+ * them asked the only question a player actually asks — can I get out of here?
+ *
+ * The bug was that `_wallWithGaps(material, axis, ...)` names the axis a wall
+ * RUNS ALONG, and the map read it as the axis the wall SITS ON. Every partition
+ * in the house was built at ninety degrees to its intent: a wall meant to
+ * divide the kitchen from the hall stood across the atrium instead, straight
+ * through the foot of the main staircase. The map built cleanly, every spawn
+ * sat in open air, nothing shimmered — and players spawned into sealed boxes
+ * and had to jump out of them.
+ *
+ * A suite that examines every part and never the whole is exactly the sort of
+ * green tick this file exists to stop. This is the whole.
+ *
+ * It is a flood fill over standing positions, not a navmesh. A cell is
+ * standable if there is a surface under it with a player's height of clear air
+ * above; two cells connect if the step between them is inside the character
+ * controller's autostep.
+ *
+ * WHAT IT CANNOT SEE, stated plainly because trusting it further than this has
+ * already cost one map:
+ *
+ *   IT SAMPLES A POINT, and a player is 0.8 m wide. A 0.3 m slot between two
+ *   walls reads as a corridor to this and as a wall to a player. That is
+ *   exactly how the villa passed while being unplayable, and it is the first
+ *   thing to fix if this is ever leaned on again.
+ *
+ *   IT ONLY SEES BOXES. Ramps are built by `_ramp`, not `_box`, so the fill
+ *   cannot climb one — which is why there is no assertion here about upper
+ *   floors being reachable. A check that cannot see the thing it is checking
+ *   is worse than no check, and this file has been bitten by that before.
+ *
+ * So: a FAIL here is real and means something is sealed off. A PASS means only
+ * that nothing is sealed off in a way a point-sized player would notice. It is
+ * not a substitute for walking the map.
+ */
+console.log('\n--- you can walk out of where you spawn ---');
+
+const CELL = 0.5;      // grid pitch: finer than a doorway, coarse enough to be quick
+const STAND = 1.5;     // headroom a standing player needs
+const STEP = 0.45;     // the controller's autostep; a bigger rise is a wall
+
+for (const map of MAPS) {
+  const arena = ARENAS[map.id];
+  if (!arena) continue;
+
+  const solids = buildMap(map).boxes
+    // Rotated pieces are scatter cover in every map here, never structure, and
+    // treating one as its bounding box would wrongly seal the gaps beside it.
+    .filter((s) => !s.rotY)
+    .map((s) => ({
+      x0: s.x - s.hx, x1: s.x + s.hx,
+      y0: s.y - s.hy, y1: s.y + s.hy,
+      z0: s.z - s.hz, z1: s.z + s.hz,
+    }));
+
+  /** Every height you could stand at in this column, lowest first. */
+  const levelsAt = (x, z) => {
+    const out = [];
+    let from = 40;
+    for (let i = 0; i < 8; i++) {
+      let top = -Infinity;
+      for (const s of solids) {
+        if (x < s.x0 || x > s.x1 || z < s.z0 || z > s.z1) continue;
+        if (s.y1 <= from + 0.01 && s.y1 > top) top = s.y1;
+      }
+      if (top === -Infinity || top < -5) break;
+      let clear = true;
+      for (const s of solids) {
+        if (x < s.x0 || x > s.x1 || z < s.z0 || z > s.z1) continue;
+        if (s.y0 > top + 0.02 && s.y0 < top + STAND) { clear = false; break; }
+      }
+      if (clear) out.push(top);
+      from = top - 0.05;
+    }
+    return out;
+  };
+
+  const key = (ix, iz, y) => `${ix},${iz},${Math.round(y * 4)}`;
+  const [minX, , minZ] = map.bounds.min;
+  const [maxX, , maxZ] = map.bounds.max;
+
+  /*
+   * Seeded from ONE spawn, never from all of them.
+   *
+   * Seeding everywhere at once would union a set of sealed pockets into
+   * something that looks connected, which is exactly the failure being hunted:
+   * the broken villa had thirteen spawns across several sealed rooms and would
+   * have sailed through a check that started in all of them.
+   */
+  const seen = new Set();
+  const queue = [];
+  const push = (ix, iz, y) => {
+    const k = key(ix, iz, y);
+    if (seen.has(k)) return;
+    seen.add(k);
+    queue.push([ix, iz, y]);
+  };
+  const [sx, sz] = arena.spawnPoints[0];
+  const six = Math.round(sx / CELL), siz = Math.round(sz / CELL);
+  for (const y of levelsAt(six * CELL, siz * CELL)) push(six, siz, y);
+
+  while (queue.length) {
+    const [ix, iz, y] = queue.pop();
+    for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const nx = ix + dx, nz = iz + dz;
+      const wx = nx * CELL, wz = nz * CELL;
+      if (wx < minX || wx > maxX || wz < minZ || wz > maxZ) continue;
+      for (const ny of levelsAt(wx, wz)) {
+        // A step UP is limited by the autostep. Any drop is legal — you can
+        // always fall, and these maps are built so that you may.
+        if (ny - y > STEP) continue;
+        push(nx, nz, ny);
+      }
+    }
+  }
+
+  const reached = (x, z) => {
+    const ix = Math.round(x / CELL), iz = Math.round(z / CELL);
+    return levelsAt(ix * CELL, iz * CELL).some((y) => seen.has(key(ix, iz, y)));
+  };
+
+  check(`${map.name} the first spawn can stand and move at all`,
+    seen.size > 20, `${seen.size} standing positions reachable`);
+
+  const stranded = arena.spawnPoints.filter(([x, z]) => !reached(x, z))
+    .map(([x, z]) => `${x},${z}`);
+  check(`${map.name} every spawn can walk to every other spawn`,
+    stranded.length === 0,
+    stranded.length ? `sealed off from [${sx},${sz}]: ${stranded.join('  ')}`
+                    : `${arena.spawnPoints.length} spawns, one connected space`);
+
+  const lost = (buildMap(map).level.pickupSpots ?? [])
+    .filter((p) => !reached(p.pos.x, p.pos.z))
+    .map((p) => `${p.type}@${p.pos.x.toFixed(1)},${p.pos.z.toFixed(1)}`);
+  check(`${map.name} every pickup can be walked to`,
+    lost.length === 0, lost.length ? lost.join('  ') : 'all reachable');
+
+}
+
 console.log(`\n${passed}/${passed + failed} passed`);
 process.exit(failed ? 1 : 0);
