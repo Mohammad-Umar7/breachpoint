@@ -614,6 +614,16 @@ console.log('\n--- you can walk out of where you spawn ---');
 const CELL = 0.5;      // grid pitch: finer than a doorway, coarse enough to be quick
 const STAND = 1.5;     // headroom a standing player needs
 const STEP = 0.45;     // the controller's autostep; a bigger rise is a wall
+/**
+ * The player's own radius, and the reason this check is worth anything.
+ *
+ * It used to sample a single point per cell, which is a player of zero width:
+ * a 0.3 m slot between two walls read as a corridor, and a map you could not
+ * walk across passed cleanly. A cell is now only standable if the WHOLE
+ * capsule fits — the centre and four points at the radius — so a gap narrower
+ * than a person is a wall here exactly as it is in the game.
+ */
+const RADIUS = 0.4;
 
 for (const map of MAPS) {
   const arena = ARENAS[map.id];
@@ -629,23 +639,52 @@ for (const map of MAPS) {
       z0: s.z - s.hz, z1: s.z + s.hz,
     }));
 
-  /** Every height you could stand at in this column, lowest first. */
+  /*
+   * The five samples a standing player occupies: the centre and the four
+   * extremes of the capsule. All of them have to be clear, which is what makes
+   * a gap narrower than a person impassable here.
+   */
+  const FOOT = [[0, 0], [RADIUS, 0], [-RADIUS, 0], [0, RADIUS], [0, -RADIUS]];
+
+  /** The highest surface under a point at or below `from`. */
+  const topUnder = (x, z, from) => {
+    let top = -Infinity;
+    for (const s of solids) {
+      if (x < s.x0 || x > s.x1 || z < s.z0 || z > s.z1) continue;
+      if (s.y1 <= from + 0.01 && s.y1 > top) top = s.y1;
+    }
+    return top;
+  };
+
+  /** Is the capsule's volume above `y` free of solids at (x, z)? */
+  const headroom = (x, z, y) => {
+    for (const [ox, oz] of FOOT) {
+      const px = x + ox, pz = z + oz;
+      for (const s of solids) {
+        if (px < s.x0 || px > s.x1 || pz < s.z0 || pz > s.z1) continue;
+        // `+ STEP` not `+ 0.02`: anything the player could step onto is floor,
+        // not an obstruction, or every kerb would read as a sealed ceiling.
+        if (s.y0 > y + STEP && s.y0 < y + STAND) return false;
+      }
+    }
+    return true;
+  };
+
+  /** Every height a whole player could stand at in this column, lowest first. */
   const levelsAt = (x, z) => {
     const out = [];
     let from = 40;
     for (let i = 0; i < 8; i++) {
-      let top = -Infinity;
-      for (const s of solids) {
-        if (x < s.x0 || x > s.x1 || z < s.z0 || z > s.z1) continue;
-        if (s.y1 <= from + 0.01 && s.y1 > top) top = s.y1;
-      }
+      const top = topUnder(x, z, from);
       if (top === -Infinity || top < -5) break;
-      let clear = true;
-      for (const s of solids) {
-        if (x < s.x0 || x > s.x1 || z < s.z0 || z > s.z1) continue;
-        if (s.y0 > top + 0.02 && s.y0 < top + STAND) { clear = false; break; }
-      }
-      if (clear) out.push(top);
+      /*
+       * The capsule needs floor under all of it, not just under its middle —
+       * otherwise the lip of a balcony counts as somewhere to stand — and it
+       * needs its own volume clear.
+       */
+      const supported = FOOT.every(([ox, oz]) =>
+        topUnder(x + ox, z + oz, top + STEP) > top - STEP);
+      if (supported && headroom(x, z, top)) out.push(top);
       from = top - 0.05;
     }
     return out;
@@ -656,44 +695,68 @@ for (const map of MAPS) {
   const [maxX, , maxZ] = map.bounds.max;
 
   /*
-   * Seeded from ONE spawn, never from all of them.
+   * DIRECTED, and run once from EVERY spawn.
    *
-   * Seeding everywhere at once would union a set of sealed pockets into
-   * something that looks connected, which is exactly the failure being hunted:
-   * the broken villa had thirteen spawns across several sealed rooms and would
-   * have sailed through a check that started in all of them.
+   * Both halves are corrections to a version that passed the broken villa.
+   *
+   * Directed, because falling is one-way: a step UP is limited by the
+   * autostep, a drop is free. An undirected fill walks INTO a sealed pocket by
+   * dropping into it and then reports it connected, which is precisely the
+   * "I spawned somewhere I had to jump out of" case — reachable inbound, sealed
+   * outbound.
+   *
+   * From every spawn, because a fill from one only proves that one is not
+   * trapped. What matters is that no spawn anywhere is a pocket, and the only
+   * way to know is to start in each of them.
    */
-  const seen = new Set();
-  const queue = [];
-  const push = (ix, iz, y) => {
-    const k = key(ix, iz, y);
-    if (seen.has(k)) return;
-    seen.add(k);
-    queue.push([ix, iz, y]);
-  };
-  const [sx, sz] = arena.spawnPoints[0];
-  const six = Math.round(sx / CELL), siz = Math.round(sz / CELL);
-  for (const y of levelsAt(six * CELL, siz * CELL)) push(six, siz, y);
-
-  while (queue.length) {
-    const [ix, iz, y] = queue.pop();
-    for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-      const nx = ix + dx, nz = iz + dz;
-      const wx = nx * CELL, wz = nz * CELL;
-      if (wx < minX || wx > maxX || wz < minZ || wz > maxZ) continue;
-      for (const ny of levelsAt(wx, wz)) {
-        // A step UP is limited by the autostep. Any drop is legal — you can
-        // always fall, and these maps are built so that you may.
-        if (ny - y > STEP) continue;
-        push(nx, nz, ny);
+  const fillFrom = (startX, startZ) => {
+    const seen = new Set();
+    const queue = [];
+    const push = (ix, iz, y) => {
+      const k = key(ix, iz, y);
+      if (seen.has(k)) return;
+      seen.add(k);
+      queue.push([ix, iz, y]);
+    };
+    const bix = Math.round(startX / CELL), biz = Math.round(startZ / CELL);
+    for (const y of levelsAt(bix * CELL, biz * CELL)) push(bix, biz, y);
+    while (queue.length) {
+      const [ix, iz, y] = queue.pop();
+      for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const nx = ix + dx, nz = iz + dz;
+        const wx = nx * CELL, wz = nz * CELL;
+        if (wx < minX || wx > maxX || wz < minZ || wz > maxZ) continue;
+        for (const ny of levelsAt(wx, wz)) {
+          if (ny - y > STEP) continue;     // cannot climb it; falling is free
+          push(nx, nz, ny);
+        }
       }
     }
-  }
+    return seen;
+  };
 
-  const reached = (x, z) => {
+  const inSet = (seen, x, z) => {
     const ix = Math.round(x / CELL), iz = Math.round(z / CELL);
     return levelsAt(ix * CELL, iz * CELL).some((y) => seen.has(key(ix, iz, y)));
   };
+
+  const [sx, sz] = arena.spawnPoints[0];
+  const seen = fillFrom(sx, sz);
+  const reached = (x, z) => inSet(seen, x, z);
+
+  /*
+   * The pocket test: from each spawn in turn, can you get to the first one?
+   *
+   * This is the direction that matters. Anyone can fall into a hole; the
+   * question is whether they can get out of it without the map's permission.
+   */
+  const pockets = arena.spawnPoints
+    .filter(([x, z]) => !inSet(fillFrom(x, z), sx, sz))
+    .map(([x, z]) => `${x},${z}`);
+  check(`${map.name} no spawn is a pocket you can only fall into`,
+    pockets.length === 0,
+    pockets.length ? `cannot walk out of: ${pockets.join('  ')}`
+                   : `${arena.spawnPoints.length} spawns, all have a way out`);
 
   check(`${map.name} the first spawn can stand and move at all`,
     seen.size > 20, `${seen.size} standing positions reachable`);
