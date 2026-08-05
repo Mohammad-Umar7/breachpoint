@@ -465,7 +465,7 @@ src/
 │   ├── maps/index.js           Map registry — add a map here and nowhere else
 │   ├── maps/warehouse.js       WAREHOUSE layout: industrial yard, 70 m
 │   ├── maps/outpost.js         OUTPOST layout: desert trading post, 50 m
-│   ├── maps/manor.js           MANOR layout: sealed country house, 30 m, 3 storeys
+│   ├── maps/villa.js           VILLA layout: sealed modern house, 26 m, 3 storeys
 │   ├── MapThumbnail.js         The game photographs its own maps for the picker
 │   └── PickupManager.js        Health / armour / ammo pickups and drops
 ├── player/

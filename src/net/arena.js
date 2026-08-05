@@ -132,94 +132,85 @@ export const ARENAS = Object.freeze({
   }),
 
   /**
-   * MANOR — one sealed country house, 30 x 26 m over three storeys.
+   * VILLA — a modern house 26 x 22 m over three storeys, all of them looking
+   * into the same room.
    *
-   * EVERY SPAWN IS ON THE GROUND FLOOR, and that is not a compromise — it is
-   * the map. `arenaFor` carries a single scalar `spawnY` per map, so mixing
-   * floors is not expressible here anyway, and the house is built around the
-   * consequence: every one-way route in it (six balustrade drops, the laundry
-   * chute, the linen hatch, the collapsed attic floor) runs DOWNWARD, into the
-   * respawn traffic, as does a drop through any of the four stairwell openings
-   * — the great stair, the service stair, the loft stair and the box-room
-   * stair. You start downstairs and fight upward; the geometry keeps dragging
-   * the fight back down to meet the next wave, which is what stops the top of a
-   * three-storey map deciding it.
+   * EVERY SPAWN IS ON THE GROUND FLOOR, which `arenaFor` requires anyway — it
+   * carries one scalar `spawnY` per map, so mixing floors is not expressible.
+   * Here that costs nothing, because the house is built so that every way DOWN
+   * is free and instant: the atrium is open from the pool to the glass roof,
+   * both rings are railed in glass you can vault, and 7.2 m is half the 14.08 m
+   * a fall needs to hurt. Players fall into the middle of the map continuously,
+   * which is what keeps the ground floor busy and stops the top ring deciding
+   * matches.
    *
-   * The box-room stair is the newest of the four and the reason there are four:
-   * the loft stair was the attic's ONLY way in, so a single player at the head
-   * of it held the whole top storey by watching one hole in a floor. See the
-   * header of `maps/manor.js`.
+   * The thirteen points below are in the four corner rooms and the entrance
+   * hall, never on the atrium deck: spawning in the void is spawning in the one
+   * place every rail on two floors already covers.
    */
-  manor: Object.freeze({
+  villa: Object.freeze({
     spawnY: 1.1,
     /*
-     * Thirteen points spread across eight of the ten ground-floor rooms, none
-     * in a staircase and none in the open middle of the hall.
-     *
-     * Every one is derived from the room table in `maps/manor.js` — the CLEAR
-     * interiors, not the wall centre lines — and `test/maps.mjs` re-checks all
-     * thirteen against the footprints the map actually builds, with the 0.40 m
-     * player radius as the margin. The furniture that matters to that check is
-     * only what spans y = 1.1: the car body (0.35-1.45), the piano, the
-     * long-case clock, the larder towers, the bookcases and the gallery
-     * columns. The waist-high pieces (island 0.95, dining table 0.78, sofas
-     * 0.46) stop below the spawn capsule's centre and cannot bury anybody.
+     * Checked against the furniture that actually spans y = 1.1, which is the
+     * only height that can bury a spawn capsule: the kitchen island (0.9 high),
+     * the fridge, the car body, the gym rack and the hearth. The waist-high
+     * pieces — sofas at 0.7, the coffee table at 0.44, planters at 1.0 — stop
+     * at or below the capsule's centre and cannot trap anybody.
      */
     spawnPoints: Object.freeze([
-      [-11.5, -10.5], // kitchen, west of the island
-      [-6.8, -8.0],   // kitchen, by the door to the dining room
-      [-2.5, -10.5],  // dining, north of the table
-      [2.6, -9.0],    // rear lobby, clear of the service stair
-      [-11.0, -2.5],  // long gallery, north end
-      [11.5, 9.8],    // study, east
-      [7.0, 7.4],     // study, west
-      [2.5, 7.0],     // entrance hall, north
-      [-2.6, 10.6],   // entrance hall, by the front door
-      [10.5, 2.0],    // conservatory, south bay
-      [7.6, -11.4],   // garage, north-west of the car
-      [-1.0, 1.5],    // stair hall, east of the great stair
-      [11.0, -3.0],   // conservatory, north bay
+      [-2.0, 8.8],    // entrance hall, west of centre
+      [2.0, 8.8],     // entrance hall, east of centre
+      [6.0, 8.6],     // entrance hall, by the living-room door
+      [-6.0, 8.6],    // entrance hall, by the kitchen door
+      [-11.5, 1.5],   // kitchen, north of the island
+      [-11.0, -2.5],  // kitchen, clear of the fridge
+      [-6.5, 1.8],    // kitchen, by the atrium deck
+      [11.0, 1.5],    // living room, clear of the hearth
+      [6.0, -2.5],    // living room, west end
+      [-6.0, -5.0],   // garage, east of the car
+      [-8.0, -9.8],   // garage, behind the car
+      [-3.0, -9.5],   // garage, by the gym wall
+      [6.5, -9.0],    // gym, mid-floor
+      [8.0, -7.0],    // gym, by the run up
+      [11.5, -8.0],   // gym, clear of the rack
     ]),
     /*
-     * Generous, and taller than the house: it is only 13 m to the ridge, but a
-     * player thrown off the attic by a blast has to stay legal all the way
-     * down, and the garden outside the glass is part of the world too.
+     * Generous, and taller than the house: the roof is at 11.3 m, but a player
+     * thrown off the second ring by a blast has to stay legal all the way down.
      */
     bounds: Object.freeze({
-      minX: -34, maxX: 34,
+      minX: -30, maxX: 30,
       minY: -12, maxY: 40,
-      minZ: -32, maxZ: 32,
+      minZ: -28, maxZ: 28,
     }),
 
     /*
-     * Bases in diagonally opposite corners of the house — the kitchen in the
-     * far north-west, the study in the far south-east, 27.0 m apart.
+     * Bases at opposite ends of the ground floor — kitchen and living room,
+     * 22.5 m apart with the atrium between them.
      *
-     * The carrier has to choose between the spine (kitchen, dining, hall,
-     * entrance hall, study) and the service diagonal (kitchen, long gallery,
-     * living room, or lobby, garage, conservatory, study). Both cross rooms
-     * where the fighting already is, and neither is a straight line: the arch
-     * screen chops the spine into three slots and the conservatory makes the
-     * diagonal cross a double-height space that two galleries and a bridge
-     * overlook.
+     * A carrier has to cross the middle of the house in front of two rings of
+     * glass railing, or go the long way round through the garage and the gym.
+     * Neither is a corridor and neither is safe, which is the trade the mode
+     * wants: the short route is watched and the long route takes time.
      *
-     * THE TWO SPAWN SETS ARE MATCHED, and that is checked rather than eyeballed.
-     * An earlier pair had BLUE averaging 12.3 m from its own flag against RED's
-     * 8.5, with two BLUE points closer to the enemy base than to their own —
-     * so a BLUE defender killed on the flag was pushed 22 m away while RED's
-     * worst case was 15. `pickSpawn` maximises distance from the living, which
-     * means it actively seeks that worst case out. `test/maps.mjs` now asserts
-     * both teams' mean and maximum own-base distances agree to within a metre,
-     * and that no spawn is nearer the enemy base than its own.
+     * THE TWO SPAWN SETS ARE MATCHED, and checked rather than eyeballed —
+     * `test/maps.mjs` asserts both teams' mean and maximum own-base distances
+     * agree to within a metre and that no spawn sits nearer the enemy base than
+     * its own. `pickSpawn` maximises distance from the living, so it actively
+     * seeks out whichever set has the worse worst case.
      */
     ctf: Object.freeze({
       bases: Object.freeze({
-        [TEAM.RED]: Object.freeze([-10.0, -9.4]),
-        [TEAM.BLUE]: Object.freeze([10.0, 8.8]),
+        [TEAM.RED]: Object.freeze([-11.5, 0.0]),
+        [TEAM.BLUE]: Object.freeze([11.0, 0.0]),
       }),
       spawns: Object.freeze({
-        [TEAM.RED]: Object.freeze([[-11.5, -10.5], [-6.8, -8.0], [-2.5, -10.5], [2.6, -9.0], [-11.0, -2.5]]),
-        [TEAM.BLUE]: Object.freeze([[11.5, 9.8], [7.0, 7.4], [2.5, 7.0], [-2.6, 10.6], [10.5, 2.0]]),
+        [TEAM.RED]: Object.freeze([
+          [-11.0, -2.5], [-6.5, 1.8], [-6.0, -5.0], [-8.0, -9.8], [-6.0, 8.6],
+        ]),
+        [TEAM.BLUE]: Object.freeze([
+          [11.0, 1.5], [6.0, -2.5], [8.0, -7.0], [11.5, -8.0], [6.0, 8.6],
+        ]),
       }),
     }),
   }),
