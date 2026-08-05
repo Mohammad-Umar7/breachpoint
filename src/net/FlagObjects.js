@@ -63,8 +63,15 @@ export class FlagObjects {
    *
    * @param {{[team:number]: [number, number]}} bases  from arena.js
    * @param {number} groundY
+   * @param {number} beamHeight  how tall the marker column is, or 0 for none.
+   *   INDOOR MAPS MUST PASS 0. The default assumes open sky above the base;
+   *   inside a house the floor above is 3.3 m up, so a 15 m column spears
+   *   straight through it and stands in the middle of an upstairs bedroom,
+   *   marking a flag that is not in that room and cannot be reached from it.
+   *   The ring and plinth on the floor are the marker indoors, and they are
+   *   enough — you are never more than a room away from a base in a house.
    */
-  build(bases, groundY = 1.1) {
+  build(bases, groundY = 1.1, beamHeight = BEAM_HEIGHT) {
     this.dispose();
     if (!bases) return;
 
@@ -112,13 +119,13 @@ export class FlagObjects {
        * front of the flag it was supposed to be advertising. Fading it out
        * keeps the "look over there" signal and gives the top back to the sky.
        */
-      const beamGeo = new THREE.CylinderGeometry(0.26, 0.5, BEAM_HEIGHT, 14, 6, true);
+      const beamGeo = new THREE.CylinderGeometry(0.26, 0.5, beamHeight, 14, 6, true);
       const c = new THREE.Color(colour);
       const beamPos = beamGeo.attributes.position;
       const beamCol = new Float32Array(beamPos.count * 4);
       for (let i = 0; i < beamPos.count; i++) {
         // y runs -H/2..+H/2 on a cylinder, so this is 0 at the floor, 1 at the top.
-        const up = beamPos.getY(i) / BEAM_HEIGHT + 0.5;
+        const up = beamPos.getY(i) / beamHeight + 0.5;
         beamCol[i * 4 + 0] = c.r;
         beamCol[i * 4 + 1] = c.g;
         beamCol[i * 4 + 2] = c.b;
@@ -134,8 +141,8 @@ export class FlagObjects {
           blending: THREE.AdditiveBlending, toneMapped: false,
         }),
       );
-      beam.position.y = BEAM_BASE_Y + BEAM_HEIGHT / 2;
-      base.add(beam);
+      beam.position.y = BEAM_BASE_Y + beamHeight / 2;
+      if (beamHeight > 0) base.add(beam);
 
       this.scene.add(base);
       this.bases.push(base);

@@ -1107,7 +1107,10 @@ export class Game {
      * the mode changes, and the mode is fixed for a room anyway.
      */
     const ctf = arenaFor(map.id).ctf;
-    this.flagObjects?.build(ctf?.bases ?? null, arenaFor(map.id).spawnY);
+    // `ctfBeamHeight` is the map's, because only the map knows whether there is
+    // sky above its bases or a bedroom floor. Absent means outdoors.
+    this.flagObjects?.build(ctf?.bases ?? null, arenaFor(map.id).spawnY,
+      map.ctfBeamHeight);
     this._applyModeVisibility();
     // The minimap is rebuilt above, so this has to be re-attached every time.
     if (this.minimap) {

@@ -425,6 +425,17 @@ export const lodgeMap = Object.freeze({
     [0, 0, 6.9, 17.6],
   ],
 
+  /**
+   * NO light column over the CTF bases. This is the only indoor map.
+   *
+   * The default 15 m beam assumes open sky. Here the bases stand in corner
+   * rooms with the upper floor 3.3 m overhead, so the column would pass
+   * through the ceiling and stand in an upstairs bedroom, marking a flag that
+   * is neither in that room nor reachable from it. The floor ring and plinth
+   * do the job instead — in a 24 m house you are never more than a room away.
+   */
+  ctfBeamHeight: 0,
+
   thumbCam: { pos: [15, 12, 20], look: [0, 2.4, 1], fov: 55 },
   playerSpawn: [0, 1.1, 7.6],
   playerSpawnYaw: Math.PI,

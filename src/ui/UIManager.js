@@ -70,6 +70,8 @@ export class UIManager {
       ctfScore: { 1: id('ctf-red-score'), 2: id('ctf-blue-score') },
       ctfFlag: { 1: id('ctf-red-flag'), 2: id('ctf-blue-flag') },
       ctfYou: { 1: id('ctf-red-you'), 2: id('ctf-blue-you') },
+      ctfWhoami: id('ctf-whoami'),
+      ctfWhoamiTeam: id('ctf-whoami-team'),
       ctfSide: { 1: id('ctf-red'), 2: id('ctf-blue') },
       banner: id('banner'),
       bannerText: id('banner-text'),
@@ -621,6 +623,26 @@ export class UIManager {
       if (this.el.ctfYou[team]) this.el.ctfYou[team].hidden = !mine;
       this.el.ctfSide[team]?.classList.toggle('mine', mine);
     }
+
+    /*
+     * AND SAY IT IN WORDS.
+     *
+     * A marked-and-brightened side is a comparison — it only tells you
+     * anything if you notice the other one is dimmer, and mid-fight nobody
+     * does. Umar played a full round and still asked which team he was on.
+     * So the bar now states it outright, in the team's own colour, and the
+     * bar itself carries that colour as a rule along its bottom edge so it
+     * registers in peripheral vision without being read at all.
+     */
+    const known = selfTeam === TEAM.RED || selfTeam === TEAM.BLUE;
+    if (this.el.ctfWhoami) this.el.ctfWhoami.hidden = !known;
+    // TEAM_NAME rather than a literal, so this cannot end up disagreeing with
+    // the scoreboard and the killfeed about what the teams are called.
+    if (known && this.el.ctfWhoamiTeam) {
+      this.el.ctfWhoamiTeam.textContent = TEAM_NAME[selfTeam];
+    }
+    this.el.ctfBar?.classList.toggle('mine-red', selfTeam === TEAM.RED);
+    this.el.ctfBar?.classList.toggle('mine-blue', selfTeam === TEAM.BLUE);
     for (const f of flags ?? []) {
       const el = this.el.ctfFlag[f.t];
       if (!el) continue;

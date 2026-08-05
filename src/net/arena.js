@@ -159,22 +159,37 @@ export const ARENAS = Object.freeze({
     }),
 
     /*
-     * Bases at the two ends of the hall.
+     * Bases in OPPOSITE CORNER ROOMS, on the diagonal — red in the garage at
+     * the north-east, blue in the living room at the south-west.
      *
-     * Everything between them is the hall's clear sightline and the staircase
-     * standing in the middle of it, so a flag run is made down the one part of
-     * the map both teams can already see into — never round the outside.
+     * They were first put at the two ends of the hall, 15.2 m apart, and Umar's
+     * reaction on playing it was the only review that matters: "why are the 2
+     * flags so close to each other". He was right, and worse than the distance
+     * was that the hall is ONE room — both flags stood in the same sightline,
+     * so a run never left the space it started in.
+     *
+     * The diagonal is 22.7 m, which is as far apart as an 24 x 18 m house can
+     * put two points, and the run now leaves a room, crosses the full width of
+     * the hall past the foot of the staircase, and enters another room. Two
+     * walls and a doorway each way. That is a flag run; the hall was a sprint.
      */
     ctf: Object.freeze({
       bases: Object.freeze({
-        [TEAM.RED]: Object.freeze([0, -7.4]),
-        [TEAM.BLUE]: Object.freeze([0, 7.8]),
+        [TEAM.RED]: Object.freeze([8.5, -7.5]),
+        [TEAM.BLUE]: Object.freeze([-8.5, 7.5]),
       }),
+      /*
+       * Split along the OTHER diagonal, the one running north-west to
+       * south-east. With the bases on a diagonal, "your half" is a diagonal
+       * too, so each team gets the four points on its side plus its end of the
+       * hall — including one spawn in the far corner room, which both teams
+       * have exactly one of.
+       */
       spawns: Object.freeze({
-        [TEAM.RED]: Object.freeze([[0, -6.4], [-5.5, -3.0], [5.5, -3.0],
-          [-9.5, -6.8], [9.6, -8.0]]),
-        [TEAM.BLUE]: Object.freeze([[0, 7.6], [-5.5, 1.8], [5.5, 1.8],
-          [-9.5, 6.6], [8.4, 6.4]]),
+        [TEAM.RED]: Object.freeze([[9.6, -8.0], [5.5, -3.0], [0, -6.4],
+          [5.5, 1.8], [8.4, 6.4]]),
+        [TEAM.BLUE]: Object.freeze([[-9.5, 6.6], [-5.5, 1.8], [0, 7.6],
+          [-5.5, -3.0], [-9.5, -6.8]]),
       }),
     }),
   }),
