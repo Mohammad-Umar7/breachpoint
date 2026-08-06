@@ -90,6 +90,23 @@ export function wireNetwork(game) {
     // The server rejected where we said we were. Snap, do not smooth: easing
     // toward a corrected position keeps feeding it rejected inputs.
     game._placePlayer(pos);
+    /*
+     * AND STOP DEAD. A correction is a teleport, and momentum must not survive
+     * one — the other two handlers below have always known this and this one
+     * did not.
+     *
+     * It is the whole of the "I fall out of the map and get stuck being shot
+     * at" report. Go over the edge on OUTPOST and you are falling at terminal
+     * velocity when the server puts you back on your spawn; keep the velocity
+     * and you arrive there still doing -55 m/s, drop straight back through the
+     * world, and take fall damage every single frame on the way — which is
+     * what the flashing was. The server then corrects you again, and again,
+     * and you never get out. Fixing the server end could not help: it was
+     * placing the player correctly every time and the client was throwing it
+     * away on the next frame.
+     */
+    game.player.velocity.set(0, 0, 0);
+    game.player.fallSpeed = 0;
   };
 
   /*
