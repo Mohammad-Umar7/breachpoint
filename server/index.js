@@ -1093,8 +1093,24 @@ function handleInput(player, msg) {
     return;
   }
 
-  // Outside the arena by a wide margin — impossible through normal play.
-  if (!isInsideArena(x, y, z, room.mapId)) { reject(); return; }
+  /*
+   * OUTSIDE THE ARENA IS A RESCUE, NOT A REJECTION.
+   *
+   * Snapping a player back to the last position the server accepted is only
+   * sane if that position is one they can recover FROM. Off the side of
+   * OUTPOST it never is: the floor slab reaches 28 and the bounds reach 44, so
+   * a player who walks off the edge keeps drifting out until every input is
+   * refused — and the last accepted position is then a point in open air
+   * beside the map. They are put back there every single frame, forever,
+   * alive and unable to fall, and no kill plane below the map can help because
+   * they are never allowed to reach it.
+   *
+   * That is the "stuck in the air" report, and it survived four fixes aimed at
+   * the fall itself because falling was never the part that was broken. Being
+   * outside the world at all is the problem, whichever direction it happened
+   * in, so it gets the same answer as going under it: put them on a spawn.
+   */
+  if (!isInsideArena(x, y, z, room.mapId)) { room.recoverFromVoid(player); return; }
 
   const now = Date.now();
   if (player.alive && player.lastInputAt) {

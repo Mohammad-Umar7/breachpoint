@@ -106,6 +106,36 @@ async function main() {
   check('and it recovers every time, not just the first',
     recovered === 3, `${recovered}/3 falls recovered`);
 
+  /*
+   * AND SIDEWAYS, which is how it actually happens.
+   *
+   * Nobody teleports under the map; they walk off the EDGE. OUTPOST's floor
+   * reaches 28 and its bounds reach 44, so you drift out sideways until the
+   * server refuses you — and being refused OUT THERE, rather than falling, is
+   * what pinned players in the air through four separate fixes aimed at the
+   * fall. Every earlier version of this file only ever tested downwards.
+   */
+  /*
+   * SIDEWAYS is how it actually happens — nobody teleports under a map, they
+   * walk off the EDGE — and this case is NOT yet properly covered.
+   *
+   * The assertion below passes against the broken server as well as the fixed
+   * one, because by this point the player is already standing on a spawn, so
+   * the old snap-back returned them to a spawn too and looked identical. A
+   * real version has to first put them somewhere legal but unrecoverable —
+   * past the floor slab, inside the bounds — and that needs the room pinned to
+   * OUTPOST, whose slab reaches 28 while its bounds reach 44. This suite uses
+   * the default map, which does not have that gap in the same place.
+   *
+   * Left in as a smoke check with its limits written down rather than deleted
+   * and forgotten, or dressed up as coverage it does not provide.
+   */
+  const b = arena.bounds;
+  send(a, { t: MSG.INPUT, q: ++a.seq, p: [b.maxX + 30, 2, 0], y: 0, a: 0, f: 0 });
+  await sleep(400);
+  check('drifting out sideways still leaves you on a spawn (weak: see above)',
+    onASpawn(a.at), `ended at ${a.at.map((v) => v.toFixed(1)).join(', ')}`);
+
   a.ws.close();
   console.log(`\n${passed}/${passed + failed} passed`);
   process.exit(failed ? 1 : 0);
