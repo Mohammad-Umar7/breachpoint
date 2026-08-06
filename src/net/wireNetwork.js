@@ -91,22 +91,21 @@ export function wireNetwork(game) {
     // toward a corrected position keeps feeding it rejected inputs.
     game._placePlayer(pos);
     /*
-     * AND STOP DEAD. A correction is a teleport, and momentum must not survive
-     * one — the other two handlers below have always known this and this one
-     * did not.
+     * KILL THE HORIZONTAL VELOCITY ONLY. NEVER THE VERTICAL.
      *
-     * It is the whole of the "I fall out of the map and get stuck being shot
-     * at" report. Go over the edge on OUTPOST and you are falling at terminal
-     * velocity when the server puts you back on your spawn; keep the velocity
-     * and you arrive there still doing -55 m/s, drop straight back through the
-     * world, and take fall damage every single frame on the way — which is
-     * what the flashing was. The server then corrects you again, and again,
-     * and you never get out. Fixing the server end could not help: it was
-     * placing the player correctly every time and the client was throwing it
-     * away on the next frame.
+     * Zeroing the horizontal is the point: it stops us charging back into
+     * whatever the server just refused and getting refused again.
+     *
+     * Zeroing the VERTICAL looked like the same idea and was a trap. Out past
+     * the edge of OUTPOST every input is rejected, so a correction arrives
+     * every frame — and wiping the fall each time pins the player motionless
+     * in mid-air. They then never fall far enough to reach the kill plane
+     * below the map, which is the one thing that would have rescued them, so
+     * "falling and being hurt" simply became "hanging still forever". Gravity
+     * has to keep working for anything down there to ever end.
      */
-    game.player.velocity.set(0, 0, 0);
-    game.player.fallSpeed = 0;
+    game.player.velocity.x = 0;
+    game.player.velocity.z = 0;
   };
 
   /*
