@@ -1025,8 +1025,29 @@ function handleInput(player, msg) {
    */
   const floorY = arenaFor(room.mapId).bounds.minY;
   if (y < floorY) {
-    if (player.alive) room.applyDamage(player, player, VOID_HAZARD, 'body');
-    reject();
+    /*
+     * KILL THEM, THEN SAY NOTHING.
+     *
+     * The snap-back must NOT be sent here, and that is the whole of why the
+     * first version of this did not work: a MATCH carrying `sp` IS the
+     * respawn signal. NetworkClient reads one that arrives while it believes
+     * it is dead as "you are back", sets itself alive on the spot and calls
+     * `onRespawn`. So rejecting a dead player tells them they have respawned
+     * when they have not — the client stands up at the spawn while the server
+     * still has them dead, their next input comes from under the floor again,
+     * and they are pinned in the void on WAITING with no health and no
+     * countdown that ever ends.
+     *
+     * A dead player has nothing to correct. Their position stops mattering
+     * the moment they die, and the ONE message that should move them is the
+     * real respawn — from their own request, or from the backstop in `tick`.
+     */
+    if (player.alive) {
+      room.applyDamage(player, player, VOID_HAZARD, 'body');
+      // Still alive means the damage was refused somewhere; they are out of
+      // the world regardless, so put them back rather than leave them falling.
+      if (player.alive) reject();
+    }
     return;
   }
 
