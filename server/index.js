@@ -289,6 +289,53 @@ class Room {
     player.team = count[TEAM.BLUE] < count[TEAM.RED] ? TEAM.BLUE : TEAM.RED;
   }
 
+  /**
+   * Get a player out from under the map. NEVER FAILS, whatever the match is
+   * doing.
+   *
+   * The first two attempts at this both routed the fall through
+   * `applyDamage`, and both left the player hanging in the void — because
+   * that function opens with `if (!victim.alive || this.state ===
+   * MATCH_STATE.OVER) return;`. Alone in a room the match never runs, so the
+   * damage was discarded in silence: the server still had them alive and
+   * standing under the world, while their own client had zeroed its health
+   * from the fall and was showing WAITING for a death the server never
+   * agreed had happened. Nothing was going to break that, ever.
+   *
+   * So the death is now the OPTIONAL half and getting out is the guaranteed
+   * one. If a match is genuinely running the fall costs a life, which is what
+   * it should cost; if it is not, there is no life to take and they are
+   * simply put back. Either way they end up somewhere they can stand, which
+   * is the only part the player actually cares about.
+   */
+  recoverFromVoid(player) {
+    /*
+     * Take the life ONLY if there is a running match to take it in, and only
+     * if it actually killed them — then stop, because the ordinary respawn
+     * flow owns them from that point and putting them back here as well would
+     * cut their death short.
+     */
+    if (player.alive && this.state === MATCH_STATE.LIVE) {
+      this.applyDamage(player, player, VOID_HAZARD, 'body');
+      if (!player.alive) return;
+    }
+    /*
+     * AND PUT THEM BACK, WHATEVER STATE THEY ARE IN. No `alive` check.
+     *
+     * That check is what broke the version before this one. A player alone in
+     * a room has never formally spawned, so `alive` is FALSE the whole time
+     * they are wandering around in warmup — and guarding on it meant the one
+     * player who reported this bug was the exact one it did nothing for.
+     *
+     * `spawn` is announced, which is also not optional: `announce: false`
+     * skips the MATCH carrying `sp`, and that message is the ONLY thing that
+     * moves a client. Suppressing it teleports a player who, on their own
+     * screen, is still hanging under the map — the bug, recreated by its fix.
+     */
+    player.reservedSpawn = null;
+    this.spawn(player);
+  }
+
   /** Put both flags on their stands. Called at match start and on restart. */
   resetFlags() {
     this.flags.clear();
@@ -1042,12 +1089,7 @@ function handleInput(player, msg) {
      * the moment they die, and the ONE message that should move them is the
      * real respawn — from their own request, or from the backstop in `tick`.
      */
-    if (player.alive) {
-      room.applyDamage(player, player, VOID_HAZARD, 'body');
-      // Still alive means the damage was refused somewhere; they are out of
-      // the world regardless, so put them back rather than leave them falling.
-      if (player.alive) reject();
-    }
+    room.recoverFromVoid(player);
     return;
   }
 
