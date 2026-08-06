@@ -273,6 +273,39 @@ export function baseSpot(arena, team) {
   return { x: b[0], z: b[1], y: b[2] ?? arena.spawnY };
 }
 
+/*
+ * WHERE FALLING OUT OF THE WORLD ENDS. Two planes, and THE ORDER MATTERS.
+ *
+ * The client declares itself dead at `voidDeathY` and then STOPS SIMULATING —
+ * `Player.fixedUpdate` returns immediately while dead, so no gravity, no
+ * controller, no new position. The deepest y it will ever report is a hair
+ * below that line and it will report it forever.
+ *
+ * So the server's rescue plane has to sit ABOVE the client's death plane. Not
+ * at it, and never below it. Put the rescue lower and the player parks in the
+ * gap between the two: frozen, out of the world, at a position that passes
+ * every check the server makes — and neither side can move them again. That
+ * gap was two metres, and it is the whole bug. It survived seven fixes because
+ * every one of them adjusted what happens BELOW the server's plane, and the
+ * player was never getting there.
+ *
+ * The 0.5 m of separation is not cosmetic either. Positions cross the wire
+ * through `round2`, so a freeze at -10.004 is transmitted as -10.00. Equal
+ * thresholds would rebuild the identical deadlock inside a 5 mm band.
+ */
+export const VOID_DEATH_MARGIN = 2;
+export const VOID_RESCUE_MARGIN = 2.5;
+
+/** The client kills itself at or below this. */
+export function voidDeathY(mapId = DEFAULT_MAP_ID) {
+  return arenaFor(mapId).bounds.minY + VOID_DEATH_MARGIN;
+}
+
+/** The server rescues at or below this — deliberately HIGHER than the above. */
+export function voidRescueY(mapId = DEFAULT_MAP_ID) {
+  return arenaFor(mapId).bounds.minY + VOID_RESCUE_MARGIN;
+}
+
 export function isInsideArena(x, y, z, mapId = DEFAULT_MAP_ID) {
   const b = arenaFor(mapId).bounds;
   return x >= b.minX && x <= b.maxX

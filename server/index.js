@@ -39,6 +39,7 @@ import {
 } from '../src/net/protocol.js';
 import {
   pickSpawn, isInsideArena, isValidMapId, DEFAULT_MAP_ID, arenaFor, baseSpot,
+  voidRescueY,
 } from '../src/net/arena.js';
 import {
   TEAM, PLAYING_TEAMS, TEAM_NAME, opposingTeam, sameTeam,
@@ -887,6 +888,15 @@ class Room {
       // its countdown ends, and one that has gone quiet gets put back here
       // rather than lying dead in the room forever.
       if (!p.alive && p.forceRespawnAt && now >= p.forceRespawnAt) this.spawn(p);
+      /*
+       * AND SWEEP UP ANYONE LEFT UNDER THE WORLD, asking or not.
+       *
+       * Every other route out of the void needs the client to do something —
+       * keep falling, or keep asking. A frozen, throttled or silent one does
+       * neither, and that is exactly the client this bug produces. This is the
+       * one rescue that depends on nothing but the position we already hold.
+       */
+      else if (p.alive && p.y < voidRescueY(this.mapId)) this.recoverFromVoid(p);
     }
     if (windowElapsed) this.rateWindowAt = now;
 
@@ -1070,7 +1080,12 @@ function handleInput(player, msg) {
    * band where a player is out of bounds but not yet dead. Death runs the
    * ordinary path from there: killfeed, respawn timer, back on a spawn point.
    */
-  const floorY = arenaFor(room.mapId).bounds.minY;
+  /*
+   * The RESCUE plane, which sits deliberately ABOVE the client's death plane.
+   * See `voidRescueY` in arena.js — reading `bounds.minY` here instead is what
+   * left a two-metre band the client froze inside and the server never saw.
+   */
+  const floorY = voidRescueY(room.mapId);
   if (y < floorY) {
     /*
      * KILL THEM, THEN SAY NOTHING.
@@ -1469,8 +1484,25 @@ wss.on('connection', (socket) => {
 
 
       case MSG.RESPAWN:
-        if (player && player.room && !player.alive && Date.now() >= player.respawnAt) {
-          player.room.spawn(player);
+        if (player && player.room) {
+          if (!player.alive && Date.now() >= player.respawnAt) {
+            player.room.spawn(player);
+          } else if (player.y < voidRescueY(player.room.mapId)) {
+            /*
+             * ASKED FOR BY SOMEBODY THE SERVER STILL THINKS IS ALIVE.
+             *
+             * Normally that is refused, and rightly — respawning on demand is
+             * an escape from any fight you are losing. But a client only ever
+             * sends this after killing itself, and out under the world it has
+             * ALSO stopped simulating, so it will never fall far enough for us
+             * to notice on our own. Refusing it there is a deadlock: they ask,
+             * we say no, and nothing else in the system is going to move them.
+             *
+             * Gated on being under the rescue plane, which is not a place any
+             * fight happens, so it cannot be used to duck one.
+             */
+            player.room.recoverFromVoid(player);
+          }
         }
         break;
 

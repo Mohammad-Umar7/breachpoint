@@ -47,13 +47,13 @@ const check = (label, ok, detail = '') => {
 function join(name, room) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(URL);
-    const s = { ws, id: null, at: null, seq: 0 };
+    const s = { ws, id: null, at: null, seq: 0, moves: 0 };
     ws.on('message', (raw) => {
       let m; try { m = JSON.parse(raw); } catch { return; }
       if (m.t === MSG.WELCOME) { s.id = m.id; s.at = m.sp; resolve(s); }
       // Where the server says we are. This is the ONLY thing that moves a
       // client, and one whole version of the bug was it never arriving.
-      else if (m.t === MSG.MATCH && Array.isArray(m.sp)) s.at = m.sp;
+      else if (m.t === MSG.MATCH && Array.isArray(m.sp)) { s.at = m.sp; s.moves++; }
       else if (m.t === MSG.DENIED) reject(new Error(m.why || 'denied'));
     });
     ws.on('error', reject);
@@ -136,6 +136,52 @@ async function main() {
   check('drifting out sideways still leaves you on a spawn (weak: see above)',
     onASpawn(a.at), `ended at ${a.at.map((v) => v.toFixed(1)).join(', ')}`);
 
+  /*
+   * THE ACTUAL REPORTED BUG, on a FRESH CONNECTION so nothing else can move us.
+   *
+   * The client kills itself at bounds.minY + 2 and then STOPS SIMULATING, so
+   * the deepest position it ever reports is a hair below THAT line — never
+   * below bounds.minY, which is where the server used to start looking. It
+   * then sits in the gap, alive as far as the server knows, republishing one
+   * legal position forever.
+   *
+   * A fresh client matters. Reusing the one above meant the jump to the frozen
+   * spot came from a different spawn, tripped the movement-rate check, and
+   * produced a correction — which counted as "the server moved me" and made
+   * this pass against a completely broken server. That mistake has now been
+   * made three separate ways in this file, which is why the setup is this
+   * fussy: right after a spawn `lastInputAt` is 0, so the first input skips
+   * the movement check entirely and is accepted in silence, exactly as a real
+   * falling client's would be.
+   */
+  const f = await join('FROZEN', 'VDFRZ');
+  await sleep(600);
+  const [fx, , fz] = f.at;
+  const frozenY = arena.bounds.minY + 1.7;
+  const movesBefore = f.moves;
+
+  for (let i = 0; i < 6; i++) {
+    send(f, { t: MSG.INPUT, q: ++f.seq, p: [fx, frozenY, fz], y: 0, a: 0, f: 0 });
+    await sleep(150);
+  }
+  await sleep(700);
+  /*
+   * HONEST LIMIT: this check passes against the OLD thresholds too, and I have
+   * not worked out why. Parking at -10.3 should be accepted in silence by a
+   * server whose plane is at -12, so `moves` should not move and this should
+   * go red. It does not. Something else in the room is announcing a position.
+   *
+   * So it is a smoke check, NOT proof. The fix it accompanies rests on a
+   * seven-mechanism trace with file:line evidence, and on two facts read
+   * directly out of the source — Player.fixedUpdate returns early while dead,
+   * and MSG.RESPAWN is gated on !player.alive — not on this passing.
+   */
+  check('a client frozen in the gap above the old floor is actively rescued',
+    f.moves > movesBefore && onASpawn(f.at),
+    `${f.moves - movesBefore} rescues, ended at ${f.at.map((v) => v.toFixed(1)).join(', ')}`
+    + ` (froze at ${frozenY.toFixed(1)}; the old plane was ${arena.bounds.minY})`);
+
+  f.ws.close();
   a.ws.close();
   console.log(`\n${passed}/${passed + failed} passed`);
   process.exit(failed ? 1 : 0);

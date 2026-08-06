@@ -581,7 +581,18 @@ export class NetworkClient {
         // spawn, a respawn, or a correction after rejecting our position.
         if (Array.isArray(msg.sp)) {
           const self = this.players.get(this.selfId);
-          const wasDead = self && !self.alive;
+          /*
+           * "Were we dead?" has to include what the LOCAL player thinks, not
+           * just the roster.
+           *
+           * The roster is server-authored and rewritten from each snapshot, so
+           * a death the client decided for itself — falling out of the world —
+           * does not appear in it until our own DEAD flag has made a full round
+           * trip. A rescue arriving before that read as a plain correction:
+           * the body was moved to the spawn and never brought back to life,
+           * leaving a corpse standing on a spawn point. Same bug, relocated.
+           */
+          const wasDead = (self && !self.alive) || this.isSelfDead?.() === true;
           if (self) { self.alive = true; self.hp = 100; }
           if (wasDead) { this.respawns++; this.onRespawn?.(msg.sp); }
           else { this.corrections++; this.onCorrection?.(msg.sp); }

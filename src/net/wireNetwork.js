@@ -86,6 +86,12 @@ export function wireNetwork(game) {
     if (spawn) game._placePlayer(spawn);
   };
 
+  /*
+   * What the LOCAL player believes about its own aliveness, which the roster
+   * cannot know until a snapshot round-trips. See NetworkClient's MSG.MATCH.
+   */
+  net.isSelfDead = () => !game.player.alive;
+
   net.onCorrection = (pos) => {
     // The server rejected where we said we were. Snap, do not smooth: easing
     // toward a corrected position keeps feeding it rejected inputs.

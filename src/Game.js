@@ -51,7 +51,7 @@ import { ensureThumbnail, getThumbnail } from './world/MapThumbnail.js';
 import { RemotePlayers } from './net/RemotePlayers.js';
 import { RemoteAudio } from './net/RemoteAudio.js';
 import { FlagObjects } from './net/FlagObjects.js';
-import { arenaFor } from './net/arena.js';
+import { arenaFor, voidDeathY } from './net/arena.js';
 import { TEAM, DEFAULT_MODE_ID, getMode } from './net/modes.js';
 import { wireNetwork } from './net/wireNetwork.js';
 import {
@@ -1409,14 +1409,24 @@ export class Game {
      * immediately. The server's plane stays as the backstop for a client that
      * has stopped talking.
      */
-    const floor = arenaFor(this.mapId).bounds.minY;
-    if (this.player.alive && this.player.position.y < floor + 2) {
-      this.player.velocity.set(0, 0, 0);
-      this.player.fallSpeed = 0;
-      // Straight to zero rather than through applyDamage: falling out of the
-      // world is not an injury you can be saved from by armour.
-      this.player.health = 0;
-      this.player.alive = false;
+    if (this.player.position.y < voidDeathY(this.mapId)) {
+      /*
+       * Dying is done ONCE; asking to come back is done UNTIL IT WORKS.
+       *
+       * The previous version gated the whole block on `this.player.alive` and
+       * then cleared that flag inside it, so it could only ever run one time —
+       * and it sent its single request through a 250 ms throttle, so a fall
+       * within 250 ms of any earlier ask sent nothing at all. One dropped
+       * message and the player was out there permanently.
+       */
+      if (this.player.alive) {
+        this.player.velocity.set(0, 0, 0);
+        this.player.fallSpeed = 0;
+        // Straight to zero rather than through applyDamage: falling out of the
+        // world is not an injury you can be saved from by armour.
+        this.player.health = 0;
+        this.player.alive = false;
+      }
       if (performance.now() - this._respawnAskedAt > 250) {
         this._respawnAskedAt = performance.now();
         net.requestRespawn();
