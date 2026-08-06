@@ -1110,7 +1110,7 @@ function handleInput(player, msg) {
    * outside the world at all is the problem, whichever direction it happened
    * in, so it gets the same answer as going under it: put them on a spawn.
    */
-  if (!isInsideArena(x, y, z, room.mapId)) { room.recoverFromVoid(player); return; }
+  if (!isInsideArena(x, y, z, room.mapId)) { reject(); return; }
 
   const now = Date.now();
   if (player.alive && player.lastInputAt) {
