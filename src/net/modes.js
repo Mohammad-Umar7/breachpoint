@@ -131,7 +131,7 @@ export const MODES = Object.freeze({
       + 'flag is still home. Kill the carrier and it drops where they fall.',
     teamBased: true,
     scoreLabel: 'CAPTURES',
-    scoreTarget: 3,
+    scoreTarget: 5,
     targetLabel: 'FIRST TO 3 CAPTURES',
     timeLimitSec: 600,
     accent: '#e1553f',

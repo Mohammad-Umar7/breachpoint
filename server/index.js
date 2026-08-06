@@ -796,6 +796,24 @@ class Room {
       // And so does the redeploy cooldown, for the same reason: starting a
       // fresh game already twelve seconds into a timer is a punishment
       // carried over from a match that is finished.
+
+      /*
+       * DROP THE RESERVED SPAWN BEFORE RESPAWNING THEM.
+       *
+       * `spawn()` honours `player.reservedSpawn` if one is set — that is what
+       * lets a dead player stand at their own spawn during the countdown
+       * instead of at their corpse. It is reserved at the MOMENT OF DEATH, so
+       * anyone who died in the closing seconds of a match carries that
+       * reservation across the restart and is put back on it, chosen against
+       * the old game's state rather than the new one's.
+       *
+       * In Capture the Flag that is not a cosmetic difference: a reservation
+       * made before a team change, or on a previous map, or against the old
+       * scores, is how blue players ended up starting a fresh round standing
+       * in red's base. Clearing it forces `reserveSpawn` to pick again from
+       * the team's OWN list, which is the only thing that can be right.
+       */
+      p.reservedSpawn = null;
       this.spawn(p);
     }
     this.broadcastFlags();
