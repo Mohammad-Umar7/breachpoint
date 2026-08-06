@@ -1389,6 +1389,39 @@ export class Game {
         net.requestRespawn();
       }
     }
+
+    /*
+     * FELL OUT OF THE WORLD. Handled HERE, on the client, and not only on the
+     * server.
+     *
+     * OUTPOST's floor slab is 56 m across — it reaches x and z of 28 — while
+     * its arena bounds reach 44. That leaves a sixteen-metre band all the way
+     * round the map with nothing under it, and walking into it is not a bug a
+     * player can be expected to avoid.
+     *
+     * The server has a kill plane for this, but it can only fire on positions
+     * the client actually sends, and it sits twelve metres down. Everything
+     * between the floor and that plane is time spent falling out of the world
+     * with no answer coming, which is what "stuck in the air" has been.
+     *
+     * So the side that KNOWS it is falling deals with it: one death, at once,
+     * no repeated fall damage on the way down, and a respawn asked for
+     * immediately. The server's plane stays as the backstop for a client that
+     * has stopped talking.
+     */
+    const floor = arenaFor(this.mapId).bounds.minY;
+    if (this.player.alive && this.player.position.y < floor + 2) {
+      this.player.velocity.set(0, 0, 0);
+      this.player.fallSpeed = 0;
+      // Straight to zero rather than through applyDamage: falling out of the
+      // world is not an injury you can be saved from by armour.
+      this.player.health = 0;
+      this.player.alive = false;
+      if (performance.now() - this._respawnAskedAt > 250) {
+        this._respawnAskedAt = performance.now();
+        net.requestRespawn();
+      }
+    }
   }
 
   leaveMatch() {
