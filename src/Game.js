@@ -1308,6 +1308,25 @@ export class Game {
   /** Put the local player exactly where the server says, physics included. */
   _placePlayer(pos) {
     this.player.position.set(pos[0], pos[1], pos[2]);
+    /*
+     * THE ONE PLACE THE VOID LATCH IS CLEARED, because this is the one place
+     * the server authoritatively says where we are — and wherever that is, it
+     * is in the world.
+     *
+     * The latch was cleared only in `Player.spawn()`, which a network respawn
+     * never calls: `wireNetwork.onRespawn` sets `alive = true` by hand. So
+     * after a rescue the latch was still set, Game's guard fired again on the
+     * very next frame and killed the player a second time — dead and frozen
+     * ON the spawn, asking to respawn at 4 Hz, getting rescued, getting killed
+     * again. That loop is both "stuck at the base" and the base/air/base
+     * flicker, and it was me.
+     *
+     * Clearing it HERE rather than in each handler is the point: correction,
+     * respawn and spawn-point all funnel through this function, so a future
+     * fourth path cannot forget. The position check in the guard remains as a
+     * backstop for a placement that somehow lands out of the world anyway.
+     */
+    this.player.fellOutOfWorld = false;
     this._syncPlayerBody();
   }
 
