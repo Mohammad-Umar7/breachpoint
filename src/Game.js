@@ -1320,6 +1320,9 @@ export class Game {
    */
   _placePlayer(pos) {
     this.player.position.set(pos[0], pos[1], pos[2]);
+    // `_syncPlayerBody` snaps the render history as well as the body — a
+    // teleport has no history to slide from, and leaving `prevPosition` out in
+    // the air makes the camera GLIDE in from there instead of cutting.
     this._syncPlayerBody();
   }
 
