@@ -337,7 +337,7 @@
       </section>
 
       <!-- ---------- Loadout ---------- -->
-      <section id="screen-loadout" class="screen wide">
+      <section id="screen-loadout" class="screen wide glass-screen">
         <h2>LOADOUT</h2>
         <div class="loadout-tabs">
           <button class="tab active" data-loadout-slot="primary">PRIMARY</button>
@@ -345,6 +345,9 @@
         </div>
         <div class="loadout-body">
           <div class="weapon-list" id="weapon-list"></div>
+          <!-- The stage holds the photograph; the sheet under it holds the
+               numbers. Split so the portrait can bleed past the panel edge
+               without the stat rows going with it. -->
           <div class="weapon-detail" id="weapon-detail"></div>
         </div>
         <div class="screen-footer">
