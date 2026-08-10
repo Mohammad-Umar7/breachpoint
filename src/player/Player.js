@@ -88,6 +88,27 @@ export class Player {
     this.coyote = 0;
     this.jumpBuffer = 0;
     this.fallSpeed = 0;
+    /*
+     * Where the world ends for the CURRENT map, and where to put someone who
+     * leaves it. Both set by Game when a level is built — this class has no
+     * idea which map it is standing on, and the pair of hardcoded constants
+     * that used to live at the bottom of `fixedUpdate` were both wrong for
+     * every map except the warehouse they were written for.
+     */
+    this.voidY = -12;
+    this.voidRespawn = null;
+    /*
+     * Latched when this player leaves the world, cleared by `spawn`.
+     *
+     * A FLAG rather than a position test, because the net below moves the
+     * player to the map's spawn straight away so offline play recovers. That
+     * move also means a position test in Game would find them safely back on
+     * the ground and never ask the server to rescue them — leaving the client
+     * dead at a spawn and the server convinced they are alive out in the void.
+     * That is the same deadlock this whole saga has been about, and latching
+     * the event instead of sampling the position is what avoids re-creating it.
+     */
+    this.fellOutOfWorld = false;
     this.alive = true;
     this.enabled = true;
     this.speed01 = 0;
@@ -193,6 +214,7 @@ export class Player {
     this.crouching = false;
     this.sprinting = false;
     this.sprintSuppressed = false;
+    this.fellOutOfWorld = false;
     this.halfHeight = HALF_STAND;
     this.targetHalfHeight = HALF_STAND;
     this.collider.setHalfHeight(HALF_STAND);
@@ -411,12 +433,32 @@ export class Player {
       this.currentSurface = hit?.tag?.surface ?? SURFACE.CONCRETE;
     }
 
-    // Safety net: if the player somehow leaves the arena, respawn them.
-    if (this.position.y < -12) {
-      this.applyDamage(35, null, 'void');
-      this.position.set(0, 2, 22);
+    /*
+     * Safety net for leaving the world. SILENT, ONCE, AND MAP-AWARE.
+     *
+     * This used to charge 35 damage and teleport to a hardcoded (0, 2, 22) —
+     * a warehouse spawn — every frame the player was below a hardcoded -12.
+     * Falling out of OUTPOST therefore meant a red damage flash and a hard
+     * camera cut repeating at physics rate the whole way down, which is
+     * exactly the "it looks like someone is shooting you and it feels stucky
+     * stucky" that was reported. It also fought the real void handling in
+     * Game and on the server, and its -12 is simply the wrong number for a
+     * map like LODGE whose floor is at -8.
+     *
+     * No damage: falling out of the world is not an injury. No repetition:
+     * gated on `alive`, so it happens once. No guessed destination: the map
+     * supplies it, and online the server's rescue is what actually lands.
+     */
+    if (this.alive && this.position.y < this.voidY) {
+      this.fellOutOfWorld = true;
+      this.alive = false;
+      this.health = 0;
       this.velocity.set(0, 0, 0);
-      this.body.setTranslation(this.position, true);
+      this.fallSpeed = 0;
+      if (this.voidRespawn) {
+        this.position.copy(this.voidRespawn);
+        this.body.setTranslation(this.position, true);
+      }
     }
   }
 

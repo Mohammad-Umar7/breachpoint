@@ -1125,6 +1125,16 @@ export class Game {
      */
     ensureThumbnail(this.renderer, this.scene, map);
 
+    /*
+     * Tell the player where THIS map's world ends, and where to land if they
+     * leave it. Player.js cannot know either — it used to guess, with a -12
+     * and a warehouse coordinate baked in, and guessed wrong on every other
+     * map. Set here on every build so a map change cannot leave them stale.
+     */
+    if (this.player) {
+      this.player.voidY = voidDeathY(map.id);
+      this.player.voidRespawn = this.level.playerSpawn;
+    }
     this.player?.spawn(this.level.playerSpawn, this.level.playerSpawnYaw);
     return this.level;
   }
@@ -1409,7 +1419,7 @@ export class Game {
      * immediately. The server's plane stays as the backstop for a client that
      * has stopped talking.
      */
-    if (this.player.position.y < voidDeathY(this.mapId)) {
+    if (this.player.fellOutOfWorld || this.player.position.y < voidDeathY(this.mapId)) {
       /*
        * Dying is done ONCE; asking to come back is done UNTIL IT WORKS.
        *
