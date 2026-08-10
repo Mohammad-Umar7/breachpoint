@@ -200,32 +200,87 @@ export class Player {
   }
 
   // ------------------------------------------------------------------ setup
-  spawn(position, yaw = 0) {
+  /**
+   * THE ONE FUNCTION THAT BRINGS THE LOCAL PLAYER BACK TO LIFE.
+   *
+   * THE INVARIANT: nothing outside this method may assign `this.alive = true`.
+   * Coming back is not one flag, it is nineteen, and every bug in this saga
+   * was a caller that set the one it was thinking about and left the rest.
+   *
+   * The last of them: `wireNetwork.onRespawn` wrote `player.alive = true` by
+   * hand, so a network respawn left `fellOutOfWorld` latched from the fall.
+   * Game's void guard read that latch on the very next frame and killed the
+   * player again — dead, frozen, standing on the spawn, asking to respawn four
+   * times a second into a server that had already respawned them and would
+   * never answer again. "Stuck at the base."
+   *
+   * The same hole was open on `enabled` (cleared by `_die`, restored only
+   * here, so a single fall-damage death in a match disabled the controls for
+   * the rest of the session), on `armor` (server hands out
+   * PLAYER_START_ARMOR on spawn; the client kept the corpse's), on the crouch
+   * capsule, and on `setNextKinematicTranslation` (placement wrote only
+   * `setTranslation`). Nobody noticed because each one on its own is survivable.
+   *
+   * So there is exactly one door, and it resets everything behind it.
+   *
+   * @param {{x:number,y:number,z:number}} position
+   * @param {{yaw?: number, pitch?: number}} [opts] yaw defaults to the one you
+   *   are already facing — a respawn should not spin the camera for you.
+   */
+  revive(position, { yaw = this.yaw, pitch = 0 } = {}) {
+    // --- where -----------------------------------------------------------
     this.position.copy(position);
+    // Both, or the interpolator draws one frame smeared between the place you
+    // died and the place you came back — a streak across the map at 200 m/s.
     this.prevPosition.copy(position);
     this.renderPosition.copy(position);
     this.velocity.set(0, 0, 0);
+    this.fallSpeed = 0;
     this.yaw = yaw;
-    this.pitch = 0;
+    this.pitch = pitch;
+
+    // --- alive -------------------------------------------------------------
     this.health = this.maxHealth;
     this.armor = PLAYER_START_ARMOR;
     this.alive = true;
     this.enabled = true;
+    this.fellOutOfWorld = false;
+
+    // --- posture -----------------------------------------------------------
     this.crouching = false;
     this.sprinting = false;
     this.sprintSuppressed = false;
-    this.fellOutOfWorld = false;
     this.halfHeight = HALF_STAND;
     this.targetHalfHeight = HALF_STAND;
     this.collider.setHalfHeight(HALF_STAND);
+    this.grounded = false;
+    this.wasGrounded = false;
+    this.coyote = 0;
+    this.jumpBuffer = 0;
+
+    // --- feel --------------------------------------------------------------
     this.trauma = 0;
     this.landDip = 0;
     this.landDipVel = 0;
     this.speed01 = 0;
     this.lean?.reset();
     this.sens?.reset();
+
+    // --- the physics body, BOTH halves -------------------------------------
+    // `setTranslation` moves the body; `setNextKinematicTranslation` retargets
+    // it. Writing only the first leaves the target the dead body last asked
+    // for still pending, and the next `world.step()` can drag the collider
+    // back to it — a corpse that walks itself off the spawn.
     this.body.setTranslation(position, true);
     this.body.setNextKinematicTranslation(position);
+  }
+
+  /**
+   * A fresh start on a new level: the same revive, plus a facing chosen by the
+   * map rather than kept from wherever you were last looking.
+   */
+  spawn(position, yaw = 0) {
+    this.revive(position, { yaw, pitch: 0 });
   }
 
   get eyeHeight() {
@@ -455,10 +510,19 @@ export class Player {
       this.health = 0;
       this.velocity.set(0, 0, 0);
       this.fallSpeed = 0;
-      if (this.voidRespawn) {
-        this.position.copy(this.voidRespawn);
-        this.body.setTranslation(this.position, true);
-      }
+      /*
+       * AND IT DOES NOT MOVE ITSELF. It raises the flag and stops there.
+       *
+       * Teleporting to the spawn from here is what produced the last visible
+       * glitch: base, then the air again, then base. The client jumped itself
+       * to the spawn, the server — which still had it falling — saw an
+       * impossible step, refused it, and snapped it back to the last position
+       * it HAD accepted, which was mid-air. Only then did the rescue land. One
+       * fall, three placements, two of them wrong.
+       *
+       * Whoever owns the world decides where the player goes: the server when
+       * connected, `_rescueOffline` in Game when not. Exactly one placement.
+       */
     }
   }
 

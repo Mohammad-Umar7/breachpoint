@@ -945,6 +945,7 @@ export class Game {
     // 5. Weapons need the final camera transform for accurate raycasts.
     this.weapons.update(dt);
     this.viewModel.syncCamera();
+    this._rescueOffline();
     this._updateNetwork(dt);
 
     // 6. Everything else.
@@ -1356,6 +1357,20 @@ export class Game {
   }
 
   /** Send our state, then draw everyone else. */
+  /**
+   * Put a player who fell out of the world back, when there is no server to do
+   * it.
+   *
+   * Online this must NOT run: the server owns placement, and a second opinion
+   * is what caused the base/air/base flicker. Gated on being disconnected, so
+   * exactly one authority ever moves the player.
+   */
+  _rescueOffline() {
+    if (this.net?.connected) return;
+    if (!this.player?.fellOutOfWorld) return;
+    this.player.spawn(this.level.playerSpawn, this.level.playerSpawnYaw);
+  }
+
   _updateNetwork(dt) {
     const net = this.net;
     if (!net?.connected) return;

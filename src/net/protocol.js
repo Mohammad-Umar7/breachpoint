@@ -161,9 +161,40 @@ export const MSG = Object.freeze({
    *   by whose doing
    */
   FLAG: 'G',      // { f: [flagState], ev: FLAG_EVENT|null, by: playerId|null, tm: team }
-  MATCH: 'M',     // { st, tl, kt: scoreTarget, w: winnerId|null, gm: modeId, ts: teamScores }
+  /**
+   * `sp` — "you are at this position" — comes with a `spk` saying WHICH KIND
+   * of placement it is. See SP_KIND: the two meanings are opposite and the
+   * client used to have to guess between them.
+   */
+  MATCH: 'M',     // { st, tl, kt, w, gm, ts, sp?: [x,y,z], spk?: SP_KIND }
   PONG: 'P',      // { c: echoedClientClock, s: serverTimeMs }
   DENIED: 'E',    // { why: string }
+});
+
+/**
+ * WHY A MATCH IS CARRYING A POSITION. Say it, do not infer it.
+ *
+ * `MSG.MATCH` with an `sp` is used for two things that mean opposite things:
+ *
+ *   SPAWN       the server has (re)spawned you. You are ALIVE, at full health
+ *               and armour, standing on a spawn point. The client mirrors that
+ *               exactly — one revive, every field reset.
+ *   CORRECTION  the server REFUSED where you said you were and is telling you
+ *               where it still has you. You are however alive or dead you
+ *               already were. It moves you and nothing else.
+ *
+ * The client used to tell them apart by asking itself "did I think I was
+ * dead?". Falling out of the world makes that true, so an anti-cheat refusal
+ * arriving mid-fall was executed as a respawn: the player was stood back up,
+ * alive, at the last position the server had accepted — a point in open air
+ * beside the map. That is the "it shows me in the air again" flicker, and no
+ * amount of care on the client can fix it, because the information needed to
+ * tell the two apart only exists on the server. So the server now says which
+ * it is, and the client stops guessing.
+ */
+export const SP_KIND = Object.freeze({
+  SPAWN: 's',
+  CORRECTION: 'c',
 });
 
 /** Bit flags packed into the input/snapshot `f` field. */
