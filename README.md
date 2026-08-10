@@ -476,6 +476,7 @@ src/
 │   ├── Weapon.js               Per-gun state machine + procedural view model
 │   ├── WeaponSystem.js         Loadout, hitscan, projectiles, melee, grenades
 │   ├── WeaponViewModel.js      View-model camera, layers, pose composition
+│   ├── WeaponPortrait.js       The game photographs its own guns for the loadout
 │   ├── ADSSystem.js            Aim blend, zoom, scope engagement, breath hold
 │   └── RecoilSystem.js         Pattern-driven camera and view-model kick
 ├── net/

@@ -36,7 +36,16 @@ export const KEY_BINDINGS = Object.freeze({
   leanLeft: ['KeyQ'],
   leanRight: ['KeyE'],
 
+  /**
+   * B does two jobs, and they never overlap.
+   *
+   * Scoped, it cycles the optic's magnification — that is what it has always
+   * done, and `WeaponSystem` only reads it while `scopeProgress > 0.4`. Every
+   * other moment of the match the key did nothing at all, which is the gap the
+   * loadout now fills: no binding was taken away to make room for it.
+   */
   zoomToggle: ['KeyB'],
+  loadout: ['KeyB'],
   /**
    * Put a carried flag down, for passing it to a teammate.
    *

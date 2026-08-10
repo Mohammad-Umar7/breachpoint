@@ -43,11 +43,13 @@ import { PostFX } from './fx/PostFX.js';
 import { ScopeRenderer, LAYER_WORLD } from './fx/ScopeRenderer.js';
 import { AudioManager } from './audio/AudioManager.js';
 import { UIManager } from './ui/UIManager.js';
-import { MenuManager } from './ui/MenuManager.js';
+import { MenuManager, RESUME_MATCH } from './ui/MenuManager.js';
 import { Minimap } from './ui/Minimap.js';
 import { NetworkClient, inviteUrl, roomFromUrl } from './net/NetworkClient.js';
 import { MAPS, getMap, DEFAULT_MAP_ID } from './world/maps/index.js';
 import { ensureThumbnail, getThumbnail } from './world/MapThumbnail.js';
+import { ensurePortraits } from './weapons/WeaponPortrait.js';
+import { WEAPON_DEFS } from './weapons/WeaponDefinitions.js';
 import { RemotePlayers } from './net/RemotePlayers.js';
 import { RemoteAudio } from './net/RemoteAudio.js';
 import { FlagObjects } from './net/FlagObjects.js';
@@ -289,6 +291,20 @@ export class Game {
        */
       this.primeMapThumbnails().catch(() => { /* the cards fall back to plans */ });
 
+      /*
+       * And photograph the arsenal, for the same reason and at the same moment.
+       *
+       * Twelve small offscreen renders, once per browser, cached exactly as the
+       * map photographs are. A weapon whose model failed to load is skipped and
+       * its card keeps its silhouette — the AR-15's glTF is already optional,
+       * so a portrait has to be.
+       */
+      try {
+        ensurePortraits(this.renderer, this.assets, WEAPON_DEFS);
+      } catch (err) {
+        console.warn('[Game] Weapon portraits unavailable.', err);
+      }
+
       if (this.assets.loadErrors.length) {
         console.warn('[Game] Some assets fell back to defaults:', this.assets.loadErrors);
       }
@@ -423,6 +439,8 @@ export class Game {
     };
     this.menus.onContinue = () => this.resume();
     this.menus.onResume = () => this.resume();
+    // BACK out of a loadout opened with B goes straight back into the match.
+    this.menus.onResumeFromLoadout = () => this.resume();
     this.menus.onRestart = () => this.restart();
     this.menus.onQuitToMenu = () => this.quitToMenu();
     /*
@@ -764,6 +782,23 @@ export class Game {
     this.menus.showScreen('screen-pause');
   }
 
+  /**
+   * Straight from the match into the loadout, on one key.
+   *
+   * Everything `pause` does, because a menu with the pointer still locked and
+   * the world still simulating is how you come back to the game having been
+   * shot by somebody you could not see. The only difference is the screen it
+   * lands on and where its BACK goes — see RESUME_MATCH.
+   */
+  openLoadoutFromMatch() {
+    if (this.state !== GAME_STATE.PLAYING) return;
+    this._setState(GAME_STATE.PAUSED);
+    this.input.exitPointerLock();
+    this.input.clearAll();
+    this.audio.setMuffled(true);
+    this.menus.openLoadout(RESUME_MATCH);
+  }
+
   resume() {
     if (this.state !== GAME_STATE.PAUSED) return;
     this.audio.setMuffled(false);
@@ -933,6 +968,23 @@ export class Game {
     this.stats.elapsed = performance.now() / 1000 - this.stats.startTime;
 
     if (this.input.wasPressed('stats')) this.ui.toggleStats();
+
+    /*
+     * B opens the loadout straight from the match.
+     *
+     * Changing a gun used to be Esc, read the pause menu, find LOADOUT, click
+     * — four steps and a menu you did not want, for the one thing people
+     * change most often.
+     *
+     * NOT while scoped: B is the magnification toggle there, and that reading
+     * has to win. `WeaponSystem` only consumes it above scopeProgress 0.4, so
+     * the two never both fire — outside a scope the key was doing nothing at
+     * all, which is exactly why it was free to take.
+     */
+    if (this.input.wasPressed('loadout') && this.adsSystem.scopeProgress <= 0.4) {
+      this.openLoadoutFromMatch();
+      return;
+    }
 
     // Put the flag down, for handing it to someone in better shape to run it.
     // Sent unconditionally in a team mode: the server decides whether there is

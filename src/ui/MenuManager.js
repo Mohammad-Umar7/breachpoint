@@ -13,6 +13,16 @@
  */
 
 import { WEAPON_DEFS, CATEGORY_LABELS, opticMagnification } from '../weapons/WeaponDefinitions.js';
+import { getPortrait } from '../weapons/WeaponPortrait.js';
+
+/**
+ * "Go back to the match", as opposed to going back to a screen.
+ *
+ * `openLoadout` takes the screen its BACK button should return to, and opening
+ * it from inside a match has no screen to name — the answer is "the game".
+ * A sentinel rather than null, because null already means the main menu.
+ */
+export const RESUME_MATCH = '__resume_match__';
 import { DEFAULT_SETTINGS } from '../core/Settings.js';
 import { RETICLE_STYLES } from '../fx/ScopeRenderer.js';
 import { effectiveAimSpeed } from '../core/SensitivityManager.js';
@@ -417,7 +427,16 @@ export class MenuManager {
     click('btn-credits', () => this.showScreen('screen-credits'));
     click('btn-loadout', () => this.openLoadout('screen-menu'));
     click('btn-loadout-pause', () => this.openLoadout('screen-pause'));
-    click('btn-loadout-back', () => this.showScreen(this.loadoutReturnScreen || 'screen-menu'));
+    /*
+     * BACK from the loadout goes wherever it was opened FROM, and one of those
+     * places is the match itself — B opens it mid-game, so its BACK has to put
+     * the player back in the game rather than into a pause menu they never
+     * asked for. That is what the sentinel means.
+     */
+    click('btn-loadout-back', () => {
+      if (this.loadoutReturnScreen === RESUME_MATCH) { this.onResumeFromLoadout?.(); return; }
+      this.showScreen(this.loadoutReturnScreen || 'screen-menu');
+    });
     click('btn-controls', () => { this.controlsReturnScreen = 'screen-menu'; this.showScreen('screen-controls'); });
     click('btn-controls-pause', () => { this.controlsReturnScreen = 'screen-pause'; this.showScreen('screen-controls'); });
 
@@ -520,9 +539,16 @@ export class MenuManager {
       const row = document.createElement('button');
       row.className = 'weapon-row';
       row.classList.toggle('selected', def.id === this.selectedWeaponId);
+      // The photograph the game took of this weapon, if it has one. A missing
+      // portrait leaves the slot empty rather than substituting a stand-in —
+      // an icon that is not the gun is worse than no picture at all.
+      const shot = getPortrait(def.id);
       row.innerHTML = `
-        <span class="wname">${def.name}</span>
-        <span class="wcat">${CATEGORY_LABELS[def.category] ?? def.category}</span>
+        <span class="wshot">${shot ? `<img src="${shot}" alt="" draggable="false">` : ''}</span>
+        <span class="wtext">
+          <span class="wname">${def.name}</span>
+          <span class="wcat">${CATEGORY_LABELS[def.category] ?? def.category}</span>
+        </span>
         ${def.id === equippedId ? '<span class="equipped">EQUIPPED</span>' : ''}
       `;
       row.addEventListener('click', () => {
@@ -551,7 +577,12 @@ export class MenuManager {
       def.reloadType === 'shells' ? 'SHELL RELOAD' : null,
     ].filter(Boolean);
 
+    const hero = getPortrait(def.id);
     this.el.weaponDetail.innerHTML = `
+      <div class="wstage${hero ? '' : ' empty'}">
+        ${hero ? `<img src="${hero}" alt="${def.name}" draggable="false">` : ''}
+        <span class="wstage-cat">${CATEGORY_LABELS[def.category] ?? def.category}</span>
+      </div>
       <h4>${def.name}</h4>
       <div class="detail-tags">${tags.map((t) => `<span>${t}</span>`).join('')}</div>
       <p class="desc">${def.description ?? ''}</p>
