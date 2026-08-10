@@ -66,8 +66,13 @@
         <div class="ch-arm ch-bottom"></div>
         <div class="ch-arm ch-left"></div>
         <div class="ch-arm ch-right"></div>
-        <div id="hitmarker"><span></span><span></span><span></span><span></span></div>
       </div>
+      <!-- OUTSIDE the crosshair, and that is load-bearing. UIManager fades the
+           crosshair out as you aim, and CSS opacity composites a whole subtree
+           — so while it lived in there the hitmarker could never be more
+           opaque than its parent, and every hit landed while aiming flashed
+           nothing at all. Its own centring lives in main.css. -->
+      <div id="hitmarker"><span></span><span></span><span></span><span></span></div>
 
       <!-- Capture the Flag: both team scores and both flag states, in one
            strip. Hidden entirely in a free-for-all. -->

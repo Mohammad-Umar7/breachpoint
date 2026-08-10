@@ -503,15 +503,23 @@ export class Game {
       this._gameOver();
     };
     // --------------------------------------------------------- the weapons
+    /*
+     * ONE PRODUCER EACH: the marker is local, the number is the server's.
+     *
+     * Both used to be fired from here AND again from the HIT message a round
+     * trip later, so every shot on a player drew two damage numbers — and on a
+     * headshot they DISAGREED, because only the server applies the part
+     * multiplier. An AR-15 headshot read "24" here and "48" there, about a
+     * fifth of a second apart, on the same bullet.
+     *
+     * They are split by what each is for rather than both going one way. The
+     * marker answers "did that land?" and is worthless late, so it stays here,
+     * instant and predicted. The number answers "how much?" and is worthless
+     * wrong, so it comes from the only side that knows — see the HIT handler in
+     * wireNetwork.js, which no longer draws a marker.
+     */
     this.weapons.onHit = (info) => {
       this.ui.showHitmarker(info.killed, info.headshot);
-      if (info.point) {
-        this.ui.addDamageNumber(
-          info.point,
-          info.damage,
-          info.killed ? 'kill' : info.headshot ? 'head' : ''
-        );
-      }
     };
     this.weapons.onPropHit = (prop, dmg, point, dir) => this._damageProp(prop, dmg, point, dir);
     this.weapons.onGrenadeExplode = (pos, def) => {
@@ -825,6 +833,21 @@ export class Game {
     this.weapons.reset();
     this.lean.reset();
     this.adsSystem.reset();
+    /*
+     * And the scope with it, or it stays drawn over the main menu.
+     *
+     * `_updateScope` only runs from the PLAYING and GAMEOVER arms of the loop,
+     * but `_render` calls the scope's two draw passes in EVERY state. So
+     * leaving a match while scoped — Esc, LEAVE MATCH, or the results screen's
+     * own button — froze `active` at true and left the menu's live 3D
+     * background replaced by a magnified view inside a black tube, reticle and
+     * all, until the next match started.
+     *
+     * Zeroing it here rather than reviving `_updateScope` in the menu arms is
+     * deliberate: the other way keeps `active` true and pays for a full extra
+     * scene render behind the menu on every frame.
+     */
+    this.scope?.update(this.camera, 0, {});
     this._pendingExplosions.length = 0;
 
     for (const prop of this.level.explosives) {
@@ -1353,7 +1376,22 @@ export class Game {
     this.player.renderPosition.copy(p);
   }
 
-  /** Pack the local player's animation state for the wire. */
+  /**
+   * Pack the local player's animation state for the wire.
+   *
+   * This is the SOLE producer of the flag word — there is no second sender to
+   * fall back on, so a bit missed here is a bit that does not exist in the
+   * game. Two were, and both failed silently because the receiving halves were
+   * complete and well tested against hand-fed input:
+   *
+   * RELOADING was never sent at all, so no human player has ever heard another
+   * one reload; `RemoteAudio`'s whole reload branch was unreachable, and only
+   * `scripts/bot.mjs` ever set the bit — which is exactly why it looked as
+   * though the feature worked.
+   *
+   * FIRING was read off `fireBuffer`, which is spent before this runs, so it
+   * was false for every semi-automatic shot ever fired. See `firingNow`.
+   */
   _playerFlags() {
     let f = 0;
     const p = this.player;
@@ -1361,7 +1399,8 @@ export class Game {
     if (p.sprinting) f |= FLAG.SPRINT;
     if (!p.grounded) f |= FLAG.AIRBORNE;
     if (this.weapons.ads.progress > 0.5) f |= FLAG.ADS;
-    if (this.weapons.fireBuffer > 0) f |= FLAG.FIRING;
+    if (this.weapons.firingNow) f |= FLAG.FIRING;
+    if (this.weapons.reloading) f |= FLAG.RELOADING;
     if (!p.alive) f |= FLAG.DEAD;
     if (this.lean.amount < -0.3) f |= FLAG.LEAN_L;
     if (this.lean.amount > 0.3) f |= FLAG.LEAN_R;

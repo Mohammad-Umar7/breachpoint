@@ -468,6 +468,26 @@ export class MenuManager {
     this.el.overlay.addEventListener('click', (e) => {
       const btn = e.target.closest('button, .diff-card, .weapon-row');
       if (!btn || btn.disabled) return;
+      /*
+       * WAKE THE AUDIO HERE. This is the first user gesture there is.
+       *
+       * The AudioContext was only ever created inside `startGame`, which is
+       * reached from a network handshake rather than from a click — so the
+       * entire front end was mute until you had been in a match, and a player
+       * who never connected heard nothing all session. Every sound above was
+       * being played into a context that did not exist yet and dropped.
+       *
+       * Both calls are idempotent, and a click IS the user activation a
+       * context needs. Creating one at construction time instead would look
+       * equivalent and fail differently: it would start `suspended`, and
+       * `_canPlay` only rejects `closed`, so every sound would be scheduled
+       * into a dead context and silently lost.
+       *
+       * The very first HOVER is still silent — `mouseover` is not a user
+       * activation, so nothing can legally start a context there.
+       */
+      this.audio?.init?.();
+      this.audio?.resume?.();
       const back = btn.classList.contains('back-btn') || btn.dataset.back;
       this.audio?.play(back ? 'menuBack' : 'menuSelect');
     });

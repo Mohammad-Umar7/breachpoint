@@ -291,9 +291,132 @@ async function ceilingCapture() {
   await sleep(200);
 }
 
+/**
+ * A DEFENDER STANDING ON THE FLAG MUST NOT DENY IT.
+ *
+ * The pickup loop used to `break` on the first player it found inside a flag's
+ * radius, whether or not that player did anything. A defender parked on their
+ * own flag is the case that makes that fatal: their branch does nothing (a
+ * flag on its stand cannot be "returned"), and the break then threw away
+ * everyone else in the radius for that tick. An attacker could stand on the
+ * enemy flag forever and never pick it up — the only cure was killing the
+ * camper, because the dead are skipped before the break.
+ *
+ * The rest of this suite cannot see it: every other case keeps its two players
+ * away from one flag at the same moment, which is the one arrangement that
+ * triggers it.
+ *
+ * JOIN ORDER IS THE TRIGGER. `this.players` is a Map in join order, so the
+ * defender has to arrive FIRST to be the one the loop breaks on. Joining them
+ * the other way round passes against the broken server too.
+ */
+async function campedFlag() {
+  const room = 'CTFCM';
+  const def = await join('DEFEND', room);      // first: the camper
+  const atk = await join('ATTACK', room);      // second: must still get it
+  live.push(def, atk);
+  await sleep(900);
+
+  const target = def.team;                     // DEFEND's own flag
+  atk.flagEvents.length = 0;
+
+  // The defender parks on their own flag and stays there.
+  await walk(def, [atk], BASES[target]);
+  await sleep(300);
+  check('the camper is standing on their own flag, which stays home',
+    flagOf(def, target)?.s === FLAG_STATE.AT_BASE,
+    `${TEAM_NAME[target]} flag is ${flagOf(def, target)?.s}`);
+
+  // ...and the attacker walks onto the same flag, with the camper still on it.
+  await walk(atk, [def], BASES[target]);
+  await sleep(500);
+
+  const took = atk.flagEvents.find((e) => e.ev === FLAG_EVENT.TAKEN);
+  check('an attacker can take a flag a defender is standing on',
+    !!took && took.by === atk.id,
+    took ? `taken by ${took.by === atk.id ? 'the attacker' : took.by}`
+         : 'nothing happened — the camper ate the tick');
+  check('and the server agrees it is carried',
+    flagOf(atk, target)?.s === FLAG_STATE.CARRIED,
+    flagOf(atk, target)?.s ?? 'no flag state');
+
+  def.ws.close();
+  atk.ws.close();
+  live.length = 0;
+  await sleep(250);
+}
+
+/**
+ * A FLAG CARRIED IN WARMUP IS PUT BACK — AND THE CLIENTS ARE TOLD.
+ *
+ * `evaluateMatchState` resets the flags on the WARMUP -> LIVE transition, which
+ * is right, and then broadcast only MSG.MATCH — which carries no flag state.
+ * MSG.FLAG is the only thing that moves a flag on a client, so a player who
+ * picked one up during the warmup sandbox kept carrying a phantom: the HUD
+ * held CARRYING, the flag rode their back on the other player's screen, and
+ * running it home scored nothing, because the server had long since put it
+ * back on its stand.
+ *
+ * `soloWarmup` above closes its socket immediately after taking the flag, so
+ * it never reaches the transition. This is that missing half.
+ */
+async function warmupCarryReset() {
+  const room = 'CTFWU';
+  const first = await join('EARLY', room);
+  live.push(first);
+  await sleep(700);
+
+  const enemy = first.team === TEAM.RED ? TEAM.BLUE : TEAM.RED;
+  await walk(first, [], BASES[enemy]);
+  await sleep(400);
+  check('warmup: the lone player is carrying the enemy flag',
+    flagOf(first, enemy)?.s === FLAG_STATE.CARRIED,
+    flagOf(first, enemy)?.s ?? 'not carried');
+
+  /*
+   * NOW RUN AWAY FROM THE STAND, which is the whole reason this reproduces.
+   *
+   * A carrier still inside the stand's pickup cylinder when the match flips
+   * simply re-takes the flag on the next tick, and the desync never appears —
+   * so a version of this test that stands still passes against the broken
+   * server. Stepping off is also just what a player does: you grab the flag
+   * and run. The midpoint is clear of both bases, so nothing is captured on
+   * the way.
+   */
+  await walk(first, [], [0, 0]);
+  await sleep(300);
+  check('and has carried it away from the enemy stand',
+    flagOf(first, enemy)?.s === FLAG_STATE.CARRIED,
+    `still ${flagOf(first, enemy)?.s} at ${first.at[0].toFixed(1)}, ${first.at[2].toFixed(1)}`);
+
+  // A second player arrives and the match goes live.
+  first.flags = [];
+  const second = await join('LATER', room);
+  live.push(second);
+  await sleep(1200);
+
+  check('the match went live', first.matches.some((m) => m.st === MATCH_STATE.LIVE),
+    first.matches.map((m) => m.st).join(' -> '));
+  check('and the carrier is TOLD the flag went back on its stand',
+    flagOf(first, enemy)?.s === FLAG_STATE.AT_BASE,
+    flagOf(first, enemy)
+      ? `carrier still sees ${flagOf(first, enemy).s}`
+      : 'carrier was never sent any flag state at all');
+  check('the player who joined sees it home too',
+    flagOf(second, enemy)?.s === FLAG_STATE.AT_BASE,
+    flagOf(second, enemy)?.s ?? 'no flag state');
+
+  first.ws.close();
+  second.ws.close();
+  live.length = 0;
+  await sleep(250);
+}
+
 async function main() {
   await soloWarmup();
   await ceilingCapture();
+  await campedFlag();
+  await warmupCarryReset();
 
   // Nobody idles out. Reports the position each client already believes it is
   // at, so it never fights `walk` — it just stops the socket going silent.

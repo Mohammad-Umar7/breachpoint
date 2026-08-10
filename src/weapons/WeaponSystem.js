@@ -29,6 +29,22 @@ import { clamp, randRange } from '../core/MathUtils.js';
 
 const MOUSE_LEFT = 0;
 
+/**
+ * How long one shot keeps you flagged as firing, for everyone else's benefit.
+ *
+ * Inputs go out at 30 Hz (LIMITS/INPUT_HZ) while this runs per frame, so a
+ * flag raised for a single frame is dropped about half the time — a semi-auto
+ * click would reach the other players only when it happened to land on a send.
+ * 0.15 s clears that comfortably and is still shorter than the slowest
+ * automatic's cycle, so it never runs a burst on past its last round.
+ */
+const FIRING_HOLD_SEC = 0.15;
+
+/** Phases of a quick melee / quick grenade. See `_updateQuickUse`. */
+const QUICK_IDLE = 0;
+const QUICK_ARRIVING = 1;   // gadget is coming up; use it once it is ready
+const QUICK_USING = 2;      // used; go back as soon as the action is finished
+
 /** Loadout slot order. */
 export const SLOTS = ['primary', 'secondary', 'melee', 'throwable'];
 
@@ -61,13 +77,28 @@ export class WeaponSystem {
     this.currentIndex = 0;
     this.previousIndex = 1;
     this.current = null;
+    /** Slot to go back to when a quick melee / quick grenade is done, or -1. */
     this.quickMeleeReturn = -1;
+    /** QUICK_IDLE | QUICK_ARRIVING | QUICK_USING. See `_updateQuickUse`. */
+    this._quickPhase = QUICK_IDLE;
 
     this.enabled = true;
     this.shotsFired = 0;
     this.shotsHit = 0;
     /** Seconds of remembered trigger press, used to bridge the sprint raise. */
     this.fireBuffer = 0;
+    /**
+     * Seconds left on "this player is shooting", for the wire. NOT `fireBuffer`.
+     *
+     * These two look interchangeable and are opposites. `fireBuffer` is an
+     * INTENT that is deliberately spent the moment the shot goes out
+     * (see `_handleFiring`), so reading it to answer "are they firing?" is
+     * false for every semi-automatic in the game — which is why other players
+     * were animated strolling along while shooting at you. This is set BY the
+     * shot, and held long enough to survive the 30 Hz input throttle so a
+     * single click still reaches the people watching.
+     */
+    this.firingFor = 0;
     /** This frame's raw aim request; cancels a sprint. Set in update(). */
     this.aimIntent = false;
 
@@ -181,6 +212,10 @@ export class WeaponSystem {
   update(dt) {
     const alive = this.player.alive && this.enabled;
 
+    // Decayed HERE rather than in `_handleFiring`, which only runs while alive
+    // — otherwise dying mid-burst would leave the flag latched on for good.
+    this.firingFor = Math.max(0, this.firingFor - dt);
+
     if (alive) {
       this._handleSwitching();
       this._handleReload();
@@ -249,6 +284,12 @@ export class WeaponSystem {
     // --- firing -----------------------------------------------------------
     if (alive) this._handleFiring(dt);
 
+    // Runs after the trigger so a quick melee cannot beat a real shot to the
+    // frame, and only while alive — dying mid-swing must not swap a corpse's
+    // weapon back and re-show a view model.
+    if (alive) this._updateQuickUse();
+    else if (this._quickPhase !== QUICK_IDLE) this._endQuickUse();
+
     // --- weapon state -----------------------------------------------------
     w.update(dt, (name) => this.audio.play(name, { volume: 0.9 }), this.ads.progress);
 
@@ -284,13 +325,23 @@ export class WeaponSystem {
     else if (this.input.wasPressed('slot4')) target = 3;
     else if (this.input.wasPressed('lastWeapon')) target = this.previousIndex;
 
-    // Quick melee / quick grenade: swap in, use, swap back.
+    /*
+     * Quick melee / quick grenade: swap in, USE, swap back.
+     *
+     * Only the first third of that ever happened. `quickMeleeReturn` was
+     * written here and read absolutely nowhere — three lines in the whole
+     * repo, all of them writes — so V and G were exact duplicates of the 3 and
+     * 4 keys: the knife came up, no swing played, and it stayed in your hands
+     * until you pressed 1. `_updateQuickUse` below is the missing two thirds.
+     */
     if (this.input.wasPressed('quickMelee') && this.currentIndex !== 2) {
       this.quickMeleeReturn = this.currentIndex;
+      this._quickPhase = QUICK_ARRIVING;
       target = 2;
     } else if (this.input.wasPressed('quickGrenade') && this.currentIndex !== 3) {
       if (this.slots[3].magazine > 0 || this.slots[3].reserve > 0) {
         this.quickMeleeReturn = this.currentIndex;
+        this._quickPhase = QUICK_ARRIVING;
         target = 3;
       }
     }
@@ -304,6 +355,48 @@ export class WeaponSystem {
     }
 
     if (target >= 0 && target < this.slots.length) this.switchTo(target);
+  }
+
+  /**
+   * Drive a quick melee / quick grenade through "use it, then give me my gun
+   * back". Runs after firing, so a swing started this frame is already visible.
+   *
+   * Everything here is written to FAIL SAFE — the worst outcome of any guard
+   * being wrong is that you keep holding the gadget, which is exactly what the
+   * game did before, rather than a stuck slot or a lost weapon.
+   */
+  _updateQuickUse() {
+    if (this._quickPhase === QUICK_IDLE) return;
+    const w = this.current;
+    const def = w?.def;
+
+    // The player overruled us with a slot key, or a reset swapped the loadout.
+    // Let go rather than yanking a gun out of their hands later.
+    if (!def || (!def.melee && !def.throwable)) { this._endQuickUse(); return; }
+
+    if (this._quickPhase === QUICK_ARRIVING) {
+      // Wait out the raise. `switchTo` sets SWITCHING, and swinging through
+      // that would play the animation from halfway up.
+      if (w.state !== WEAPON_STATE.IDLE || !w.canFire()) return;
+      if (def.melee) this._swingMelee();
+      else if (w.magazine > 0) this._throwGrenade();
+      else { this._endQuickUse(); return; }      // nothing left to throw
+      this._quickPhase = QUICK_USING;
+      return;
+    }
+
+    // QUICK_USING. A swing has to finish; a grenade has already left the hand
+    // on the frame it was thrown, and any "pull another" reload it started is
+    // cancelled cleanly by `onHolster`.
+    if (w.state === WEAPON_STATE.MELEE) return;
+    const back = this.quickMeleeReturn;
+    this._endQuickUse();
+    if (back >= 0 && back < this.slots.length) this.switchTo(back);
+  }
+
+  _endQuickUse() {
+    this._quickPhase = QUICK_IDLE;
+    this.quickMeleeReturn = -1;
   }
 
   switchTo(index) {
@@ -491,6 +584,11 @@ export class WeaponSystem {
 
     w.consumeShot();
     this.shotsFired++;
+    // Long enough that one click survives the input throttle, short enough
+    // that letting go of an automatic drops the pose almost at once. Every
+    // automatic in the game cycles faster than this, so a held trigger keeps
+    // refreshing it and the shouldered pose holds for the whole burst.
+    this.firingFor = FIRING_HOLD_SEC;
 
     // --- recoil -----------------------------------------------------------
     const shake = this.recoil.fire(def, {
@@ -1109,6 +1207,19 @@ export class WeaponSystem {
     );
   }
 
+  /**
+   * The two things the OTHER players need to know about our weapon.
+   *
+   * Both exist so `Game._playerFlags` never has to reach into a Weapon's
+   * internals to pack the wire. It used to, and it read the wrong field —
+   * see `firingFor`.
+   */
+  /** Are we shooting, as an onlooker would judge it? */
+  get firingNow() { return this.firingFor > 0; }
+
+  /** Are we reloading? Held across every phase of a shell-by-shell reload. */
+  get reloading() { return this.current?.state === WEAPON_STATE.RELOADING; }
+
   hudState() {
     const w = this.current;
     const spread = w.getSpread({
@@ -1150,6 +1261,10 @@ export class WeaponSystem {
     this.shotsFired = 0;
     this.shotsHit = 0;
     this.fireBuffer = 0;
+    this.firingFor = 0;
+    // Or a quick-melee interrupted by a map change would try to put you back
+    // into a slot from the loadout you were carrying before it.
+    this._endQuickUse();
     this.player.sprintSuppressed = false;
     this.viewModel.reset();
   }

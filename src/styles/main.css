@@ -120,7 +120,11 @@ html, body {
    Three readings at a glance, because they mean different things and you act
    on them differently: white = a body hit, gold = a headshot, red and larger
    = they went down. */
-#hitmarker { position: absolute; left: 0; top: 0; opacity: 0; transform: translate(-50%,-50%) scale(1.6); }
+/* Centred on its own, because it is a sibling of #crosshair rather than a
+   child of it — see the note in index.html. #hud is `position: fixed; inset: 0`,
+   so 50%/50% plus the translate below is screen centre, exactly where it sat
+   when the crosshair positioned it. */
+#hitmarker { position: absolute; left: 50%; top: 50%; opacity: 0; transform: translate(-50%,-50%) scale(1.6); }
 #hitmarker.show { animation: hitpop 0.30s cubic-bezier(0.1, 0.8, 0.3, 1); }
 #hitmarker span {
   position: absolute; width: 11px; height: 2.5px; background: #fff; border-radius: 2px;
@@ -172,9 +176,15 @@ html, body {
 }
 #hud-top-right { top: 200px; }
 
-/* Kill feed -------------------------------------------------------------- */
+/* Kill feed --------------------------------------------------------------
+   `top` clears BOTH things already in this column: the minimap ends at 186px
+   and the KILLS/PING stack below it ends at 292px. It used to start at 132px,
+   which put the first two entries across the bottom of the map — hiding
+   pickups, flag markers and blips behind kill text — and the lower ones over
+   the two numbers you actually read mid-fight. `#hud-top-right` was pushed
+   clear of the map when the map was added; the feed was forgotten. */
 #kill-feed {
-  position: absolute; top: 132px; right: 18px; width: 280px;
+  position: absolute; top: 300px; right: 18px; width: 280px;
   display: flex; flex-direction: column; align-items: flex-end; gap: 4px;
 }
 .kill-entry {
