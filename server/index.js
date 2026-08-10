@@ -50,6 +50,17 @@ import { WEAPON_DEFS, HAZARD_DEFS } from '../src/weapons/WeaponDefinitions.js';
 /** Looked up once: the kill plane is checked on every input from every player. */
 const VOID_HAZARD = HAZARD_DEFS.find((h) => h.id === 'void');
 
+/**
+ * How long one fall stays one fall. See Room.recoverFromVoid.
+ *
+ * It only has to outlast a round trip, because a client that got its rescue
+ * reports itself above the plane and clears the latch outright — this is what
+ * happens when it did NOT get it. A second is far longer than any playable ping
+ * and short enough that a genuinely stranded client is retried while they are
+ * still wondering what happened rather than after they have given up.
+ */
+const VOID_RESCUE_COOLDOWN_MS = 1000;
+
 const PORT = Number(process.env.PORT || 8787);
 
 /**
@@ -191,6 +202,15 @@ class Player {
     this.shotBudget = new Map();
     /** Spawn point held from death until respawn. See Room.reserveSpawn. */
     this.reservedSpawn = null;
+    /**
+     * When we last pulled this player out of the void. See Room.recoverFromVoid.
+     *
+     * A fall is ONE event, but the client reports it about sixty times a second
+     * for a whole round trip before it can possibly know we have moved it.
+     * Without this, every one of those reports was a fresh rescue to a fresh
+     * random spawn point.
+     */
+    this.voidRescuedAt = 0;
     /** Pickup claim timestamps, one per pool. See handleHeal. */
     this.lastHealAt = 0;
     this.lastArmorAt = 0;
@@ -310,6 +330,36 @@ class Room {
    * is the only part the player actually cares about.
    */
   recoverFromVoid(player) {
+    /*
+     * ONE FALL IS ONE RESCUE. This guard is the whole of that.
+     *
+     * A fall is a single event to the player and a stream of events to us: the
+     * client reports its position about sixty times a second, and for one full
+     * round trip after it goes under the plane every one of those reports is
+     * still the old falling position, because the message that moves it has
+     * not arrived yet. Each was treated as a brand new fall — so a single step
+     * off the edge of OUTPOST ran this five to fifteen times, and `spawn`
+     * picks the point furthest from the living each time it is asked, which
+     * with nobody else in the room means a different one almost every time.
+     *
+     * The player saw exactly what that is: put back on a spawn, then flung
+     * across the map, then another, then finally still. It reads as "I am back,
+     * no I am somewhere else, now I am back again", and it lasts as long as the
+     * round trip does — a fifth of a second on a LAN and about a second on a
+     * hosted server, which is where it was reported from.
+     *
+     * Worse in a live match, where it is not only cosmetic: the rescue that
+     * finds a LIVE player takes a life. Alternating spawn and kill down this
+     * path charged several deaths for one fall.
+     *
+     * Cleared the instant the client reports itself above the plane — see
+     * `handleInput` — so a second genuine fall is answered immediately and this
+     * timeout is only ever the backstop for a client whose rescue went missing.
+     */
+    const now = Date.now();
+    if (now - player.voidRescuedAt < VOID_RESCUE_COOLDOWN_MS) return;
+    player.voidRescuedAt = now;
+
     /*
      * Take the life ONLY if there is a running match to take it in, and only
      * if it actually killed them — then stop, because the ordinary respawn
@@ -1136,6 +1186,21 @@ function handleInput(player, msg) {
     room.recoverFromVoid(player);
     return;
   }
+
+  /*
+   * ABOVE THE PLANE: the fall is over, so the next one is a new event.
+   *
+   * This is the fast half of the one-fall-one-rescue rule in
+   * `Room.recoverFromVoid` — a client that is telling us it is back in the
+   * world has plainly received its rescue, and there is nothing left to
+   * suppress. Without it the cooldown would also be a dead time in which a
+   * player who fell, landed and immediately fell again went unrescued.
+   *
+   * Deliberately BEFORE the two rejections below rather than down with the
+   * accepted input: being above the plane ends the fall whether or not the
+   * position turns out to be otherwise legal.
+   */
+  player.voidRescuedAt = 0;
 
   /*
    * OUTSIDE THE ARENA IS A RESCUE, NOT A REJECTION.
