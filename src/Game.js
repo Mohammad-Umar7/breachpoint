@@ -1024,15 +1024,27 @@ export class Game {
   _updateMenuCamera(dt) {
     this._menuTime += dt;
     const t = this._menuTime * 0.055;
-    const radius = 30 + Math.sin(this._menuTime * 0.08) * 5;
-    const height = 8.5 + Math.sin(this._menuTime * 0.11) * 2.2;
+    /*
+     * Sized to the map on screen, not to the warehouse. See `Level.menuOrbit`
+     * — the three numbers that used to be here were measured against one map
+     * and left the camera in the void beside the other two.
+     */
+    const shot = this.level?.menuOrbit ?? { radius: 30, height: 8.5, target: { x: 0, y: 2.6, z: 0 } };
+    const radius = shot.radius * (1 + Math.sin(this._menuTime * 0.08) * 0.09);
+    const height = shot.height * (1 + Math.sin(this._menuTime * 0.11) * 0.12);
 
     this.camera.position.set(
       Math.sin(t) * radius,
       height,
-      Math.cos(t) * radius - 4
+      Math.cos(t) * radius
     );
-    this._tmpA.set(Math.sin(t * 1.4) * 3, 2.6, -6);
+    // Drift the aim across the middle of the map rather than a fixed point six
+    // metres behind it, which on a small map was behind the camera entirely.
+    this._tmpA.set(
+      shot.target.x + Math.sin(t * 1.4) * (shot.radius * 0.08),
+      shot.target.y,
+      shot.target.z,
+    );
     this.camera.lookAt(this._tmpA);
 
     const targetFov = this.settings.get('fov') - 12;

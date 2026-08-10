@@ -495,6 +495,82 @@ for (const map of MAPS) {
       : `${boxes.length} boxes, no material seam within ${FACE_EPS * 1000} mm`);
 }
 
+/*
+ * THE MAIN MENU'S CRANE SHOT HAS TO WORK ON THE MAP IT IS SHOWING.
+ *
+ * Its radius, height and aim point were three constants in
+ * `Game._updateMenuCamera`, measured against the warehouse and inherited by
+ * every map added afterwards. On OUTPOST — whose floor slab stops exactly
+ * where that radius put the camera — the shot hung in the void off the edge of
+ * the world, looking back at the outside of the compound wall. The first thing
+ * a player saw on launch was a screen of darkness behind the menu.
+ *
+ * `Level.menuOrbit` measures the map instead, so this flies the whole
+ * revolution and asserts the camera never ends up somewhere it cannot see
+ * from. It is cheap, and it is the only thing standing between a fourth map
+ * and the same bug.
+ */
+console.log('\n--- the menu camera can see each map ---');
+{
+  const insideBox = (b, x, y, z, pad) => {
+    let dx = x - b.x, dz = z - b.z;
+    if (b.rotY) {
+      const c = Math.cos(-b.rotY), s = Math.sin(-b.rotY);
+      [dx, dz] = [dx * c - dz * s, dx * s + dz * c];
+    }
+    return Math.abs(dx) <= b.hx + pad
+        && Math.abs(y - b.y) <= b.hy + pad
+        && Math.abs(dz) <= b.hz + pad;
+  };
+
+  for (const map of MAPS) {
+    const { level, boxes } = buildMap(map);
+    const shot = level.menuOrbit;
+    const solids = boxes.filter((b) => b.solid);
+    const arena = arenaFor(map.id);
+
+    // The map's own extent, which is what the camera has to stay outside of
+    // and what "absurdly far away" is measured against.
+    let footprint = 0;
+    for (const b of solids) {
+      footprint = Math.max(footprint, Math.abs(b.x) + b.hx, Math.abs(b.z) + b.hz);
+    }
+
+    const SAMPLES = 240;
+    let buried = 0, tooLow = 0, tooFar = 0, firstFault = null;
+    for (let i = 0; i < SAMPLES; i++) {
+      // The orbit exactly as Game._updateMenuCamera flies it, one revolution.
+      const menuTime = (i / SAMPLES) * (Math.PI * 2) / 0.055;
+      const t = menuTime * 0.055;
+      const radius = shot.radius * (1 + Math.sin(menuTime * 0.08) * 0.09);
+      const height = shot.height * (1 + Math.sin(menuTime * 0.11) * 0.12);
+      const x = Math.sin(t) * radius, y = height, z = Math.cos(t) * radius;
+
+      const hit = solids.find((b) => insideBox(b, x, y, z, 0.5));
+      if (hit) { buried++; firstFault ??= `inside ${hit.mat}`; }
+      if (y < arena.spawnY + 2) { tooLow++; firstFault ??= `${y.toFixed(1)} m up`; }
+      // A camera is not a player, so leaving the PLAY area is fine — drifting
+      // off into empty space is not.
+      if (Math.hypot(x, z) > footprint * 2.2) {
+        tooFar++; firstFault ??= `${Math.hypot(x, z).toFixed(0)} m out`;
+      }
+    }
+
+    check(`${map.name}'s menu shot never flies into the map or off it`,
+      buried === 0 && tooLow === 0 && tooFar === 0,
+      buried + tooLow + tooFar === 0
+        ? `radius ${shot.radius.toFixed(0)} m, ${shot.height.toFixed(0)} m up, `
+          + `${SAMPLES} samples clear of a ${footprint.toFixed(0)} m map`
+        : `${buried} buried, ${tooLow} too low, ${tooFar} too far — ${firstFault}`);
+
+    // Framing: it has to be outside what it is looking at, or it is inside a
+    // building looking at a wall.
+    check(`${map.name}'s menu shot stands off the map rather than inside it`,
+      shot.radius > footprint,
+      `orbit ${shot.radius.toFixed(0)} m vs ${footprint.toFixed(0)} m of map`);
+  }
+}
+
 console.log('\n--- the maps are actually different ---');
 {
   const wh = getMap('warehouse');
