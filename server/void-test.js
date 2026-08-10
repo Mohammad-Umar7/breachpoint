@@ -44,22 +44,23 @@ const check = (label, ok, detail = '') => {
   }
 };
 
-function join(name, room) {
+function join(name, room, mapId) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(URL);
-    const s = { ws, id: null, at: null, seq: 0, moves: 0 };
+    const s = { ws, id: null, at: null, seq: 0, moves: 0, placedAt: [] };
     ws.on('message', (raw) => {
       let m; try { m = JSON.parse(raw); } catch { return; }
       if (m.t === MSG.WELCOME) { s.id = m.id; s.at = m.sp; resolve(s); }
       // Where the server says we are. This is the ONLY thing that moves a
       // client, and one whole version of the bug was it never arriving.
-      else if (m.t === MSG.MATCH && Array.isArray(m.sp)) { s.at = m.sp; s.moves++; }
-      else if (m.t === MSG.DENIED) reject(new Error(m.why || 'denied'));
+      else if (m.t === MSG.MATCH && Array.isArray(m.sp)) {
+        s.at = m.sp; s.moves++; s.placedAt.push(m.sp.join(','));
+      } else if (m.t === MSG.DENIED) reject(new Error(m.why || 'denied'));
     });
     ws.on('error', reject);
     ws.on('close', () => reject(new Error('closed before WELCOME')));
     ws.on('open', () => ws.send(JSON.stringify({
-      t: MSG.JOIN, v: PROTOCOL_VERSION, n: name, r: room,
+      t: MSG.JOIN, v: PROTOCOL_VERSION, n: name, r: room, m: mapId,
     })));
   });
 }
@@ -181,6 +182,74 @@ async function main() {
     `${f.moves - movesBefore} rescues, ended at ${f.at.map((v) => v.toFixed(1)).join(', ')}`
     + ` (froze at ${frozenY.toFixed(1)}; the old plane was ${arena.bounds.minY})`);
 
+  /*
+   * ONE FALL IS ONE RESCUE — the flicker, and the only check here that fails
+   * loudly against the server as it was.
+   *
+   * Everything above asks "does a fall end on a spawn point?", and the answer
+   * was always yes. It was yes SIX TIMES, at six different spawn points, and
+   * that is what the player actually saw: back on a spawn, flung across the
+   * map, another, another, then finally still.
+   *
+   * The cause is that a fall is one event to a player and a stream of them to
+   * the server. A client reports its position sixty times a second, and for a
+   * whole round trip after it goes under the plane every one of those reports
+   * is still the old falling position — the message that moves it has not
+   * arrived yet. Each was read as a brand new fall, and `spawn` picks the point
+   * furthest from the living every time it is asked, which alone in a room
+   * means a different one almost every time.
+   *
+   * So this republishes ONE frozen position, as a real client whose rescue is
+   * still in flight does, and counts placements rather than looking at where it
+   * ended up. On OUTPOST, because that is where it was reported.
+   */
+  const g = await join('STORM', 'VDSTM', 'outpost');
+  await sleep(600);
+  const outpost = arenaFor('outpost');
+  const onAnOutpostSpawn = ([x, , z]) =>
+    outpost.spawnPoints.some(([px, pz]) => Math.hypot(px - x, pz - z) < 0.01);
+  const [gx, , gz] = g.at;
+  const under = outpost.bounds.minY + 1.7;    // frozen, under the rescue plane
+
+  const before = g.moves;
+  for (let i = 0; i < 12; i++) {
+    send(g, { t: MSG.INPUT, q: ++g.seq, p: [gx, under, gz], y: 0, a: 0, f: 0 });
+    await sleep(16);                           // a real client's input rate
+  }
+  await sleep(500);
+  const placements = g.moves - before;
+  const distinct = new Set(g.placedAt.slice(before)).size;
+  check('twelve reports of ONE fall produce ONE placement',
+    placements === 1,
+    `${placements} placement(s) at ${distinct} distinct point(s)`
+    + ` from 12 frozen reports — was one per report`);
+  check('and that one placement is still a spawn point',
+    onAnOutpostSpawn(g.at), `ended at ${g.at.map((v) => v.toFixed(1)).join(', ')}`);
+
+  /*
+   * ...AND THE NEXT FALL IS STILL ANSWERED, IMMEDIATELY.
+   *
+   * The suppression above is held by a one-second timeout, so the obvious way
+   * to break it is a player who falls, is put back, and walks straight off the
+   * edge again inside that second — which on a map you can cross in four is not
+   * an edge case. It is cleared outright the moment a client reports itself
+   * above the plane, and this is the check on that.
+   *
+   * HONEST LIMIT: this one passes against the old server too. It is not
+   * evidence of the bug, it is a guard on the fix, which is a different job.
+   */
+  const settled = g.at;
+  send(g, { t: MSG.INPUT, q: ++g.seq, p: settled, y: 0, a: 0, f: 0 });   // "I am back"
+  await sleep(60);
+  const beforeSecond = g.moves;
+  send(g, { t: MSG.INPUT, q: ++g.seq, p: [settled[0], under, settled[2]], y: 0, a: 0, f: 0 });
+  await sleep(500);
+  check('a second fall inside the cooldown is rescued, not swallowed',
+    g.moves > beforeSecond && onAnOutpostSpawn(g.at),
+    `${g.moves - beforeSecond} placement(s), ended at `
+    + `${g.at.map((v) => v.toFixed(1)).join(', ')}`);
+
+  g.ws.close();
   f.ws.close();
   a.ws.close();
   console.log(`\n${passed}/${passed + failed} passed`);
