@@ -504,6 +504,15 @@ h3 { font-size: 12px; letter-spacing: 3px; color: var(--accent); margin: 0 0 10p
   font-family: var(--font-mono); font-size: 11px; letter-spacing: 1px;
   color: var(--accent); opacity: 0.55; min-width: 20px;
 }
+
+/* The menu numbers COUNT WHAT IS ON SCREEN, rather than being written out.
+   CONTINUE is hidden until you have a match to go back to, so hardcoded
+   numbers left a hole in the list — every player launching the game read
+   01, 02, 03, 05, 06, 07, 08 and wondered what 04 was. A CSS counter skips
+   `display: none` for free, so the sequence closes up on its own. */
+#main-nav { counter-reset: navitem; }
+#main-nav .nav-btn { counter-increment: navitem; }
+#main-nav .nav-btn .k::before { content: counter(navitem, decimal-leading-zero); }
 .nav-btn:hover, .nav-btn:focus-visible {
   border-left-color: var(--accent);
   color: #fff; transform: translateX(6px); letter-spacing: 5px;

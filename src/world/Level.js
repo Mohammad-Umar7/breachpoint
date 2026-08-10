@@ -103,6 +103,61 @@ export class Level {
   /** Identifier of the map currently built, for anything that has to care. */
   get mapId() { return this.map.id; }
 
+  /**
+   * Where the main menu's crane shot should fly, MEASURED FROM THIS MAP.
+   *
+   * It used to be three constants sitting in `Game._updateMenuCamera` — radius
+   * 30, height 8.5, aimed at (0, 2.6, -6) — under a comment that said "orbiting
+   * the warehouse", which is precisely what they had been measured against. But
+   * the menu builds whichever map you last chose, so on the other two the
+   * camera just went somewhere else and stayed there:
+   *
+   *   warehouse  built to 36.8 — radius 30 orbits inside the yard. Correct.
+   *   outpost    built to 28.0, and its floor slab ENDS at 28 — so the camera
+   *              hung in the void off the edge of the map, looking back at the
+   *              outside of the compound wall. Almost entirely dark, which is
+   *              what was reported, and it is what every player sees at launch
+   *              if outpost is their saved map.
+   *   lodge      the whole house is only 26 x 20 — radius 30 put the camera
+   *              well outside the building AND outside the arena bounds.
+   *
+   * Measured rather than remembered, because a fourth map would have inherited
+   * the same three numbers and the same problem. `mapShapes` is the minimap's
+   * record of everything solid and knee-high or taller, which is exactly "the
+   * stuff a camera has to clear".
+   *
+   * The shot is deliberately OUTSIDE the footprint and ABOVE the tallest thing
+   * in it, looking down at the middle. That framing is the one that cannot be
+   * blocked — by a compound wall, a roof, or a stack of containers — and it is
+   * the one that shows the whole map rather than the nearest surface to it.
+   */
+  get menuOrbit() {
+    let reach = 0, top = 0;
+    for (const s of this.mapShapes) {
+      // Per AXIS, not on the diagonal. Measuring the bounding circle of every
+      // piece and of its distance from the origin compounds two over-estimates
+      // and pushed the orbit half again as far out as the map — far enough
+      // that the camera left the world on all three.
+      // A rotated piece is the one case that does need its circle, since its
+      // corners can swing past its own half-extents.
+      const half = s.rotY ? Math.hypot(s.hx, s.hz) : 0;
+      reach = Math.max(
+        reach,
+        Math.abs(s.x) + (half || s.hx),
+        Math.abs(s.z) + (half || s.hz),
+      );
+      top = Math.max(top, s.y + s.height / 2);
+    }
+    // A bare map (nothing built yet) would otherwise put the camera at the
+    // origin, inside the player's own head.
+    if (reach < 1) reach = 30;
+    return {
+      radius: reach * 1.18,
+      height: top + reach * 0.30,
+      target: { x: 0, y: top * 0.35, z: 0 },
+    };
+  }
+
   // ==================================================================== build
   build() {
     this._buildSkyAndLights(this.map.env);
