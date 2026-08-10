@@ -654,6 +654,11 @@ export class NetworkClient {
     const now = performance.now();
     this._syncClock(msg.ts, now);
     this._updateInterpDelay(now);
+    // The match clock. It arrives here rather than only on MSG.MATCH because
+    // this is the message that actually repeats — see the note on the server's
+    // snapshot. Guarded so a server that predates the field leaves the last
+    // known value alone instead of blanking the HUD to undefined.
+    if (typeof msg.tl === 'number') this.match.timeLeft = msg.tl;
 
     const players = new Map();
     for (const row of msg.p ?? []) {

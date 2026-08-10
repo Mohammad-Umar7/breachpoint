@@ -134,7 +134,21 @@ function buildShell(level) {
     level._box('brassTrim', [cx, (CEIL + 0.5 + 1.1) / 2, HZ],
       [0.16, CEIL + 0.5 - 1.1, 0.34], { tile: 1 });
   }
-  const PIER = [[-11.2, 1.6], [-4.35, 2.9], [4.35, 2.9], [11.2, 1.6]];
+  /*
+   * These MUST reach the glass, and for a long time they did not.
+   *
+   * The comment above promises each opening runs 0.1 m into its piers. The
+   * numbers did the opposite: glass spanned to ±10.2 and ±2.7 while the piers
+   * started at ±10.4 and ±2.9, leaving four 0.2 m slots of nothing at
+   * x ≈ ±2.8 and ±10.3 — open from the sill at 1.1 all the way to the ceiling
+   * at 7.2. You could see the sky through them from the hall, and a bullet
+   * fired into one left the house without leaving a mark.
+   *
+   * Each pier now overlaps its glass by the intended 0.1 m on every edge, and
+   * the faces stay 0.23 m clear of the glass faces — well past the coincident
+   * -face threshold `test/maps.mjs` enforces, so no new shimmer.
+   */
+  const PIER = [[-11.05, 1.9], [-3.95, 2.7], [3.95, 2.7], [11.05, 1.9]];
   for (const [cx, w] of PIER) {
     level._box('plasterCream', [cx, (H + 1.1) / 2, HZ], [w, H - 1.1, WALL_T * 2], { tile: 3 });
   }

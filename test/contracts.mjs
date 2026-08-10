@@ -365,6 +365,48 @@ check('every FLAG bit referenced is declared in protocol.js',
   undeclaredFlags.length === 0,
   undeclaredFlags.join(', ') || `${flagUses.size} bits referenced`);
 
+const remotePlayersSrc = read('src/net/RemotePlayers.js');
+const gameSrcForFlags = read('src/Game.js');
+
+/*
+ * A BIT THAT IS READ MUST BE A BIT THAT IS SENT.
+ *
+ * The check above proves both sides agree the bit EXISTS. It says nothing
+ * about whether anybody ever sets it, and that gap hid a whole feature for the
+ * life of the project: `FLAG.RELOADING` was read by RemoteAudio, relayed by
+ * the server, declared in the protocol and covered by a passing test — and
+ * never once written by `_playerFlags`, which is the only producer there is.
+ * No human player has ever heard another one reload. Nothing failed, because
+ * a bit that is never set simply means the branch never runs.
+ *
+ * `scripts/bot.mjs` DOES set it, which is what made the feature look alive
+ * whenever anybody went looking.
+ *
+ * So: every bit the remote-body code consumes has to be one the local player
+ * actually sends. Server-authored bits are the documented exception — they are
+ * added on the way through and a client must not be able to claim them.
+ */
+const SERVER_AUTHORED_FLAGS = new Set([
+  'PROTECTED',   // invulnerability is the server's to grant, never claimed
+  'DEAD',        // sent by us too, but the server's copy is the authority
+]);
+const remoteAudioSrc = read('src/net/RemoteAudio.js');
+const playerFlagsBody = gameSrcForFlags.match(/_playerFlags\(\)\s*\{([\s\S]*?)\n {2}\}/)?.[1] ?? '';
+check('the _playerFlags body can actually be parsed', playerFlagsBody.length > 0,
+  `${playerFlagsBody.split('\n').length} lines`);
+
+const bitsRead = new Set([
+  ...[...remotePlayersSrc.matchAll(/FLAG\.([A-Z_]+)/g)].map((m) => m[1]),
+  ...[...remoteAudioSrc.matchAll(/FLAG\.([A-Z_]+)/g)].map((m) => m[1]),
+]);
+const neverSent = [...bitsRead]
+  .filter((f) => !SERVER_AUTHORED_FLAGS.has(f))
+  .filter((f) => !playerFlagsBody.includes(`FLAG.${f}`));
+check('every flag bit the remote bodies read is one _playerFlags sends',
+  neverSent.length === 0,
+  neverSent.length ? `read but never sent: ${neverSent.join(', ')}`
+                   : `${bitsRead.size} bits read, all accounted for`);
+
 /*
  * Spawn protection has to be sent AND drawn.
  *
@@ -373,8 +415,6 @@ check('every FLAG bit referenced is declared in protocol.js',
  * exact confusion has shipped here twice already, with armour and with the
  * barrel, so the visible half is a requirement rather than a nicety.
  */
-const remotePlayersSrc = read('src/net/RemotePlayers.js');
-const gameSrcForFlags = read('src/Game.js');
 const protectedIn = {
   'server sends': /FLAG\.PROTECTED/.test(serverSrc),
   'bodies draw': /FLAG\.PROTECTED/.test(remotePlayersSrc),
@@ -395,7 +435,7 @@ check('spawn protection is sent by the server, drawn on bodies, and shown on the
  * `phase` in the animation code would silence every player in the game and
  * break nothing that any other test looks at.
  */
-const remoteAudioSrc = read('src/net/RemoteAudio.js');
+// `remoteAudioSrc` is already read above, for the flag-bit check.
 const audioReadsFields = [...new Set(
   [...remoteAudioSrc.matchAll(/\bbody\.([a-zA-Z][a-zA-Z0-9]*)/g)].map((m) => m[1]),
 )];

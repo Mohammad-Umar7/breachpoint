@@ -215,13 +215,17 @@ export function wireNetwork(game) {
     } else {
       game.remotes.flash(h.victim);
     }
-    // showHitmarker(kill, headshot) — the headshot flag has to go in the
-    // SECOND slot. Passing it first drew every headshot as a kill marker and
-    // meant the headshot marker never appeared at all.
+    /*
+     * The NUMBER only. The marker is drawn locally the instant the shot lands
+     * — see `weapons.onHit` in Game.js — and drawing it again here made every
+     * hit flash twice, a round trip apart.
+     *
+     * The number is the other way round: this is the only side that applies
+     * the part multiplier, so the figure here is the true one. It floats off
+     * the body you hit, so you can read exactly what landed mid-fight instead
+     * of guessing from a health bar.
+     */
     if (h.isSelfAttacker) {
-      game.ui.showHitmarker(false, h.part === 'head');
-      // The number floats off the body you hit, so you can read exactly what
-      // landed mid-fight instead of guessing from a health bar.
       game._showDamageNumberAt(h.victim, h.damage, { headshot: h.part === 'head' });
     }
   };

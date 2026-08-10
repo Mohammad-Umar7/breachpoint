@@ -540,10 +540,22 @@ export class Player {
     }
   }
 
-  /** Is there room to stand up? */
+  /**
+   * Is there room to stand up?
+   *
+   * The doubling is not a fudge factor. Standing keeps the FEET planted, so
+   * the capsule centre rises by `HALF_STAND - halfHeight` at the same time as
+   * the top rises by that much again relative to the centre — the new top ends
+   * up TWICE that far above where the ray starts. Counting it once meant the
+   * probe fell 0.26 m short from a full crouch, so a player crouched under the
+   * warehouse catwalk ramp stood straight up into it: head and shoulders
+   * buried in the slab on everyone else's screen, and in the last few
+   * centimetres of the band the camera itself ended up inside the metal,
+   * looking out through the ramp at the sky.
+   */
   _hasHeadroom() {
     this._tmp.copy(this.position);
-    const needed = (HALF_STAND - this.halfHeight) + 0.12;
+    const needed = 2 * (HALF_STAND - this.halfHeight) + 0.12;
     const hit = this.physics.raycast(this._tmp, this._up, this.halfHeight + RADIUS + needed, {
       excludeCollider: this.collider,
       filter: (tag) => !!tag && tag.kind !== TAG_KIND.PLAYER,
@@ -584,7 +596,20 @@ export class Player {
       adsProgress: this.adsProgress,
       scopeProgress: this.scopeProgress,
       baseFov: this.settings.get('fov'),
-      currentFov: this.camera.fov,
+      /*
+       * The INTENDED aim FOV, not the one the camera settled on.
+       *
+       * `camera.fov` is clamped to a floor of 20 degrees below, which exists
+       * to protect the projection and is not negotiable — but feeding the
+       * clamped value to the sensitivity meant every optic tighter than 20
+       * degrees compensated as though it were exactly 20. The AWM's 9x asks
+       * for 11.6 and got 20, so it turned at almost exactly the same speed as
+       * its own 5x while looking twice as magnified, and the Settings readout
+       * advertised a number the game never delivered. Lower the FOV slider and
+       * it got worse: at 60 the 3.5x, 5x and 9x optics all compensated
+       * identically, so magnification stopped changing the feel at all.
+       */
+      currentFov: this.settings.get('fov') + this.extraFov,
       extraScale: this.weaponSensMul ?? 1,
     });
 

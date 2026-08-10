@@ -520,6 +520,18 @@ class Room {
       this.teamScores[TEAM.RED] = 0;
       this.teamScores[TEAM.BLUE] = 0;
       this.resetFlags();
+      /*
+       * AND TELL THEM, which `restartMatch` remembers to do and this did not.
+       *
+       * `resetFlags` puts both flags back on their stands server-side, but a
+       * MATCH message carries no flag state — MSG.FLAG is the only thing that
+       * moves a flag on a client. So a player who picked the enemy flag up
+       * during warmup kept carrying a phantom when the match started: the HUD
+       * held CARRYING, the flag still rode their back on everyone else's
+       * screen, and running it home scored nothing, because the server had
+       * long since put it back.
+       */
+      this.broadcastFlags();
       this.broadcast(MSG.MATCH, this.matchPayload());
     } else if (this.state === MATCH_STATE.LIVE && !live) {
       this.state = MATCH_STATE.WARMUP;
@@ -813,11 +825,36 @@ class Room {
         if (!p.alive || p.team === TEAM.NONE) continue;
         if (!near(p, flag)) continue;
 
+        /*
+         * BREAK ONLY WHEN THE FLAG ACTUALLY MOVED.
+         *
+         * This used to break unconditionally at the end of the loop, on the
+         * first player merely STANDING near the flag — so one defender parked
+         * on their own flag ate the whole tick and nobody else in the radius
+         * was even looked at. An attacker could stand on the enemy flag
+         * indefinitely and never pick it up; the only cure was killing the
+         * camper, because `!p.alive` skips them before the break.
+         *
+         * It also broke the documented `F` pass outright. The dropper is
+         * skipped by their own two-second lockout below, and the break then
+         * discarded the teammate standing right there — so the flag sat until
+         * the lockout expired and the dropper, being earlier in the Map,
+         * simply took it back. README's "anyone else can take it the same
+         * instant, which is what makes it a pass rather than a fumble" could
+         * not happen.
+         *
+         * Still at most one player per flag per tick — the break lives inside
+         * both acting branches now, so two enemies cannot take the same flag
+         * on the same tick. Deleting it outright would allow exactly that.
+         */
         if (p.team === flag.team) {
           // Your own flag. On the ground it is RETURNED by touching it; on its
           // stand there is nothing to do, which is what stops a defender
           // picking up their own flag and walking off with it.
-          if (flag.state === FLAG_STATE.DROPPED) this.sendFlagHome(flag, p.id);
+          if (flag.state === FLAG_STATE.DROPPED) {
+            this.sendFlagHome(flag, p.id);
+            break;
+          }
         } else if (!this.carriedBy(p)
           && !(p.id === flag.noPickupBy && now < flag.noPickupUntil)) {
           // The enemy takes it, from the stand or off the ground. One flag per
@@ -829,8 +866,8 @@ class Room {
           flag.noPickupBy = 0;
           flag.noPickupUntil = 0;
           this.broadcastFlags(FLAG_EVENT.TAKEN, p.id, flag.team);
+          break;
         }
-        break;
       }
     }
 
@@ -973,6 +1010,23 @@ class Room {
     // times a second per player.
     this.broadcast(MSG.SNAPSHOT, {
       ts: now,
+      /*
+       * THE MATCH CLOCK RIDES HERE, because this is the only message that goes
+       * out on its own schedule.
+       *
+       * `tl` otherwise exists solely on MSG.MATCH, which is sent on state
+       * changes and on spawn — so the HUD's TIME panel was written once when
+       * the match went live and then never again. It read 10:00 for ten
+       * minutes, lurching forward only when you happened to respawn, and the
+       * match ended with no countdown and no 0:00.
+       *
+       * Deliberately NOT a periodic MSG.MATCH rebroadcast: `onMatch` is an
+       * edge handler on the client and re-fires the "X WINS" banner and the
+       * whole scoreboard every time it lands.
+       */
+      tl: this.state === MATCH_STATE.LIVE
+        ? Math.max(0, Math.ceil((this.endsAt - now) / 1000))
+        : MATCH_RULES.timeLimitSec,
       p: [...this.players.values()].map((p) => [
         p.id, r2(p.x), r2(p.y), r2(p.z), r3(p.yaw), r3(p.pitch),
         p.flags

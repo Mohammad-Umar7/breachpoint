@@ -191,8 +191,6 @@ export class RemotePlayers {
 
       body.group.position.set(s.x, s.y - body.footOffset, s.z);
       body.group.rotation.y = s.yaw;
-      // Head follows aim, clamped so a straight-up look does not snap the neck.
-      body.head.rotation.x = THREE.MathUtils.clamp(-s.pitch, -0.7, 0.7);
       /*
        * In a team mode, a body wears its TEAM's colour rather than its own.
        *
@@ -229,6 +227,25 @@ export class RemotePlayers {
 
       this._setWeapon(body, s.weapon);
       this._animate(body, s, dt);
+      /*
+       * The head carries the aim the CHEST HAS NOT ALREADY TAKEN.
+       *
+       * It is parented to the chest, so what you see is the sum of the two —
+       * and this used to be set to `-s.pitch`, which fought the chest instead
+       * of completing it. Net world pitch came out negative: a player on a
+       * catwalk aiming down at you had their helmet tilted back at the sky
+       * while their rifle pointed at your feet. It read as a broken neck
+       * rather than as aiming.
+       *
+       * Set AFTER `_animate`, never before, because `_animate` is what writes
+       * `chest.rotation.x` — reading it earlier would subtract last frame's
+       * chest and reintroduce a smaller version of the same error. The
+       * subtraction also cancels the run lean the chest carries, which is
+       * correct: the head stays pointed at the aim while the torso leans.
+       */
+      if (body.head && body.chest) {
+        body.head.rotation.x = THREE.MathUtils.clamp(s.pitch - body.chest.rotation.x, -0.7, 0.7);
+      }
       this._updateTag(body, s, roster.get(id));
 
       // Measured once and shared: both the culling and the audio want it, and

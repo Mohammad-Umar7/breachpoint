@@ -104,7 +104,7 @@ export const MSG = Object.freeze({
   // `{ t: type, ...payload }`, so a payload field called `t` silently
   // overwrites the message type and every snapshot goes out unlabelled —
   // which is exactly what happened, and it looked like the tick was dead.
-  SNAPSHOT: 'S',  // { ts, p: [[id, x,y,z, yaw, pitch, flags, weapon, hp]] }
+  SNAPSHOT: 'S',  // { ts, tl: secondsLeft, p: [[id, x,y,z, yaw, pitch, flags, weapon, hp]] }
   JOINED: 'J',    // { p: playerSummary }
   LEFT: 'L',      // { id }
   HIT: 'H',       // { v: victimId, a: attackerId, d: damage, pt: part, hp, ar: armour }
