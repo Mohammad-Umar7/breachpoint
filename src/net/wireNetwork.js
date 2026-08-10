@@ -87,8 +87,15 @@ export function wireNetwork(game) {
   };
 
   /*
-   * What the LOCAL player believes about its own aliveness, which the roster
-   * cannot know until a snapshot round-trips. See NetworkClient's MSG.MATCH.
+   * LEGACY FALLBACK ONLY. Do not build anything new on this.
+   *
+   * It answers "does the local player believe it is dead?", which the roster
+   * cannot know until a snapshot round-trips. NetworkClient used it to decide
+   * whether a MATCH carrying a position was a respawn or an anti-cheat
+   * correction — and got it wrong every time we had killed ourselves, which is
+   * every fall out of the world. The server now labels the message (`spk`,
+   * see SP_KIND); this only still exists so a client that reaches a browser
+   * before the server restarts behaves no worse than it did before.
    */
   net.isSelfDead = () => !game.player.alive;
 
@@ -133,16 +140,27 @@ export function wireNetwork(game) {
     game.player.velocity.set(0, 0, 0);
   };
 
+  /*
+   * THE SERVER HAS SPAWNED US. Everything about the player goes through the
+   * one revive; everything here is HUD and housekeeping.
+   *
+   * This handler used to set `alive`, `health` and the position by hand. That
+   * is three of the nineteen fields a revive touches, and the sixteen it
+   * missed included `fellOutOfWorld` — which Game's void guard then read on
+   * the next frame and used to kill the player again, on the spawn, for good.
+   * See `Player.revive`: nothing outside it may write `alive = true`.
+   */
   net.onRespawn = (pos) => {
+    game._pendingSpawn = pos;
+    game._revivePlayer(pos);
+
     game._respawnShown = false;
     game.viewModel.holder.visible = true;      // gun back in hand
-    game._pendingSpawn = pos;
-    game._placePlayer(pos);
-    game.player.velocity.set(0, 0, 0);
-    game.player.health = game.player.maxHealth;
-    game.player.alive = true;
     game.ui.hideRespawn?.();
     game._respawnAt = 0;
+    // Cleared so the next fall's first ask goes out immediately instead of
+    // waiting out a throttle window inherited from this one.
+    game._respawnAskedAt = 0;
     game.input.requestPointerLock?.();
   };
 

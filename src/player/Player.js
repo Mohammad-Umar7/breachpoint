@@ -89,24 +89,29 @@ export class Player {
     this.jumpBuffer = 0;
     this.fallSpeed = 0;
     /*
-     * Where the world ends for the CURRENT map, and where to put someone who
-     * leaves it. Both set by Game when a level is built — this class has no
-     * idea which map it is standing on, and the pair of hardcoded constants
-     * that used to live at the bottom of `fixedUpdate` were both wrong for
-     * every map except the warehouse they were written for.
+     * Where the world ends for the CURRENT map. Set by Game when a level is
+     * built — this class has no idea which map it is standing on, and the
+     * hardcoded constant that used to live at the bottom of `fixedUpdate` was
+     * wrong for every map except the warehouse it was written for.
+     *
+     * There is deliberately no companion "where to put them" here any more.
+     * This class does not place the player; see the void net in `fixedUpdate`.
      */
     this.voidY = -12;
-    this.voidRespawn = null;
     /*
-     * Latched when this player leaves the world, cleared by `spawn`.
+     * Latched when this player leaves the world, cleared by `revive`.
      *
-     * A FLAG rather than a position test, because the net below moves the
-     * player to the map's spawn straight away so offline play recovers. That
-     * move also means a position test in Game would find them safely back on
-     * the ground and never ask the server to rescue them — leaving the client
-     * dead at a spawn and the server convinced they are alive out in the void.
-     * That is the same deadlock this whole saga has been about, and latching
-     * the event instead of sampling the position is what avoids re-creating it.
+     * A FLAG rather than a position test, because the moment somebody puts us
+     * back a position test reads "safely on the ground" and stops asking — so
+     * a client that had killed itself would sit dead on a spawn point while
+     * the server happily believed it was alive out in the void, with nothing
+     * left in the system to break the tie. Latching the EVENT survives the
+     * placement; the position is only ever a backstop.
+     *
+     * It is a request, never a verdict: `Game._updateNetwork` may kill you for
+     * WHERE YOU ARE, and may only use this flag to keep asking to come back.
+     * Wiring it to the kill is what turned one stale flag into a player who
+     * could not move.
      */
     this.fellOutOfWorld = false;
     this.alive = true;
@@ -501,8 +506,10 @@ export class Player {
      * map like LODGE whose floor is at -8.
      *
      * No damage: falling out of the world is not an injury. No repetition:
-     * gated on `alive`, so it happens once. No guessed destination: the map
-     * supplies it, and online the server's rescue is what actually lands.
+     * gated on `alive`, so it happens once.
+     *
+     * AND NO DESTINATION. It raises the flag, stops the body, and that is the
+     * whole of it — see below.
      */
     if (this.alive && this.position.y < this.voidY) {
       this.fellOutOfWorld = true;
@@ -511,17 +518,24 @@ export class Player {
       this.velocity.set(0, 0, 0);
       this.fallSpeed = 0;
       /*
-       * AND IT DOES NOT MOVE ITSELF. It raises the flag and stops there.
+       * IT DOES NOT MOVE ITSELF, and that omission is the fix for the flicker.
        *
-       * Teleporting to the spawn from here is what produced the last visible
-       * glitch: base, then the air again, then base. The client jumped itself
-       * to the spawn, the server — which still had it falling — saw an
-       * impossible step, refused it, and snapped it back to the last position
-       * it HAD accepted, which was mid-air. Only then did the rescue land. One
-       * fall, three placements, two of them wrong.
+       * This used to teleport to `voidRespawn`. Online that is an unauthorised
+       * jump of at least nine metres — OUTPOST's slab edge is 28 out, its
+       * spawn is 19 out, and the server refuses any step over 8 — so the
+       * server rejected the very next input and snapped us back to the last
+       * position it HAD accepted: a point in open air beside the map. One
+       * fall, three placements, two of them wrong, which is exactly the
+       * "base, then the air again, then the base" that was reported.
        *
-       * Whoever owns the world decides where the player goes: the server when
-       * connected, `_rescueOffline` in Game when not. Exactly one placement.
+       * WHO PLACES A FALLEN PLAYER: the server while connected (its rescue
+       * plane sits 0.5 m ABOVE this one precisely so it sees us first), and
+       * `Game._rescueOffline` when there is no server. Never both, never here.
+       *
+       * Freezing is not a hedge, it is what makes the server's rescue work:
+       * `fixedUpdate` returns early while dead, so the body holds still below
+       * the rescue plane and every input from here on reports a position the
+       * server must act on. Before, we hopped back above it and it never knew.
        */
     }
   }

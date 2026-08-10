@@ -34,7 +34,7 @@ import {
   MSG, FLAG, TICK_MS, MATCH_STATE, MATCH_RULES, LIMITS, PLAYER_MAX_HEALTH,
   PLAYER_MAX_ARMOR, PLAYER_START_ARMOR, ARMOR_ABSORB,
   PROTOCOL_VERSION, ROOM_CODE_ALPHABET, ROOM_CODE_LENGTH,
-  MULTIKILL_WINDOW_MS, STREAK_ANNOUNCE_AT,
+  MULTIKILL_WINDOW_MS, STREAK_ANNOUNCE_AT, SP_KIND,
   isValidRoomCode, sanitizeName, damageFor,
 } from '../src/net/protocol.js';
 import {
@@ -528,7 +528,11 @@ class Room {
     player.lastInputAt = 0;
     player.moveBudget = LIMITS.moveBurstMetres;
     if (announce) {
-      player.send(MSG.MATCH, { ...this.matchPayload(), sp: [at.x, at.y, at.z] });
+      // TAGGED AS A SPAWN. The client mirrors everything set above — alive,
+      // full health, full armour, this position — in one revive. See SP_KIND.
+      player.send(MSG.MATCH, {
+        ...this.matchPayload(), sp: [at.x, at.y, at.z], spk: SP_KIND.SPAWN,
+      });
     }
   }
 
@@ -1059,8 +1063,20 @@ function handleInput(player, msg) {
    * authoritative snap-back costs a single message and resynchronises them.
    */
   const reject = () => {
+    /*
+     * TAGGED AS A CORRECTION, which is not a formality.
+     *
+     * This message and the one `spawn` sends are the same shape, and the
+     * client used to tell them apart by asking itself whether it thought it
+     * was dead. Falling out of the world makes that true, so a refusal sent
+     * to a falling player was read as "you have respawned" and stood them up,
+     * alive, at `[player.x, player.y, player.z]` — the last position we
+     * accepted, which out here is a point in open air beside the map.
+     */
     player.send(MSG.MATCH, {
-      ...room.matchPayload(), sp: [player.x, player.y, player.z],
+      ...room.matchPayload(),
+      sp: [player.x, player.y, player.z],
+      spk: SP_KIND.CORRECTION,
     });
   };
 
@@ -1104,6 +1120,19 @@ function handleInput(player, msg) {
      * the moment they die, and the ONE message that should move them is the
      * real respawn — from their own request, or from the backstop in `tick`.
      */
+    /*
+     * RECORD IT FIRST, or the two backstops below are dead code.
+     *
+     * `tick`'s sweep and the MSG.RESPAWN fallback both ask `player.y <
+     * voidRescueY`, and the only writers of `player.y` are `spawn` and the
+     * accepted-input line at the bottom of this function — which this `return`
+     * skips. So the server's stored y could never be under the rescue plane,
+     * and neither backstop could ever fire. They looked like belt and braces
+     * and were painted on. Storing the reported position makes them real for
+     * the client this bug actually produces: one that has gone quiet down
+     * there and is not going to ask again.
+     */
+    player.x = x; player.y = y; player.z = z;
     room.recoverFromVoid(player);
     return;
   }

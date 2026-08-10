@@ -29,7 +29,7 @@
 
 import {
   MSG, FLAG, PROTOCOL_VERSION, INTERP_DELAY_MS, INPUT_HZ,
-  MATCH_STATE, sanitizeName,
+  MATCH_STATE, SP_KIND, PLAYER_MAX_HEALTH, sanitizeName,
 } from './protocol.js';
 import { DEFAULT_MAP_ID, isValidMapId } from './arena.js';
 import {
@@ -70,11 +70,15 @@ export class NetworkClient {
      * one variable is what makes deployment need no manual wiring at all.
      */
     const env = (typeof import.meta !== 'undefined' && import.meta.env) || {};
-    const secure = location.protocol === 'https:';
+    // `globalThis.location`, not `location`: read bare and unconditionally,
+    // this threw in node and made the whole class impossible to unit test —
+    // including the spawn/correction routing that caused the void flicker.
+    const loc = globalThis.location;
+    const secure = loc?.protocol === 'https:';
     this.url = url
       || env.VITE_SERVER_URL
       || (env.VITE_SERVER_HOST && `${secure ? 'wss' : 'ws'}://${env.VITE_SERVER_HOST}`)
-      || `${secure ? 'wss' : 'ws'}://${location.hostname}:8787`;
+      || `${secure ? 'wss' : 'ws'}://${loc?.hostname ?? 'localhost'}:8787`;
 
     /** Region actually chosen by pickRegion(), for the menu to display. */
     this.region = null;
@@ -580,22 +584,37 @@ export class NetworkClient {
         // A MATCH carrying `sp` is the server placing us: either our first
         // spawn, a respawn, or a correction after rejecting our position.
         if (Array.isArray(msg.sp)) {
-          const self = this.players.get(this.selfId);
           /*
-           * "Were we dead?" has to include what the LOCAL player thinks, not
-           * just the roster.
+           * WHICH KIND OF PLACEMENT IS THIS? THE SERVER SAYS. WE DO NOT GUESS.
            *
-           * The roster is server-authored and rewritten from each snapshot, so
-           * a death the client decided for itself — falling out of the world —
-           * does not appear in it until our own DEAD flag has made a full round
-           * trip. A rescue arriving before that read as a plain correction:
-           * the body was moved to the spawn and never brought back to life,
-           * leaving a corpse standing on a spawn point. Same bug, relocated.
+           * A spawn and an anti-cheat correction arrive as the same message
+           * shape and mean opposite things — see SP_KIND in protocol.js. This
+           * used to be inferred from "did we think we were dead?", and falling
+           * out of the world makes that true, so a refusal mid-fall was
+           * executed as a respawn: the player was stood up, ALIVE, at the last
+           * position the server had accepted, which is a point in open air off
+           * the side of the map. Then they fell again. That is the flicker.
+           *
+           * The fallback keeps the old inference for a client talking to a
+           * server that predates `spk`, so a half-rolled deployment is no
+           * worse than it is today rather than newly broken.
            */
-          const wasDead = (self && !self.alive) || this.isSelfDead?.() === true;
-          if (self) { self.alive = true; self.hp = 100; }
-          if (wasDead) { this.respawns++; this.onRespawn?.(msg.sp); }
-          else { this.corrections++; this.onCorrection?.(msg.sp); }
+          const self = this.players.get(this.selfId);
+          const kind = msg.spk ?? (
+            (self && !self.alive) || this.isSelfDead?.() === true
+              ? SP_KIND.SPAWN : SP_KIND.CORRECTION
+          );
+
+          if (kind === SP_KIND.SPAWN) {
+            if (self) { self.alive = true; self.hp = PLAYER_MAX_HEALTH; }
+            this.respawns++;
+            this.onRespawn?.(msg.sp);
+          } else {
+            // Deliberately does NOT mark the roster alive. A correction is
+            // about where you are, never about whether you are.
+            this.corrections++;
+            this.onCorrection?.(msg.sp);
+          }
         }
         this.onMatch?.(this.match);
         break;

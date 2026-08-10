@@ -1127,15 +1127,17 @@ export class Game {
     ensureThumbnail(this.renderer, this.scene, map);
 
     /*
-     * Tell the player where THIS map's world ends, and where to land if they
-     * leave it. Player.js cannot know either — it used to guess, with a -12
-     * and a warehouse coordinate baked in, and guessed wrong on every other
-     * map. Set here on every build so a map change cannot leave them stale.
+     * Tell the player where THIS map's world ends. Player.js cannot know — it
+     * used to guess with a -12 baked in and guessed wrong on every map but the
+     * warehouse it was written for. Set on every build so a map change cannot
+     * leave it stale.
+     *
+     * It is NOT told where to land any more. Knowing a destination is what
+     * tempted it into placing itself, and a client that places itself while
+     * connected gets its next input refused as a teleport — the mid-air frame
+     * in the flicker. Placement belongs to the server, or to `_rescueOffline`.
      */
-    if (this.player) {
-      this.player.voidY = voidDeathY(map.id);
-      this.player.voidRespawn = this.level.playerSpawn;
-    }
+    if (this.player) this.player.voidY = voidDeathY(map.id);
     this.player?.spawn(this.level.playerSpawn, this.level.playerSpawnYaw);
     return this.level;
   }
@@ -1306,39 +1308,46 @@ export class Game {
     wireNetwork(this);
   }
 
-  /** Put the local player exactly where the server says, physics included. */
+  /**
+   * MOVE the local player to where the server says, and change nothing else.
+   *
+   * This is the CORRECTION half of the pair. It does not touch aliveness,
+   * health or the void latch — a correction is the server saying "you are not
+   * where you claimed", which is true whether you are alive or dead and says
+   * nothing about either. Reviving is `_revivePlayer`, and the two are kept
+   * apart on purpose: conflating them is how an anti-cheat snap-back ended up
+   * standing a dead player up in mid-air.
+   */
   _placePlayer(pos) {
     this.player.position.set(pos[0], pos[1], pos[2]);
-    /*
-     * THE ONE PLACE THE VOID LATCH IS CLEARED, because this is the one place
-     * the server authoritatively says where we are — and wherever that is, it
-     * is in the world.
-     *
-     * The latch was cleared only in `Player.spawn()`, which a network respawn
-     * never calls: `wireNetwork.onRespawn` sets `alive = true` by hand. So
-     * after a rescue the latch was still set, Game's guard fired again on the
-     * very next frame and killed the player a second time — dead and frozen
-     * ON the spawn, asking to respawn at 4 Hz, getting rescued, getting killed
-     * again. That loop is both "stuck at the base" and the base/air/base
-     * flicker, and it was me.
-     *
-     * Clearing it HERE rather than in each handler is the point: correction,
-     * respawn and spawn-point all funnel through this function, so a future
-     * fourth path cannot forget. The position check in the guard remains as a
-     * backstop for a placement that somehow lands out of the world anyway.
-     */
-    this.player.fellOutOfWorld = false;
     this._syncPlayerBody();
+  }
+
+  /**
+   * The server has SPAWNED us. Mirror that exactly, through the one door.
+   *
+   * `Room.spawn` sets alive, full health, full armour and a spawn point on its
+   * side; `Player.revive` is the client's matching statement, and it is the
+   * only thing in the client allowed to say `alive = true`. Before this, the
+   * respawn handler set three of those fields inline and left `fellOutOfWorld`
+   * latched — so the guard below killed the player again one frame later and
+   * they could not move for the rest of the match.
+   */
+  _revivePlayer(pos) {
+    this._tmpA.set(pos[0], pos[1], pos[2]);
+    this.player.revive(this._tmpA);
   }
 
   /** Keep the physics body in step after the server moves us. */
   _syncPlayerBody() {
-    this.player.body?.setTranslation?.(
-      { x: this.player.position.x, y: this.player.position.y, z: this.player.position.z },
-      true,
-    );
-    this.player.prevPosition.copy(this.player.position);
-    this.player.renderPosition.copy(this.player.position);
+    const p = this.player.position;
+    this.player.body?.setTranslation?.({ x: p.x, y: p.y, z: p.z }, true);
+    // Retarget as well as move — see the note in `Player.revive`. A kinematic
+    // body that has been moved but not retargeted still owes the controller
+    // the destination it was last given.
+    this.player.body?.setNextKinematicTranslation?.({ x: p.x, y: p.y, z: p.z });
+    this.player.prevPosition.copy(p);
+    this.player.renderPosition.copy(p);
   }
 
   /** Pack the local player's animation state for the wire. */
@@ -1356,21 +1365,33 @@ export class Game {
     return f;
   }
 
-  /** Send our state, then draw everyone else. */
   /**
    * Put a player who fell out of the world back, when there is no server to do
    * it.
    *
-   * Online this must NOT run: the server owns placement, and a second opinion
-   * is what caused the base/air/base flicker. Gated on being disconnected, so
-   * exactly one authority ever moves the player.
+   * THE OTHER HALF OF THE INVARIANT: exactly one authority places a fallen
+   * player. Online that is the server, and this must not run — a second
+   * opinion is what produced the base/air/base flicker. Offline there is no
+   * server, so it is this, once, through the same `revive` the network path
+   * uses.
+   *
+   * Offline used to be silently the worst case of all: `_updateNetwork`
+   * returns immediately when disconnected, so the only code that noticed the
+   * latch never ran. Single-player, walking off OUTPOST left you dead and
+   * frozen at the spawn with no death screen, no countdown and no way back
+   * short of reloading the page — and no test or trace looked at it, because
+   * every report came from a match.
+   *
+   * It costs no health: falling out of the world is not an injury, and there
+   * is nobody to take a life for it.
    */
   _rescueOffline() {
     if (this.net?.connected) return;
-    if (!this.player?.fellOutOfWorld) return;
-    this.player.spawn(this.level.playerSpawn, this.level.playerSpawnYaw);
+    if (!this.player?.fellOutOfWorld || !this.level) return;
+    this.player.revive(this.level.playerSpawn, { yaw: this.level.playerSpawnYaw });
   }
 
+  /** Send our state, then draw everyone else. */
   _updateNetwork(dt) {
     const net = this.net;
     if (!net?.connected) return;
@@ -1453,24 +1474,42 @@ export class Game {
      * immediately. The server's plane stays as the backstop for a client that
      * has stopped talking.
      */
-    if (this.player.fellOutOfWorld || this.player.position.y < voidDeathY(this.mapId)) {
-      /*
-       * Dying is done ONCE; asking to come back is done UNTIL IT WORKS.
-       *
-       * The previous version gated the whole block on `this.player.alive` and
-       * then cleared that flag inside it, so it could only ever run one time —
-       * and it sent its single request through a 250 ms throttle, so a fall
-       * within 250 ms of any earlier ask sent nothing at all. One dropped
-       * message and the player was out there permanently.
-       */
-      if (this.player.alive) {
-        this.player.velocity.set(0, 0, 0);
-        this.player.fallSpeed = 0;
-        // Straight to zero rather than through applyDamage: falling out of the
-        // world is not an injury you can be saved from by armour.
-        this.player.health = 0;
-        this.player.alive = false;
-      }
+    /*
+     * KILL ON POSITION. ASK ON THE LATCH. NEVER THE OTHER WAY ROUND.
+     *
+     * These two used to share one `if`, and that is what turned a stale flag
+     * into a player who could not move: `fellOutOfWorld` survived a network
+     * respawn, so the block fired again while the player stood on the spawn,
+     * and it killed them there. Every frame. Forever.
+     *
+     * Split, the flag cannot kill anybody. The worst a stale one can now do is
+     * send a redundant RESPAWN four times a second, which the server ignores.
+     * That is the difference between a bug you notice in a log and a bug that
+     * ends the match for whoever hit it.
+     */
+    const belowTheWorld = this.player.position.y < voidDeathY(this.mapId);
+
+    /*
+     * Dying is done ONCE, and only for actually being out of the world.
+     *
+     * An older version gated this on `alive`, cleared that flag inside it and
+     * so could only ever run one time — then sent its single request through
+     * the throttle below, so a fall within 250 ms of any earlier ask sent
+     * nothing at all. One dropped message and the player stayed out there.
+     */
+    if (this.player.alive && belowTheWorld) {
+      this.player.velocity.set(0, 0, 0);
+      this.player.fallSpeed = 0;
+      // Straight to zero rather than through applyDamage: falling out of the
+      // world is not an injury you can be saved from by armour.
+      this.player.health = 0;
+      this.player.alive = false;
+      this.player.fellOutOfWorld = true;
+    }
+
+    // Asking to come back is done UNTIL IT WORKS — and only while we are still
+    // down. A revive clears the latch, which is what ends this.
+    if (this.player.fellOutOfWorld || (belowTheWorld && !this.player.alive)) {
       if (performance.now() - this._respawnAskedAt > 250) {
         this._respawnAskedAt = performance.now();
         net.requestRespawn();
