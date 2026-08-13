@@ -348,8 +348,16 @@ export class Game {
 
   _applyResolution() {
     const scale = this.settings.get('renderScale');
+    /*
+     * ...and HALF RESOLUTION in the menu, for the same reason as the 30 fps
+     * cap above it: the background is a full render of the warehouse, sitting
+     * behind a panel, blurred. Quartering the pixels costs nothing anyone can
+     * see and is the difference between idling on the menu and heating the
+     * machine up before the match starts.
+     */
+    const menuScale = this.state === GAME_STATE.MENU ? 0.5 : 1;
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    this.renderer.setPixelRatio(dpr * scale);
+    this.renderer.setPixelRatio(dpr * scale * menuScale);
     this.renderer.setSize(window.innerWidth, window.innerHeight, false);
     this.postfx?.setSize();
     // Reads the drawing-buffer size itself — see ScopeRenderer.setSize().
@@ -703,7 +711,13 @@ export class Game {
 
   // ============================================================ state flow
   _setState(state) {
+    const wasMenu = this.state === GAME_STATE.MENU;
     this.state = state;
+    // Entering or leaving the menu changes the render scale, so the resolution
+    // has to be re-applied here — nothing else watches the state for it.
+    if (this.renderer && wasMenu !== (state === GAME_STATE.MENU)) {
+      this._applyResolution();
+    }
   }
 
   /**
@@ -907,6 +921,21 @@ export class Game {
 
     const now = timeMs / 1000;
     let dt = now - this.clock.last;
+
+    /*
+     * THE MENU IS CAPPED AT 30, ALWAYS, V-SYNC OR NOT.
+     *
+     * Its background is a live crane shot orbiting the whole warehouse, drawn
+     * through the entire post-processing chain at full resolution — the same
+     * cost as playing. Sitting on the main menu therefore pinned the GPU at
+     * the display's full rate, which on a laptop with shared memory is enough
+     * to make the whole machine unresponsive before you have pressed anything.
+     * Reported as "when i open the game my whole laptop got hanging".
+     *
+     * 30 is invisible here: the shot moves at 0.055 rad/s and is blurred
+     * behind a panel. Gameplay is untouched — this only applies in the menu.
+     */
+    if (this.state === GAME_STATE.MENU && dt < 1 / 30 - 0.0005) return;
 
     // Frame limiter: only used when V-sync is disabled.
     if (!this.settings.get('vsync')) {
