@@ -49,6 +49,48 @@ reason.
 
 ---
 
+## The boundaries are enforced
+
+The subsystem layering is not a convention — it is a checked contract.
+`test/boundaries.mjs` builds the real import graph on every test run and fails
+the build on:
+
+- an import between subsystems that is not declared in its `ALLOWED` map
+- the server importing anything beyond the four shared files
+  (`protocol.js`, `arena.js`, `modes.js`, `WeaponDefinitions.js`), or a shared
+  file importing anything outside that set — including three.js
+- anything importing `Game.js` except `main.js` (Game is the composition root)
+- anything importing `src/ui/` from below (the HUD reads the game, never the
+  reverse)
+- any import cycle between files, anywhere
+
+The layering it enforces, bottom to top:
+
+```
+core                          pure utilities + asset registry
+├── physics  fx  audio        each stands on core alone
+├── weapons  → physics/audio/fx
+├── player   → physics/audio/net (protocol constants only)
+├── world    → physics/net (arena data only)
+├── net      → weapons (data)/audio — NEVER ui
+├── ui       → reads data from below; imported by NOBODY but the root
+└── Game.js                   the one file allowed to know everything
+```
+
+**To add a cross-subsystem import**: add the edge to `ALLOWED` in
+`test/boundaries.mjs`, with a one-line reason, in the same commit. The point is
+not to forbid new edges — it is that a new coupling is a decision somebody
+made on purpose, visible in review, instead of an accident nobody noticed.
+
+Callbacks get the same treatment: every `net.onX = / weapons.onX = / menus.onX
+= / player.onX =` the wiring assigns must be a field the owning class declares
+in its constructor, or `contracts.mjs` fails. An assignment to an undeclared
+name is not an error in JavaScript — it just creates a property nothing will
+ever call, and the feature it wires silently does not exist. The check caught
+two real ones the day it was written.
+
+---
+
 ## Shared things — the traps
 
 These are used by more than one area. Changing or deleting one has effects

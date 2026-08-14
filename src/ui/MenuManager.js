@@ -289,6 +289,10 @@ export class MenuManager {
     this.onRestart = null;
     this.onQuitToMenu = null;
     this.onLoadoutChanged = null;
+    /** () -> void — BACK out of a loadout opened with B, straight into the match. */
+    this.onResumeFromLoadout = null;
+    /** () -> Promise<population|null> — how many people are online, for the lobby. */
+    this.onPopulation = null;
     /** (mapId) -> void — the player picked a map; Game rebuilds the world. */
     this.onMapChosen = null;
     /**
