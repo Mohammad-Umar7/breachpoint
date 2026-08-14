@@ -441,6 +441,57 @@ check('nothing ever unwires the shot pipeline (fire must reach the server)',
   nulledShotWiring.join(', ') || 'onShotResolved and remoteHitTest are never nulled');
 
 /*
+ * EVERY CALLBACK ASSIGNED MUST BE A CALLBACK DECLARED.
+ *
+ * The subsystems talk through callbacks — `net.onKill = ...`, `menus.onResume
+ * = ...` — and an assignment to a name the class never declared is not an
+ * error in JavaScript. It creates a fresh property that nothing will ever
+ * call, and the feature it was meant to wire silently does not exist. That is
+ * the same failure shape as the RELOADING flag above: producer and consumer
+ * each look correct alone, and only the join between them is broken.
+ *
+ * So: collect every `this.onX = ...` declaration from each hub class's
+ * constructor, then every `hub.onX = ...` assignment from the wiring files,
+ * and refuse any assignment without a declaration. Renaming a callback in one
+ * place now fails the build instead of failing in a match.
+ */
+{
+  const wiringSources = [
+    ['Game.js', gameSrcForFlags],
+    ['wireNetwork.js', wireSrcForShots],
+  ];
+  const HUBS = [
+    // accessor as it appears at the call site -> the class that owns it
+    { accessor: 'net', file: 'src/net/NetworkClient.js' },
+    { accessor: 'weapons', file: 'src/weapons/WeaponSystem.js' },
+    { accessor: 'menus', file: 'src/ui/MenuManager.js' },
+    { accessor: 'player', file: 'src/player/Player.js' },
+  ];
+
+  let assignmentsChecked = 0;
+  const undeclared = [];
+  for (const hub of HUBS) {
+    const classSrc = read(hub.file);
+    const declared = new Set(
+      [...classSrc.matchAll(/this\.(on[A-Z][A-Za-z]*)\s*=/g)].map((m) => m[1]),
+    );
+    check(`${hub.file.split('/').pop()} declares its callbacks where they can be found`,
+      declared.size > 0, `${declared.size} declared`);
+
+    for (const [name, text] of wiringSources) {
+      for (const m of text.matchAll(
+        new RegExp(`\\b${hub.accessor}\\.(on[A-Z][A-Za-z]*)\\s*=[^=]`, 'g'))) {
+        assignmentsChecked++;
+        if (!declared.has(m[1])) undeclared.push(`${name}: ${hub.accessor}.${m[1]}`);
+      }
+    }
+  }
+  check('every callback the wiring assigns exists on the class it is assigned to',
+    undeclared.length === 0,
+    undeclared.join(', ') || `${assignmentsChecked} assignments verified`);
+}
+
+/*
  * Spawn protection has to be sent AND drawn.
  *
  * Invulnerability nobody can see is indistinguishable from broken hit
