@@ -408,6 +408,39 @@ check('every flag bit the remote bodies read is one _playerFlags sends',
                    : `${bitsRead.size} bits read, all accounted for`);
 
 /*
+ * THE TRIGGER MUST STAY WIRED TO THE NETWORK.
+ *
+ * `weapons.onShotResolved` is the only thing that sends a shot to the server,
+ * and `weapons.remoteHitTest` the only thing that lets a shot find another
+ * player. Both are installed exactly once per session, at the bottom of
+ * wireNetwork — so any code that nulls them nulls them for every match that
+ * follows, and there is no error anywhere when it happens: fire() keeps
+ * playing the shooter's own tracers and sounds while sending nothing, so
+ * their bullets simply do not exist for anyone else. No damage, no muzzle
+ * flash, no report.
+ *
+ * That is precisely what shipped, twice at once: onStateChange nulled them on
+ * any disconnect and leaveMatch nulled them again, and since the free host
+ * sleeps — a failed first join is the NORMAL first join — a real player's
+ * second, successful connection arrived with no trigger attached. Offline
+ * safety belongs INSIDE each callback (remoteHitTest checks net.connected,
+ * sendShot returns unless connected), never at the wiring.
+ *
+ * WeaponSystem's constructor is the one legitimate `= null`: it declares the
+ * fields before wiring exists at all.
+ */
+const wireSrcForShots = read('src/net/wireNetwork.js');
+const nulledShotWiring = [];
+for (const [file, text] of [['wireNetwork.js', wireSrcForShots], ['Game.js', gameSrcForFlags]]) {
+  for (const cb of ['onShotResolved', 'remoteHitTest']) {
+    if (new RegExp(`${cb}\\s*=\\s*null`).test(text)) nulledShotWiring.push(`${file}: ${cb}`);
+  }
+}
+check('nothing ever unwires the shot pipeline (fire must reach the server)',
+  nulledShotWiring.length === 0,
+  nulledShotWiring.join(', ') || 'onShotResolved and remoteHitTest are never nulled');
+
+/*
  * Spawn protection has to be sent AND drawn.
  *
  * Invulnerability nobody can see is indistinguishable from broken hit

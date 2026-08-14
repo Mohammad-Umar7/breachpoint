@@ -1693,8 +1693,14 @@ export class Game {
     this.remotes?.clear();
     // Or last match's shooters would still be on the map in the next one.
     this.minimap?.clear();
-    this.weapons.remoteHitTest = null;
-    this.weapons.onShotResolved = null;
+    /*
+     * The weapon callbacks are deliberately NOT nulled here. They are wired
+     * once per session, so nulling them broke shooting for every match after
+     * the first leave — fire() sent nothing, silently, and the player's
+     * bullets simply did not exist for anyone else. Both callbacks are
+     * already inert offline on their own: see the fat comment in
+     * wireNetwork's onStateChange, which made the same mistake.
+     */
     this._respawnAt = 0;
     this._respawnShown = false;
     this._respawnAskedAt = 0;

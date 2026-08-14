@@ -567,8 +567,27 @@ export function wireNetwork(game) {
        * most needs the world to make sense.
        */
       game.remotes?.clear();
-      game.weapons.remoteHitTest = null;
-      game.weapons.onShotResolved = null;
+      /*
+       * AND NOTHING ELSE. The weapon callbacks below MUST NOT be nulled here.
+       *
+       * They are installed once per session — `_wireNet` runs this file
+       * exactly once — so nulling them on a state change disconnected the
+       * trigger from the network for every LATER connection. One failed join,
+       * one dropped socket, or one trip through leaveMatch, and the next
+       * match looked completely normal while `fire()` sent nothing at all:
+       * the shooter saw their own tracers and heard their own gun, and to
+       * everyone else they were just a player walking around. No MSG.SHOT
+       * means no MSG.FIRE relay and no damage — invisible, harmless bullets,
+       * with not one error anywhere.
+       *
+       * The free host SLEEPS, so "first attempt fails, second succeeds" is
+       * the NORMAL first-time flow — which is why this hit real players on
+       * their first session and never showed up in a test.
+       *
+       * Offline safety is not this handler's job and never needed to be: each
+       * callback already guards itself. `remoteHitTest` answers null unless
+       * `net.connected`, and `sendShot` returns before touching the socket.
+       */
     }
     if (state === NET_STATE.OFFLINE && game.hasActiveRun) {
       game.ui.showNetWarning?.(detail || 'Disconnected from the match.');
@@ -577,7 +596,22 @@ export function wireNetwork(game) {
 
   net.onDenied = (why) => game.ui.showNetWarning?.(why);
 
-  // Hit registration: the weapon asks who is on the ray, and reports claims.
+  /*
+   * Hit registration: the weapon asks who is on the ray, and reports claims.
+   *
+   * INSTALLED ONCE PER SESSION AND NEVER NULLED. This function runs exactly
+   * once — `_wireNet` guards it — so anything that removes these callbacks
+   * removes them for the rest of the session, including every future match.
+   * That is not hypothetical: both onStateChange and leaveMatch used to null
+   * them, and a player whose first join attempt failed (the free host sleeps,
+   * so that is the USUAL first attempt) reconnected with no trigger wired.
+   * They could move, be seen and be shot — and their own fire reached nobody.
+   *
+   * Offline safety therefore lives INSIDE each callback, where it cannot be
+   * lost: this one answers null unless connected, and sendShot returns before
+   * touching a dead socket. `test/contracts.mjs` enforces that no `= null`
+   * for either ever reappears outside WeaponSystem's constructor.
+   */
   game.weapons.remoteHitTest = (origin, dir, maxDist) =>
     (net.connected ? game.remotes.raycast(origin, dir, maxDist) : null);
   game.weapons.onShotResolved = (claims, weaponId) => {
