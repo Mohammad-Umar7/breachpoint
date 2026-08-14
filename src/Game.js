@@ -718,6 +718,37 @@ export class Game {
     if (this.renderer && wasMenu !== (state === GAME_STATE.MENU)) {
       this._applyResolution();
     }
+    this._applyShadowPolicy();
+  }
+
+  /**
+   * STOP REDRAWING A SHADOW MAP OF A SCENE THAT IS NOT MOVING.
+   *
+   * The sun is a single directional light with a 2048 x 2048 shadow map, and
+   * three.js re-renders every shadow-casting object into it on EVERY frame.
+   * Measured on the menu, that is 71 of the frame's 124 draw calls and a little
+   * over half its render time — spent entirely on redrawing an image that is
+   * identical to the one already there, because the only thing moving on that
+   * screen is the camera, and a directional light's shadow map does not depend
+   * on where the camera is.
+   *
+   * So it is drawn ONCE on arrival and then frozen. Gameplay is deliberately
+   * untouched: players, grenades and shot-loose props all move, and their
+   * shadows have to keep up.
+   *
+   * Cheap to get wrong in the safe direction — if a state ever needs a fresh
+   * one it asks for it here, and the cost of asking too often is exactly what
+   * the game already does today.
+   */
+  _applyShadowPolicy() {
+    if (!this.renderer) return;
+    const still = this.state === GAME_STATE.MENU
+      || this.state === GAME_STATE.PAUSED
+      || this.state === GAME_STATE.GAMEOVER;
+    this.renderer.shadowMap.autoUpdate = !still;
+    // One more pass on the way in, so the frozen image is of the scene as it
+    // is NOW rather than whatever was last drawn before the state changed.
+    this.renderer.shadowMap.needsUpdate = true;
   }
 
   /**
@@ -1201,6 +1232,11 @@ export class Game {
       this.scene, this.physics, this.assets, this.settings, this.renderer, map);
     this.level.build();
     this.level.captureResetState();
+    // A new map is new geometry and a new sun, so the frozen shadow map is now
+    // a picture of the wrong place. See _applyShadowPolicy — this is the other
+    // moment it can go stale, and switching maps happens from the menu, which
+    // is exactly where it is frozen.
+    if (this.renderer) this.renderer.shadowMap.needsUpdate = true;
 
     /*
      * The minimap is rebuilt rather than told to refresh.
