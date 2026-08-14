@@ -166,6 +166,17 @@ export function capturePortrait(renderer, model) {
   } finally {
     renderer.setRenderTarget(previousTarget);
     renderer.setClearAlpha(previousAlpha);
+    /*
+     * DISPOSE IT. Leaving this out leaked a 560 x 300 render target per weapon
+     * — twelve of them, held for the rest of the session on a machine that may
+     * be sharing its graphics memory with everything else. `MapThumbnail` has
+     * always done this; this file was written from it and dropped the line.
+     *
+     * The cloned model is deliberately NOT disposed: `clone(true)` shares its
+     * geometry and materials with the real weapon, so disposing them here would
+     * take the gun you actually hold with it.
+     */
+    rt?.dispose();
   }
 }
 
@@ -181,26 +192,55 @@ export function capturePortrait(renderer, model) {
  * @param {Array<{id: string, modelId?: string}>} defs
  */
 export function ensurePortraits(renderer, assets, defs) {
-  for (const def of defs) {
-    if (getPortrait(def.id)) continue;
-    const model = def.modelId ? assets.getModel?.(def.modelId) : null;
-    if (!model) continue;
-    const url = capturePortrait(renderer, model);
-    if (!url) continue;
-    memo.set(def.id, url);
-    try {
-      localStorage.setItem(keyFor(def.id), url);
-      // Drop portraits from previous builds, or a long-lived browser slowly
-      // fills its quota with pictures of guns that no longer look like that.
-      for (let i = localStorage.length - 1; i >= 0; i--) {
-        const k = localStorage.key(i);
-        if (k?.startsWith('breachpoint.gun.') && !k.startsWith(`breachpoint.gun.${VERSION}.`)) {
-          localStorage.removeItem(k);
-        }
+  /*
+   * ONE WEAPON PER FRAME, not twelve in a row.
+   *
+   * Each capture is a render, a `readRenderTargetPixels` — which stalls the
+   * pipeline until the GPU catches up — a PNG encode and a synchronous
+   * localStorage write: about 8 ms, all of it on the main thread. Twelve back
+   * to back is a ~95 ms freeze with nothing drawn and no input read, landing
+   * during the first seconds of the game while the menu is trying to animate.
+   *
+   * Spread over frames it is 8 ms of a 33 ms budget, twelve times, and nobody
+   * can tell it is happening. `requestIdleCallback` where it exists, so the
+   * work waits for a frame that has room for it; a timeout elsewhere, which
+   * still yields to rendering and input between each one.
+   */
+  const queue = defs.filter((d) => !getPortrait(d.id) && d.modelId);
+  if (!queue.length) return;
+
+  const soon = typeof requestIdleCallback === 'function'
+    ? (fn) => requestIdleCallback(fn, { timeout: 500 })
+    : (fn) => setTimeout(fn, 0);
+
+  const step = () => {
+    const def = queue.shift();
+    if (!def) return;
+    captureOne(renderer, assets, def);
+    if (queue.length) soon(step);
+  };
+  soon(step);
+}
+
+/** One weapon photographed and filed. Split out so the queue above stays plain. */
+function captureOne(renderer, assets, def) {
+  const model = def.modelId ? assets.getModel?.(def.modelId) : null;
+  if (!model) return;
+  const url = capturePortrait(renderer, model);
+  if (!url) return;
+  memo.set(def.id, url);
+  try {
+    localStorage.setItem(keyFor(def.id), url);
+    // Drop portraits from previous builds, or a long-lived browser slowly
+    // fills its quota with pictures of guns that no longer look like that.
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const k = localStorage.key(i);
+      if (k?.startsWith('breachpoint.gun.') && !k.startsWith(`breachpoint.gun.${VERSION}.`)) {
+        localStorage.removeItem(k);
       }
-    } catch {
-      /* Quota or private browsing. The portrait lives in memory for this
-         session only, which is still better than not having it. */
     }
+  } catch {
+    /* Quota or private browsing. The portrait lives in memory for this
+       session only, which is still better than not having it. */
   }
 }
