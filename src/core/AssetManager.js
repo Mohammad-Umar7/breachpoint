@@ -167,7 +167,19 @@ export class AssetManager {
      */
     const version = (typeof __ASSET_VERSION__ !== 'undefined' && __ASSET_VERSION__) || 'dev';
 
-    for (const entry of MODEL_MANIFEST) {
+    /*
+     * ALL AT ONCE, not one after another.
+     *
+     * This was a `for` loop with an `await` inside it: thirteen files, each
+     * requested only once the previous one had fully arrived and parsed. On a
+     * hosted build behind a CDN that is thirteen round trips in series — the
+     * single longest stretch of the loading bar, spent mostly waiting on the
+     * network with the connection idle. Issued together, the browser runs
+     * them in parallel and the whole set takes about as long as the slowest
+     * one. Every model still fails on its own: a broken file costs that one
+     * weapon its detailed model, never the rest.
+     */
+    const load = async (entry) => {
       const url = `${base.replace(/\/?$/, '/')}${entry.url}?v=${version}`;
       try {
         const gltf = await loader.loadAsync(url);
@@ -177,7 +189,7 @@ export class AssetManager {
         if (entry.kind === 'character') {
           this._prepareCharacter(scene);
           this.models.set(entry.id, scene);
-          continue;
+          return;
         }
 
         // Authored materials arrive as MeshStandardMaterial. Tune them for the
@@ -233,7 +245,8 @@ export class AssetManager {
         );
         this.loadErrors.push(`model ${entry.id}: ${err.message ?? err}`);
       }
-    }
+    };
+    await Promise.all(MODEL_MANIFEST.map(load));
   }
 
   /**
