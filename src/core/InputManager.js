@@ -108,6 +108,7 @@ export class InputManager {
   // ------------------------------------------------------------------ setup
   _bind() {
     this._onKeyDown = (e) => {
+      const code = codeOf(e);
       /*
        * A key typed INTO A TEXT FIELD belongs to the text field.
        *
@@ -121,32 +122,33 @@ export class InputManager {
        * types nothing, and in a field it means "get me out of here", which
        * is exactly what the menu's back handling does with it.
        */
-      if (!this.pointerLocked && e.code !== 'Escape' && isTyping(e.target)) return;
+      if (!this.pointerLocked && code !== 'Escape' && isTyping(e.target)) return;
 
       // Stop the browser scrolling / quick-find while playing.
-      if (SWALLOWED_KEYS.has(e.code)) e.preventDefault();
+      if (SWALLOWED_KEYS.has(code)) e.preventDefault();
       // While locked, the game owns every key it binds — see BOUND_KEYS for
       // why (Ctrl+W / Ctrl+D / Ctrl+R collisions with crouch).
-      if (this.pointerLocked && BOUND_KEYS.has(e.code)) e.preventDefault();
+      if (this.pointerLocked && BOUND_KEYS.has(code)) e.preventDefault();
       if (e.repeat) return;
-      if (e.code === 'F3') e.preventDefault();
+      if (code === 'F3') e.preventDefault();
 
-      this.keys.add(e.code);
-      this.keysPressed.add(e.code);
+      this.keys.add(code);
+      this.keysPressed.add(code);
 
-      if (KEY_BINDINGS.pause.includes(e.code)) {
+      if (KEY_BINDINGS.pause.includes(code)) {
         // Marks the pointer-lock loss that follows as deliberate, so it is
         // reported at once instead of going through the recovery delay.
         this._pauseRequested = true;
-        this.onPauseRequested?.(e.code);
+        this.onPauseRequested?.(code);
       }
     };
 
     this._onKeyUp = (e) => {
       // Not gated on the field like keydown: a key that went down before the
       // field took focus must still be released, or it stays held.
-      this.keys.delete(e.code);
-      this.keysReleased.add(e.code);
+      const code = codeOf(e);
+      this.keys.delete(code);
+      this.keysReleased.add(code);
     };
 
     this._onMouseDown = (e) => {
@@ -498,6 +500,33 @@ const BOUND_KEYS = new Set(
     .flatMap(([, codes]) => codes)
     .filter((code) => code !== 'Escape'),
 );
+
+/**
+ * The physical key a keyboard event names — with a fallback for events that
+ * do not name one.
+ *
+ * Every binding here is a `code` ('KeyW', 'Escape'), and a real desktop
+ * browser always fills it in. Some sources do not: Android soft keyboards,
+ * some remote-desktop and accessibility tools, and automation drivers all
+ * deliver `code: ""` with only `key` set. Against those the game was
+ * completely deaf — no pause, no movement, nothing — with no error anywhere.
+ * `key` is enough to reconstruct the code for every key this game binds.
+ */
+export function codeOf(e) {
+  if (e.code) return e.code;
+  const k = e.key;
+  if (typeof k !== 'string' || !k) return '';
+  if (k.length === 1) {
+    if (k === ' ') return 'Space';
+    if (/[a-z]/i.test(k)) return `Key${k.toUpperCase()}`;
+    if (/[0-9]/.test(k)) return `Digit${k}`;
+    return k;
+  }
+  // Modifiers arrive without a side; the bindings list both, so pick one.
+  if (k === 'Shift' || k === 'Control' || k === 'Alt' || k === 'Meta') return `${k}Left`;
+  if (k === 'Esc') return 'Escape';
+  return k;          // 'Escape', 'Tab', 'ArrowUp', 'F3' are already codes
+}
 
 /** True when a keystroke would go into an editable element. */
 function isTyping(target) {
