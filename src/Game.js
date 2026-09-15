@@ -988,8 +988,14 @@ export class Game {
      *
      * 30 is invisible here: the shot moves at 0.055 rad/s and is blurred
      * behind a panel. Gameplay is untouched — this only applies in the menu.
+     *
+     * AND ON THE PAUSE AND RESULTS SCREENS, for the same reason. Both draw
+     * the frozen match through the full post chain at full resolution, and
+     * a pause menu left open for ten minutes was pinning the GPU exactly as
+     * the main menu used to. Nothing on either screen moves faster than a
+     * button hover.
      */
-    if (this.state === GAME_STATE.MENU && dt < 1 / 30 - 0.0005) return;
+    if (this.state !== GAME_STATE.PLAYING && dt < 1 / 30 - 0.0005) return;
 
     // Frame limiter: only used when V-sync is disabled.
     if (!this.settings.get('vsync')) {
