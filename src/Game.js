@@ -1844,7 +1844,21 @@ export class Game {
     // The scope's view is rendered first, into its own texture, by a camera
     // restricted to the world layer — so the weapon can never appear in it.
     this.scope.renderTexture();
+    /*
+     * ONE shadow pass per frame, not one per render call.
+     *
+     * three.js redraws the shadow map inside EVERY renderer.render() while
+     * autoUpdate is on, and a scoped frame makes two: the scope's texture and
+     * the main view. The sun is directional and its shadow camera covers the
+     * whole map, so the second pass produced the identical image the first
+     * had just drawn — the most expensive thing in the frame, twice, on
+     * exactly the frames a sniper is lining up a shot. The scope pass is the
+     * first render of the frame, so it draws the map; the main pass reuses it.
+     */
+    const shadows = this.renderer.shadowMap.autoUpdate;
+    if (this.scope.active && shadows) this.renderer.shadowMap.autoUpdate = false;
     this.postfx.render(dt);
+    this.renderer.shadowMap.autoUpdate = shadows;
     this.scope.renderOverlay();
   }
 
