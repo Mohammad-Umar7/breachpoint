@@ -153,18 +153,20 @@ export class PostFX {
     this.focusDistance = 12;
 
     this._size = new THREE.Vector2();
+    this._rebuildQueued = false;
+    this._disposed = false;
     this.rebuild();
 
     for (const key of [
       'quality', 'bloom', 'antialias', 'ssao', 'colorGrade',
       'vignette', 'renderScale', 'motionBlur', 'depthOfField',
     ]) {
-      settings.onChange(key, () => this.rebuild());
+      settings.onChange(key, () => this.scheduleRebuild());
     }
     // Bloom strength and exposure are live — no chain rebuild needed.
     settings.onChange('bloomStrength', (v) => {
       if (this.bloomPass) this.bloomPass.strength = v;
-      else this.rebuild();
+      else this.scheduleRebuild();
     });
     settings.onChange('exposure', (v) => this.setExposure(v));
   }
@@ -178,6 +180,28 @@ export class PostFX {
   setViewModelCamera(camera) {
     this.viewModelCamera = camera;
     this.rebuild();
+  }
+
+  /**
+   * Rebuild ONCE for a burst of setting changes, not once per change.
+   *
+   * Picking a quality preset rewrites every option it governs — bloom, AA,
+   * SSAO, grade, vignette, render scale, motion blur, depth of field — and
+   * emits each one before emitting `quality` itself. Nine listeners here,
+   * nine rebuilds in a row, each tearing down the composer and compiling a
+   * fresh set of shaders, all inside one click. On a laptop that was a
+   * visible freeze of a second or more for a single dropdown change. A
+   * microtask runs after the whole synchronous burst has finished, so the
+   * chain is built once from the final values.
+   */
+  scheduleRebuild() {
+    if (this._rebuildQueued) return;
+    this._rebuildQueued = true;
+    queueMicrotask(() => {
+      this._rebuildQueued = false;
+      // A dispose() in the meantime leaves nothing to rebuild for.
+      if (!this._disposed) this.rebuild();
+    });
   }
 
   /** Tear down and recreate the pass chain from current settings. */
@@ -382,6 +406,7 @@ export class PostFX {
   }
 
   dispose(full = true) {
+    if (full) this._disposed = true;
     if (this.composer) {
       for (const pass of this.composer.passes) {
         pass.dispose?.();
