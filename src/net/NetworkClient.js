@@ -860,10 +860,22 @@ export class NetworkClient {
     return this.players.get(id)?.name ?? 'SOMEONE';
   }
 
-  /** Scoreboard order: kills desc, then fewest deaths, then name. */
+  /**
+   * Scoreboard order: what the mode scores, then kills, then fewest deaths,
+   * then name.
+   *
+   * In a team mode the score column SHOWS captures, and the rows were still
+   * sorted by kills — so the player who had won the round for their side
+   * could sit at the bottom of it under three people who had never touched
+   * a flag. The order now follows the number the column displays.
+   */
   roster() {
+    const byCaptures = this.mode.teamBased;
     return [...this.players.values()].sort((a, b) =>
-      b.kills - a.kills || a.deaths - b.deaths || a.name.localeCompare(b.name));
+      (byCaptures ? (b.captures ?? 0) - (a.captures ?? 0) : 0)
+      || b.kills - a.kills
+      || a.deaths - b.deaths
+      || a.name.localeCompare(b.name));
   }
 
   _applyMatch(m) {
