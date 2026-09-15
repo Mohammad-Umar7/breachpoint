@@ -1624,8 +1624,26 @@ const httpServer = http.createServer((req, res) => {
 
 const wss = new WebSocketServer({ server: httpServer, maxPayload: 16 * 1024 });
 
+/**
+ * How long a fresh socket has to send JOIN before it is closed.
+ *
+ * Idle PLAYERS are timed out by the room tick, but a socket that never joins
+ * has no player and no room — it belonged to nothing, so nothing ever looked
+ * at it again. Every one of those was a file handle and a buffer held for
+ * the life of the process, and anyone could open thousands with a loop. The
+ * JOIN is the first thing a real client sends, on open, so a few seconds is
+ * generous; a sleeping-host wake-up happens BEFORE the socket opens and is
+ * not counted against this.
+ */
+const JOIN_DEADLINE_MS = 10000;
+
 wss.on('connection', (socket) => {
   let player = null;
+
+  const joinDeadline = setTimeout(() => {
+    if (player) return;
+    try { socket.close(4004, 'no join'); } catch { /* already gone */ }
+  }, JOIN_DEADLINE_MS);
 
   socket.on('message', (raw) => {
     let msg;
@@ -1669,6 +1687,7 @@ wss.on('connection', (socket) => {
           return;
         }
         player = new Player(socket, sanitizeName(msg.n));
+        clearTimeout(joinDeadline);
         room.add(player);
         break;
       }
@@ -1752,6 +1771,7 @@ wss.on('connection', (socket) => {
   });
 
   socket.on('close', () => {
+    clearTimeout(joinDeadline);
     if (!player) return;
     const room = player.room;
     if (room) { room.remove(player); reapRoom(room); }
