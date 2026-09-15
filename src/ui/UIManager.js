@@ -79,7 +79,6 @@ export class UIManager {
     this._damageNumbers = [];
     /** team -> the objective-marker pill for that team's flag. */
     this._flagMarkerEls = new Map();
-    this._toastCount = 0;
     this._bannerTimer = 0;
     this._damageFlash = 0;
     this.statsVisible = false;
@@ -401,16 +400,16 @@ export class UIManager {
   }
 
   showToast(text, cls = '') {
-    if (this._toastCount > 4) return;
+    // Counted off the DOM rather than a counter: resetHud() wipes the toasts
+    // wholesale, and the timers of the wiped ones then decremented a counter
+    // that had already been zeroed. It went negative, and the cap above it
+    // stopped capping.
+    if (this.el.pickupToast.childElementCount > 4) return;
     const div = document.createElement('div');
     div.className = `toast ${cls}`;
     div.textContent = text;
     this.el.pickupToast.appendChild(div);
-    this._toastCount++;
-    setTimeout(() => {
-      div.remove();
-      this._toastCount--;
-    }, 1450);
+    setTimeout(() => div.remove(), 1450);
   }
 
   /** Red screen edge + a directional arc pointing at the attacker. */
@@ -792,14 +791,30 @@ export class UIManager {
     this._flagMarkerEls.clear();
     this.el.pickupToast.innerHTML = '';
     this.el.damageDirs.innerHTML = '';
-    this._toastCount = 0;
     this._damageFlash = 0;
     this.el.damageVignette.style.opacity = '0';
+    this.el.hitFlash?.classList.remove('instant');
+    if (this.el.hitFlash) this.el.hitFlash.style.opacity = '0';
     this.el.healFlash.style.opacity = '0';
     this.el.lowHealth.style.opacity = '0';
     this.el.breathVignette.style.opacity = '0';
     this.el.banner.classList.remove('show');
     this._bannerTimer = 0;
+    /*
+     * And the overlays a match can END on, which nothing else took down.
+     *
+     * A match that finished with the scoreboard forced open, a player who
+     * quit during the respawn countdown, a connection warning from a server
+     * that went away: each of those elements was still showing when the next
+     * match's HUD came up, because the only code that hid them ran on the
+     * event that would have hidden them in the OLD match.
+     */
+    this.el.scoreboard.classList.add('hidden');
+    this.el.respawnOverlay.classList.add('hidden');
+    this.el.netWarning.classList.add('hidden');
+    if (this.el.spawnShield) this.el.spawnShield.hidden = true;
+    this._shownShield = false;
+    if (this.el.clickToPlay) this.el.clickToPlay.hidden = true;
   }
 }
 

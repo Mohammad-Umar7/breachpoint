@@ -799,6 +799,10 @@ export class Game {
     this.menus.hideOverlay();
     this.ui.showHud(true);
     this.ui.resetHud();
+    // resetHud() has just hidden the scoreboard; the held-Tab tracker has
+    // to agree, or the first frame skips re-hiding what is already hidden
+    // and a match that ended forced-open would stay open into this one.
+    this._scoreboardShown = false;
     this._setState(GAME_STATE.PLAYING);
     this.input.clearAll();
     this.input.requestPointerLock();
