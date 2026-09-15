@@ -228,6 +228,8 @@ class Player {
     /** Pickup claim timestamps, one per pool. See handleHeal. */
     this.lastHealAt = 0;
     this.lastArmorAt = 0;
+    /** When the callsign last changed. A rename fans out to the room. */
+    this.lastRenameAt = 0;
     this.lastSeenAt = Date.now();
     this.lastPongAt = 0;
 
@@ -1772,7 +1774,20 @@ wss.on('connection', (socket) => {
 
       case MSG.NAME:
         if (player) {
-          player.name = sanitizeName(msg.n, player.name);
+          /*
+           * A rename is a whole-roster broadcast to everybody in the room,
+           * and this accepted them at the flood ceiling: 199 a second, each
+           * one fanned out twelve ways. One client could make the server
+           * send two thousand scoreboards a second and never trip a limit.
+           * A real rename happens once a session, so one every two seconds
+           * is generous, and a rename to the same name is nothing at all.
+           */
+          const now = Date.now();
+          if (now - (player.lastRenameAt ?? 0) < 2000) break;
+          const next = sanitizeName(msg.n, player.name);
+          if (next === player.name) break;
+          player.lastRenameAt = now;
+          player.name = next;
           player.room?.broadcastScore();
         }
         break;
