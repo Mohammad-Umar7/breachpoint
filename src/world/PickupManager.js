@@ -117,6 +117,17 @@ export class PickupManager {
   update(dt, camera) {
     this.time += dt;
     const playerPos = this.player.position;
+    /*
+     * A corpse collects nothing.
+     *
+     * Dying moves you to your spawn point for the countdown, and several
+     * spawns have a pack within arm's reach. The distance check below did not
+     * care whether you were alive: the pack vanished for its full 26-second
+     * respawn, `heal()` refused the dead player so it granted nothing, and
+     * the toast cheerfully read "+0 HEALTH". Then you came back to life next
+     * to the empty spot where your medkit used to be.
+     */
+    const canCollect = this.player.alive;
 
     for (let i = this.pickups.length - 1; i >= 0; i--) {
       const p = this.pickups[i];
@@ -138,6 +149,7 @@ export class PickupManager {
       p.glow.material.opacity = 0.32 + Math.sin(this.time * 3 + p.phase) * 0.1;
 
       // --- collection ---
+      if (!canCollect) continue;
       const dx = p.holder.position.x - playerPos.x;
       const dy = p.holder.position.y - playerPos.y;
       const dz = p.holder.position.z - playerPos.z;
