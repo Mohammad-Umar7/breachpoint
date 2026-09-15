@@ -26,7 +26,7 @@
  * a second reader of a stream that already exists.
  */
 
-import { TEAM_CSS, FLAG_STATE } from '../net/modes.js';
+import { TEAM, TEAM_CSS, FLAG_STATE, sameTeam } from '../net/modes.js';
 
 /** How long a player stays on the map after firing. */
 const BLIP_SECONDS = 2.4;
@@ -145,8 +145,10 @@ export class Minimap {
    * @param {number} dt
    * @param {{position: {x:number,z:number}, yaw: number}} player
    * @param {Map<number, object>|null} sample  interpolated remote positions
+   * @param {Map<number, {team?: number}>|null} [roster]  who is on which side
+   * @param {number} [selfTeam]  our own team, TEAM.NONE in a free-for-all
    */
-  update(dt, player, sample) {
+  update(dt, player, sample, roster = null, selfTeam = TEAM.NONE) {
     for (const [id, left] of this.blips) {
       const next = left - dt;
       if (next <= 0) this.blips.delete(id);
@@ -222,10 +224,34 @@ export class Minimap {
       }
     }
 
+    /*
+     * TEAMMATES ARE ALWAYS ON THE MAP. Enemies only when they fire.
+     *
+     * The same asymmetry the name tags use, for the same reason: knowing
+     * where your own side is through the walls is what makes a team read as
+     * a team — and what stops you shooting them — while knowing where the
+     * other side is would be a wallhack. In a free-for-all nobody is a
+     * teammate and nothing changes.
+     */
+    if (selfTeam !== TEAM.NONE && roster && sample) {
+      ctx.fillStyle = TEAM_CSS[selfTeam];
+      for (const [id, p] of sample) {
+        if (!sameTeam(roster.get(id)?.team ?? TEAM.NONE, selfTeam)) continue;
+        const x = (p.x - player.position.x) * scale;
+        const z = (p.z - player.position.z) * scale;
+        if (Math.hypot(x, z) > r - 3) continue;
+        ctx.beginPath();
+        ctx.arc(x, z, 2.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
     // Anyone who has fired recently.
     for (const [id, left] of this.blips) {
       const p = sample?.get(id);
       if (!p) continue;
+      // A teammate is drawn above already; a second dot on top says nothing.
+      if (selfTeam !== TEAM.NONE && sameTeam(roster?.get(id)?.team ?? TEAM.NONE, selfTeam)) continue;
       const x = (p.x - player.position.x) * scale;
       const z = (p.z - player.position.z) * scale;
       if (Math.hypot(x, z) > r - 3) continue;

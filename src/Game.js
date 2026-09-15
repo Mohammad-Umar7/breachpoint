@@ -1110,7 +1110,8 @@ export class Game {
       this.flagObjects.selfId = this.net.selfId;
       this.flagObjects.update(dt);
     }
-    this.minimap?.update(dt, this.player, this._netSample);
+    this.minimap?.update(dt, this.player, this._netSample,
+      this.net?.connected ? this.net.players : null, this.remotes?.selfTeam ?? TEAM.NONE);
     this._updatePendingExplosions(dt);
     this.fx.update(dt, this.camera);
     this._updateScope(dt);
