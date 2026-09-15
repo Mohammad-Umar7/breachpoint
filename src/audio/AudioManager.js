@@ -30,6 +30,8 @@ export class AudioManager {
     this._noiseCache = new Map();
     this._ambience = null;
     this._muffled = false;
+    /** The last listener transform sent, so a still camera sends nothing. */
+    this._listenerLast = new Float64Array(9).fill(NaN);
 
     this._onSettingsChange = () => this._applyVolumes();
     for (const key of ['masterVolume', 'sfxVolume', 'musicVolume', 'voiceVolume', 'menuVolume']) {
@@ -188,6 +190,26 @@ export class AudioManager {
       || !Number.isFinite(up.x) || !Number.isFinite(up.y) || !Number.isFinite(up.z)) {
       return;
     }
+    /*
+     * Only when it MOVED. Nine setTargetAtTime() calls a frame is nine
+     * automation events queued on the audio thread sixty times a second,
+     * for a listener that spends most of a match aiming at the same spot
+     * from the same place. Below a millimetre and a milliradian the previous
+     * target is still the right one, and the queue stays short.
+     */
+    const last = this._listenerLast;
+    if (Math.abs(last[0] - pos.x) < 1e-3 && Math.abs(last[1] - pos.y) < 1e-3
+      && Math.abs(last[2] - pos.z) < 1e-3
+      && Math.abs(last[3] - forward.x) < 1e-3 && Math.abs(last[4] - forward.y) < 1e-3
+      && Math.abs(last[5] - forward.z) < 1e-3
+      && Math.abs(last[6] - up.x) < 1e-3 && Math.abs(last[7] - up.y) < 1e-3
+      && Math.abs(last[8] - up.z) < 1e-3) {
+      return;
+    }
+    last[0] = pos.x; last[1] = pos.y; last[2] = pos.z;
+    last[3] = forward.x; last[4] = forward.y; last[5] = forward.z;
+    last[6] = up.x; last[7] = up.y; last[8] = up.z;
+
     const l = this.ctx.listener;
     const t = this.ctx.currentTime;
     if (l.positionX) {
