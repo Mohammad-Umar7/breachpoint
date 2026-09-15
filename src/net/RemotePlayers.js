@@ -1287,6 +1287,10 @@ export class RemotePlayers {
     for (const body of this.bodies.values()) this._destroy(body);
     this.bodies.clear();
     this.audio?.clear();
+    // raycast() reads the last sample, not the bodies. Left in place, the
+    // positions of players who are no longer here stayed shootable until
+    // the next sync — which, after a disconnect, never comes.
+    this._lastSample = null;
   }
 
   dispose() { this.clear(); }
