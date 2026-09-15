@@ -352,14 +352,37 @@ export class NetworkClient {
       this.socket = null;
     }
     this.players.clear();
-    // Or the chassis from the last match is still in the registry the next one
-    // syncs against
-    // the room we have joined.
     this.snapshots.length = 0;
     this.selfId = null;
     this.selfFlags = 0;
     this.room = null;
     this._clockOffset = null;
+    /*
+     * EVERYTHING that belongs to a room goes with the room.
+     *
+     * Only the roster and the snapshots used to be cleared. The rest carried
+     * across into the next connection: the last match's flags stood in the
+     * new arena until its first FLAG message; a finished match's OVER state
+     * and winner lingered until WELCOME overwrote them; the previous team
+     * and team scores drew the CTF bar for a free-for-all; the old ping sat
+     * on the HUD for the two seconds until the first new PONG; and the
+     * interpolation buffer sized for a 130 ms server was applied to a LAN.
+     * None of it fatal, all of it wrong, and each one a HUD that briefly
+     * described the wrong match.
+     */
+    this.mapId = DEFAULT_MAP_ID;
+    this.modeId = DEFAULT_MODE_ID;
+    this.team = TEAM.NONE;
+    this.teamScores = null;
+    this.flags = [];
+    this.ping = 0;
+    this.match = { state: MATCH_STATE.WARMUP, timeLeft: 0, killTarget: 0, winnerId: null };
+    this._gaps.length = 0;
+    this._lastArrivalAt = 0;
+    this.interpDelay = INTERP_DELAY_MS;
+    this._inputSeq = 0;
+    this._lastInputAt = 0;
+    this._pingSentAt = 0;
     if (this.state !== NET_STATE.OFFLINE) this._setState(NET_STATE.OFFLINE);
   }
 
