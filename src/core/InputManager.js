@@ -108,6 +108,19 @@ export class InputManager {
   // ------------------------------------------------------------------ setup
   _bind() {
     this._onKeyDown = (e) => {
+      /*
+       * A key typed INTO A TEXT FIELD belongs to the text field.
+       *
+       * Every keydown on the page came through here, and the scroll-key guard
+       * below swallowed Space, Tab and the arrows unconditionally — so in the
+       * callsign box you could not type a space, could not move the caret
+       * with the arrow keys and could not Tab to the next field. Nothing was
+       * locked at the time; the guard simply never asked where the key was
+       * going. While the pointer is locked there is no field to type into,
+       * so the game keeps every key as before.
+       */
+      if (!this.pointerLocked && isTyping(e.target)) return;
+
       // Stop the browser scrolling / quick-find while playing.
       if (SWALLOWED_KEYS.has(e.code)) e.preventDefault();
       // While locked, the game owns every key it binds — see BOUND_KEYS for
@@ -128,6 +141,8 @@ export class InputManager {
     };
 
     this._onKeyUp = (e) => {
+      // Not gated on the field like keydown: a key that went down before the
+      // field took focus must still be released, or it stays held.
       this.keys.delete(e.code);
       this.keysReleased.add(e.code);
     };
@@ -481,6 +496,18 @@ const BOUND_KEYS = new Set(
     .flatMap(([, codes]) => codes)
     .filter((code) => code !== 'Escape'),
 );
+
+/** True when a keystroke would go into an editable element. */
+function isTyping(target) {
+  if (!target || typeof target.tagName !== 'string') return false;
+  const tag = target.tagName;
+  if (tag === 'TEXTAREA' || tag === 'SELECT') return true;
+  if (tag === 'INPUT') {
+    const type = (target.type || 'text').toLowerCase();
+    return !['button', 'checkbox', 'radio', 'range', 'submit', 'reset'].includes(type);
+  }
+  return target.isContentEditable === true;
+}
 
 const MAX_MOUSE_STEP = 260;
 function clampSpike(v) {
