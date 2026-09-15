@@ -695,8 +695,6 @@ export class Game {
       }
     }
 
-    this.fx.spawnExplosion(pos, radius * 0.75);
-    this.audio.play('explosion', { position: pos, volume: 1 });
     /*
      * The scorch goes on the floor UNDER the blast, wherever that floor is.
      *
@@ -713,6 +711,9 @@ export class Game {
       filter: (tag) => !!tag && tag.kind !== TAG_KIND.PLAYER && !(tag.prop && tag.prop.exploded),
     });
     if (floor) this.fx.addDecal(floor.point, floor.normal, 'blood', radius * 0.5);
+    // And the embers and debris bounce on that same floor, not on y = 0.
+    this.fx.spawnExplosion(pos, radius * 0.75, floor ? floor.point.y : 0);
+    this.audio.play('explosion', { position: pos, volume: 1 });
   }
 
   _updatePendingExplosions(dt) {

@@ -106,6 +106,8 @@ export class ParticleManager {
     this._bodyQuat = new THREE.Quaternion();
     this._unitScale = new THREE.Vector3(1, 1, 1);
     this._impactBody = null;
+    /** Height of the floor under the current impact. See spawnImpact. */
+    this._impactFloor = 0;
 
     this._buildSparks();
     this._buildSmoke();
@@ -128,7 +130,7 @@ export class ParticleManager {
         alive: false, idx: i,
         pos: new THREE.Vector3(), vel: new THREE.Vector3(),
         life: 0, maxLife: 1, size: 0.05, drag: 2.4, gravity: -14,
-        color: new THREE.Color(1, 1, 1), bounce: 0,
+        color: new THREE.Color(1, 1, 1), bounce: 0, floor: 0,
       });
       this.sparkMesh.setMatrixAt(i, HIDDEN);
     }
@@ -186,7 +188,7 @@ export class ParticleManager {
         alive: false, idx: i,
         pos: new THREE.Vector3(), vel: new THREE.Vector3(),
         rot: new THREE.Euler(), spin: new THREE.Vector3(),
-        life: 0, maxLife: 1, size: 0.05,
+        life: 0, maxLife: 1, size: 0.05, floor: 0,
       });
       this.debrisMesh.setMatrixAt(i, HIDDEN);
     }
@@ -468,8 +470,18 @@ export class ParticleManager {
    *   shoot one, knock it over, and the holes used to stay hanging in mid-air
    *   exactly where the crate had been.
    */
-  spawnImpact(point, normal, surface, intensity = 1, attachTo = null) {
+  /**
+   * @param {number} [floorY]  where the ground is under this impact. Sparks
+   *   and debris bounce on it and stop there. It used to be y = 0 for every
+   *   hit in the game, so a round into the wall of an upstairs bedroom sent
+   *   its splinters straight down through the floor to land in the room
+   *   below, and every hit on a catwalk rained through the grating onto the
+   *   concrete. Callers with a physics world probe for it; the default keeps
+   *   the old behaviour for anything that cannot.
+   */
+  spawnImpact(point, normal, surface, intensity = 1, attachTo = null, floorY = 0) {
     this._impactBody = attachTo;
+    this._impactFloor = floorY;
     const d = this.density * intensity;
 
     switch (surface) {
@@ -600,7 +612,9 @@ export class ParticleManager {
   }
 
   /** Big explosion: fireball, light, smoke column, sparks, debris. */
-  spawnExplosion(position, radius = 4.5) {
+  /** @param {number} [floorY]  the ground under the blast — see spawnImpact. */
+  spawnExplosion(position, radius = 4.5, floorY = 0) {
+    this._impactFloor = floorY;
     const d = this.density;
 
     // Fireball shell
@@ -763,6 +777,7 @@ export class ParticleManager {
       p.gravity = o.gravity ?? -16;
       p.drag = o.drag ?? 1.6;
       p.bounce = o.bounce ?? 0;
+      p.floor = this._impactFloor;
       p.color.setRGB(o.color[0], o.color[1], o.color[2]);
     }
   }
@@ -780,6 +795,7 @@ export class ParticleManager {
       p.rot.set(Math.random() * 6.28, Math.random() * 6.28, Math.random() * 6.28);
       p.spin.set(randRange(-12, 12), randRange(-12, 12), randRange(-12, 12));
       p.size = randRange(sizeRange[0], sizeRange[1]);
+      p.floor = this._impactFloor;
       this.debrisMesh.setColorAt?.(p.idx, this._c);
       const arr = this.debrisMesh.instanceColor.array;
       arr[p.idx * 3] = this._c.r;
@@ -863,8 +879,9 @@ export class ParticleManager {
       p.pos.addScaledVector(p.vel, dt);
 
       // Very cheap floor bounce keeps sparks from sinking through the ground.
-      if (p.bounce > 0 && p.pos.y < 0.02 && p.vel.y < 0) {
-        p.pos.y = 0.02;
+      const sparkFloor = p.floor + 0.02;
+      if (p.bounce > 0 && p.pos.y < sparkFloor && p.vel.y < 0) {
+        p.pos.y = sparkFloor;
         p.vel.y = -p.vel.y * p.bounce;
         p.vel.x *= 0.6;
         p.vel.z *= 0.6;
@@ -946,8 +963,9 @@ export class ParticleManager {
       p.vel.y += -20 * dt;
       p.vel.multiplyScalar(Math.max(0, 1 - 0.8 * dt));
       p.pos.addScaledVector(p.vel, dt);
-      if (p.pos.y < 0.02 && p.vel.y < 0) {
-        p.pos.y = 0.02;
+      const debrisFloor = p.floor + 0.02;
+      if (p.pos.y < debrisFloor && p.vel.y < 0) {
+        p.pos.y = debrisFloor;
         p.vel.y = -p.vel.y * 0.28;
         p.vel.x *= 0.55;
         p.vel.z *= 0.55;
