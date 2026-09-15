@@ -1323,38 +1323,33 @@ function handleInput(player, msg) {
    * the fall itself because falling was never the part that was broken. Being
    * outside the world at all is the problem, whichever direction it happened
    * in, so it gets the same answer as going under it: put them on a spawn.
+   *
+   * BUT ONLY FOR A PLAYER WHO WALKED THERE. The first version of this rescued
+   * ANY out-of-bounds position, and smoke-test caught what that meant: a
+   * client claiming an impossible position — the 70 m teleport it sends on
+   * purpose — was moved to a fresh spawn with full health instead of being
+   * corrected, which is a reward. So the step is judged first, exactly as it
+   * is for an in-bounds move, and only a step a player could have taken on
+   * foot is treated as a fall off the edge. An impossible one is a client
+   * sending numbers, and is corrected as before.
    */
-  if (!isInsideArena(x, y, z, room.mapId)) { reject(); return; }
-
   const now = Date.now();
-  if (player.alive && player.lastInputAt) {
-    const dt = Math.max(0.001, (now - player.lastInputAt) / 1000);
-    const dxz = Math.hypot(x - player.x, z - player.z);
+  const plausible = player.alive && player.lastInputAt
+    ? plausibleStep(player, x, z, now)
+    : null;                                     // no previous input to judge by
 
-    // Refill the movement bucket for the time that actually elapsed, then
-    // charge this step against it.
-    //
-    // This deliberately does NOT compute dxz/dt. Arrival times are not send
-    // times: the network bunches packets, so two perfectly legal steps can
-    // land microseconds apart and read as an impossible speed. Budgeting over
-    // real elapsed time is immune to that, because the time a delayed packet
-    // spent in flight is credited to the bucket it then spends. Sustained
-    // cheating still drains the bucket and gets caught.
-    player.moveBudget = Math.min(
-      LIMITS.moveBurstMetres,
-      player.moveBudget + LIMITS.maxHorizontalSpeed * dt,
-    );
-
-    // The teleport check stays per-step, but has to scale with the gap: after
-    // a one-second stall a sprinting player has legitimately covered 8.9 m,
-    // which a fixed 8 m ceiling would reject.
-    const allowedStep = Math.max(
-      LIMITS.maxStepDistance,
-      LIMITS.maxHorizontalSpeed * dt * 1.5,
-    );
-    if (dxz > allowedStep || dxz > player.moveBudget) { reject(); return; }
-    player.moveBudget -= dxz;
+  if (!isInsideArena(x, y, z, room.mapId)) {
+    if (plausible) {
+      player.x = x; player.y = y; player.z = z;
+      room.recoverFromVoid(player);
+    } else {
+      reject();
+    }
+    return;
   }
+
+  if (plausible === false) { reject(); return; }
+  if (plausible) player.moveBudget -= plausible.dxz;
 
   player.lastInputSeq = typeof msg.q === 'number' ? msg.q : player.lastInputSeq;
   player.lastInputAt = now;
@@ -1366,6 +1361,40 @@ function handleInput(player, msg) {
   // server can price a barrel blast, and nobody gets to walk around holding a
   // barrel.
   if (typeof msg.w === 'string' && HELD_WEAPON_IDS.has(msg.w)) player.weapon = msg.w;
+}
+
+/**
+ * Could a player have moved from where we have them to (x, z) on foot?
+ *
+ * Refills the movement bucket for the time that actually elapsed, then judges
+ * the step. Returns the step to charge on acceptance, or false.
+ *
+ * This deliberately does NOT compute dxz/dt. Arrival times are not send
+ * times: the network bunches packets, so two perfectly legal steps can land
+ * microseconds apart and read as an impossible speed. Budgeting over real
+ * elapsed time is immune to that, because the time a delayed packet spent in
+ * flight is credited to the bucket it then spends. Sustained cheating still
+ * drains the bucket and gets caught.
+ *
+ * The per-step ceiling scales with the gap: after a one-second stall a
+ * sprinting player has legitimately covered 8.9 m, which a fixed 8 m ceiling
+ * would reject.
+ *
+ * @returns {{dxz: number}|false}
+ */
+function plausibleStep(player, x, z, now) {
+  const dt = Math.max(0.001, (now - player.lastInputAt) / 1000);
+  const dxz = Math.hypot(x - player.x, z - player.z);
+  player.moveBudget = Math.min(
+    LIMITS.moveBurstMetres,
+    player.moveBudget + LIMITS.maxHorizontalSpeed * dt,
+  );
+  const allowedStep = Math.max(
+    LIMITS.maxStepDistance,
+    LIMITS.maxHorizontalSpeed * dt * 1.5,
+  );
+  if (dxz > allowedStep || dxz > player.moveBudget) return false;
+  return { dxz };
 }
 
 /**

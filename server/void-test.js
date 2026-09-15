@@ -249,9 +249,41 @@ async function main() {
     `${g.moves - beforeSecond} placement(s), ended at `
     + `${g.at.map((v) => v.toFixed(1)).join(', ')}`);
 
+  /*
+   * SIDEWAYS, PROPERLY, on the map it was reported from.
+   *
+   * The weak check earlier in this file could not tell a rescue from the old
+   * snap-back. This one can: it walks the player off the east edge of OUTPOST
+   * in legal-sized steps — the slab ends at 28, the bounds at 44 — until the
+   * server refuses the position. The old answer was a correction to the last
+   * accepted point, 43.9 m out in open air; the right one is a spawn point.
+   * The step size stays under the movement budget so this reads as a walk and
+   * not as the teleport the smoke test proves is still corrected.
+   */
+  const w = await join('WALKER', 'VDWLK', 'outpost');
+  await sleep(600);
+  send(w, { t: MSG.INPUT, q: ++w.seq, p: w.at, y: 0, a: 0, f: 0 });   // establish a last input
+  await sleep(50);
+  const walkFrom = w.moves;
+  let wx = w.at[0];
+  const wz = w.at[2];
+  const wy = w.at[1];
+  while (wx < outpost.bounds.maxX + 1) {
+    wx += 0.25;                                   // 7.5 m/s at 30 Hz — a sprint
+    send(w, { t: MSG.INPUT, q: ++w.seq, p: [wx, wy, wz], y: 0, a: 0, f: 0 });
+    await sleep(33);
+  }
+  await sleep(500);
+  check('walking off the side of OUTPOST puts you on a spawn point',
+    w.moves > walkFrom && onAnOutpostSpawn(w.at),
+    `ended at ${w.at.map((v) => v.toFixed(1)).join(', ')} after ${w.moves - walkFrom} placement(s)`);
+  check('and not on the last accepted point in mid-air',
+    Math.abs(w.at[0]) < outpost.bounds.maxX - 5, `x = ${w.at[0].toFixed(1)}`);
+
   g.ws.close();
   f.ws.close();
   a.ws.close();
+  w.ws.close();
   console.log(`\n${passed}/${passed + failed} passed`);
   process.exit(failed ? 1 : 0);
 }
