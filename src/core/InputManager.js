@@ -117,9 +117,11 @@ export class InputManager {
        * with the arrow keys and could not Tab to the next field. Nothing was
        * locked at the time; the guard simply never asked where the key was
        * going. While the pointer is locked there is no field to type into,
-       * so the game keeps every key as before.
+       * so the game keeps every key as before. Escape is the exception: it
+       * types nothing, and in a field it means "get me out of here", which
+       * is exactly what the menu's back handling does with it.
        */
-      if (!this.pointerLocked && isTyping(e.target)) return;
+      if (!this.pointerLocked && e.code !== 'Escape' && isTyping(e.target)) return;
 
       // Stop the browser scrolling / quick-find while playing.
       if (SWALLOWED_KEYS.has(e.code)) e.preventDefault();
