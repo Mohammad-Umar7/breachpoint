@@ -245,8 +245,16 @@ export class Settings {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) return;
-      this._firstRun = false;
       const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object') {
+        throw new Error('saved settings are not an object');
+      }
+      // Only a blob that actually PARSED counts as a previous run. This used
+      // to be set before the parse, so a corrupt store — which is exactly the
+      // case the catch below exists for — meant every default including the
+      // High preset, with the hardware detection that would have corrected
+      // it switched off.
+      this._firstRun = false;
       for (const key of Object.keys(DEFAULT_SETTINGS)) {
         if (parsed[key] !== undefined && typeof parsed[key] === typeof DEFAULT_SETTINGS[key]) {
           this.values[key] = parsed[key];
