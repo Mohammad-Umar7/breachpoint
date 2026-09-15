@@ -94,7 +94,17 @@ export function matchOverHeadline(net, match) {
 export function wireNetwork(game) {
   const net = game.net;
 
-  net.onWelcome = ({ spawn, modeId }) => {
+  /*
+   * The match state as of the last MATCH message, so a change can be told
+   * from a repeat — a spawn carries the state too, and must not re-announce.
+   * Seeded from WELCOME, which carries the state without going through
+   * onMatch: joining a room already in progress must not read its first
+   * respawn as "the match has just started".
+   */
+  let lastMatchState = null;
+
+  net.onWelcome = ({ spawn, modeId, match }) => {
+    lastMatchState = match?.state ?? null;
     /*
      * The HUD learns the mode HERE, not from the first MATCH message.
      *
@@ -490,11 +500,6 @@ export function wireNetwork(game) {
     game.ui.setScoreboard?.(roster, net.selfId, net.match);
     refreshCtf();
   };
-  /*
-   * The match state as of the last MATCH message, so a change can be told
-   * from a repeat — a spawn carries the state too, and must not re-announce.
-   */
-  let lastMatchState = null;
   net.onMatch = (match) => {
     // The mode arrives with the match, and it decides what the HUD even has
     // on it — so it is applied before anything is drawn into that HUD.
