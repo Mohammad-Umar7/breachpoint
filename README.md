@@ -2,9 +2,9 @@
 
 A complete browser-based first-person shooter built with **Three.js**, **Rapier 3D** physics and **Vite**.
 
-Twelve weapons, true optical scopes, learnable recoil patterns, tactical leaning, seven enemy
-archetypes with a twelve-state tactical AI, four difficulty tiers, and a full menu / loadout /
-settings suite.
+Twelve weapons, true optical scopes, learnable recoil patterns, tactical leaning, online
+multiplayer with an authoritative server — free-for-all and Capture the Flag across three maps —
+and a full menu / loadout / settings suite.
 
 **Almost everything is generated at runtime.** Textures are painted into offscreen canvases (with
 normal maps derived by a Sobel pass), models are built from primitives, and all sound is
@@ -134,7 +134,7 @@ The original scope bug (weapon geometry appearing inside the sight picture) is f
 rather than patched. There are two render layers:
 
 ```
-LAYER_WORLD      arena, enemies, props, particles
+LAYER_WORLD      arena, other players, props, particles
 LAYER_VIEWMODEL  the first-person weapon, and nothing else
 ```
 
@@ -285,8 +285,9 @@ A dark tactical theme over a **live 3D background** — the game camera flies a 
 around the warehouse while you're in the menu. Hover sweeps, click sounds, screen transitions,
 keyboard focus, and a responsive layout down to phone widths.
 
-Screens: main menu, difficulty (four cards with tactical meters), **loadout** (weapon browser with
-stat bars computed from the real balance numbers), settings, controls, credits, pause, results.
+Screens: main menu, mode and map pickers (cards generated from the registries), the lobby,
+**loadout** (weapon browser with stat bars computed from the real balance numbers), settings,
+controls, credits, pause, results.
 
 **37 settings across four tabs**, generated from a schema in `MenuManager.js` so the markup can
 never drift from the data:
@@ -297,7 +298,8 @@ never drift from the data:
   quality, particle density, AA, bloom, SSAO, motion blur, depth of field, colour grading,
   vignette, V-sync, frame-rate cap.
 - **Audio** — master, SFX, music, voice, menu.
-- **Gameplay** — difficulty, view bob, screen shake, crosshair size, damage numbers, hit direction.
+- **Gameplay** — scope reticle, recoil intensity, view bob, screen shake, crosshair size, damage
+  numbers, hit direction.
 
 Everything applies immediately, persists to `localStorage`, and has both a per-tab and a global
 reset.
@@ -414,7 +416,7 @@ now fully opaque.
 
 ## Performance
 
-Measured on a mid-range desktop with 8 enemies on the final wave, firing continuously
+Measured on a mid-range desktop with 8 other players in the room, firing continuously
 (p50 per frame):
 
 | Preset | Simulation | Render | Total | Draw calls |
@@ -429,8 +431,8 @@ full-scene render pass costs almost nothing.
 
 Techniques: object pooling for every transient effect, `InstancedMesh` for particles/decals/shells,
 merged static geometry (one draw call per material), one shadow-casting light, fixed-timestep
-physics with render interpolation, throttled and phase-offset AI sensing, and hard lifetime caps on
-particles and decals.
+physics with render interpolation, distance-culled shadows and weapons on other players' bodies,
+and hard lifetime caps on particles and decals.
 
 > **A note on glass:** the windows were originally `MeshPhysicalMaterial` with `transmission`. That
 > forces three.js to re-render the entire opaque scene into a separate buffer every frame — it
@@ -530,9 +532,10 @@ The game instance is exposed as `window.__game`:
 
 ```js
 __game.player.position
-__game.enemies.activeEnemies.map(e => [e.typeId, e.state, e.awareness.toFixed(2)])
+__game.net.roster()              // everyone in the room, scoreboard order
+__game.remotes.bodies            // the other players' bodies, by id
 __game.weapons.recoil            // live recoil accumulators
 __game.adsSystem                 // progress, scopeProgress, zoom, breath
 __game.renderer.info.render      // draw calls / triangles for the whole frame
-__game.settings.set('difficulty', 'extreme')
+__game.settings.set('quality', 'low')
 ```
