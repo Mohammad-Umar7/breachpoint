@@ -249,11 +249,6 @@ export class ADSSystem {
     return lerp(1, m, this.progress);
   }
 
-  /** True once the sight picture is trustworthy enough to hide the crosshair. */
-  get hidesCrosshair() {
-    return this.progress > 0.55;
-  }
-
   reset() {
     this.progress = 0;
     this.scopeProgress = 0;

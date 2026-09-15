@@ -21,7 +21,7 @@
  * scale the per-shot magnitude.
  */
 
-import { DEG2RAD, clamp, damp, randRange } from '../core/MathUtils.js';
+import { DEG2RAD, clamp, randRange } from '../core/MathUtils.js';
 
 export class RecoilSystem {
   /** @param {import('../core/Settings.js').Settings} [settings] */
@@ -160,12 +160,6 @@ export class RecoilSystem {
     }
   }
 
-  /** How far into the current pattern we are, 0..1 (for the HUD). */
-  patternProgress(def) {
-    const n = def?.recoil?.pattern?.length ?? 1;
-    return clamp(this.shotIndex / n, 0, 1);
-  }
-
   /** Called when the weapon changes or the player stops firing entirely. */
   resetPattern() {
     this.shotIndex = 0;
@@ -181,11 +175,5 @@ export class RecoilSystem {
     this.kickRoll = this.kickRollVel = 0;
     this.shotIndex = 0;
     this.timeSinceShot = 999;
-  }
-
-  /** Smoothly drain recoil without a hard snap (used when swapping weapons). */
-  softReset(dt) {
-    this.targetPitch = damp(this.targetPitch, 0, 14, dt);
-    this.targetYaw = damp(this.targetYaw, 0, 14, dt);
   }
 }

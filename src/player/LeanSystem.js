@@ -140,14 +140,6 @@ export class LeanSystem {
     return clamp((hit.distance - CLEARANCE) / MAX_OFFSET, 0, 1);
   }
 
-  /** Apply the lean to a camera position (world space). */
-  applyToPosition(position, yaw) {
-    if (this.offset === 0) return position;
-    position.x += Math.cos(yaw) * this.offset;
-    position.z += -Math.sin(yaw) * this.offset;
-    return position;
-  }
-
   reset() {
     this.amount = 0;
     this.intent = 0;
