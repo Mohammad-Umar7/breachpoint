@@ -276,6 +276,20 @@ export class Weapon {
     this.cooldown = this.fireInterval;
     this.spreadBonus = Math.min(this.def.spreadMax, this.spreadBonus + this.def.spreadPerShot);
 
+    /*
+     * Firing cancels a shell-by-shell reload (pump-action behaviour).
+     *
+     * BEFORE the cycle below, not after it. This sat at the bottom of the
+     * method, by which point a pump gun with rounds left had already been
+     * put into CYCLING — so the `state === RELOADING` test was false, the
+     * reload was never formally finished, and its `reloadPhase` and shell
+     * counters were left mid-insert. The reload's end cooldown was skipped
+     * too, so firing out of a reload was FASTER than firing out of nothing.
+     */
+    if (this.state === WEAPON_STATE.RELOADING && this.def.reloadType === 'shells') {
+      this._finishShellReload();
+    }
+
     // Bolt-action / pump-action weapons must cycle before the next shot.
     const cycle = this.def.boltTime ?? this.def.pumpTime ?? 0;
     if (cycle > 0 && this.magazine > 0) {
@@ -291,11 +305,6 @@ export class Weapon {
       this.flashGroup.rotation.z = Math.random() * Math.PI * 2;
       this.flashJitter = randRange(0.82, 1.2);
       this.flashLight.visible = true;
-    }
-
-    // Firing cancels a shell-by-shell reload (pump-action behaviour).
-    if (this.state === WEAPON_STATE.RELOADING && this.def.reloadType === 'shells') {
-      this._finishShellReload();
     }
   }
 
