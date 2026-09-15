@@ -503,6 +503,9 @@ export class Game {
     this.input.onPauseRequested = () => {
       if (this.state === GAME_STATE.PLAYING) this.pause();
       else if (this.state === GAME_STATE.PAUSED && this.menus.currentScreen === 'screen-pause') this.resume();
+      // Anywhere else — Settings from the pause menu, a picker, the lobby —
+      // Escape is BACK. It used to be dead on every one of those screens.
+      else this.menus.back();
     };
 
     this.input.onPointerLockChange = (locked) => {

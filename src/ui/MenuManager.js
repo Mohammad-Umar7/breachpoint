@@ -361,6 +361,40 @@ export class MenuManager {
     if (first) setTimeout(() => first.focus({ preventScroll: true }), 30);
   }
 
+  /**
+   * One step back from wherever the player is, for the Escape key.
+   *
+   * Every screen but the main menu has a BACK button, and Escape should do
+   * what BACK does. It used to do nothing at all outside the pause screen:
+   * open Settings from the pause menu, press Escape to leave it, and nothing
+   * happened — the key that had opened the menu could not close it. The
+   * loadout keeps its own rule (BACK may mean "into the match"), the pickers
+   * unwind one step, and the results and error screens have no "back".
+   *
+   * @returns {boolean} true if a screen change happened
+   */
+  back() {
+    switch (this.currentScreen) {
+      case 'screen-settings': this.showScreen(this.settingsReturnScreen); return true;
+      case 'screen-controls': this.showScreen(this.controlsReturnScreen); return true;
+      case 'screen-credits': this.showScreen('screen-menu'); return true;
+      case 'screen-modes': this.showScreen('screen-menu'); return true;
+      case 'screen-maps':
+        if (this._deploying) return false;
+        this.showScreen(this._mapIntent === 'browse' ? 'screen-menu' : 'screen-modes');
+        return true;
+      case 'screen-lobby':
+        if (this.el.lobbyGoBtn?.disabled) return false;      // mid-connect
+        this.showScreen('screen-menu');
+        return true;
+      case 'screen-loadout':
+        if (this.loadoutReturnScreen === RESUME_MATCH) { this.onResumeFromLoadout?.(); return true; }
+        this.showScreen(this.loadoutReturnScreen || 'screen-menu');
+        return true;
+      default: return false;
+    }
+  }
+
   hideOverlay() {
     this._stopPopulationPolling();
     this.el.overlay.classList.add('hidden');
