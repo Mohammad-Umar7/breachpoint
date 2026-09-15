@@ -395,6 +395,11 @@ export class MenuManager {
     }
   }
 
+  /** Stop anything that runs on its own: the lobby's population poll. */
+  dispose() {
+    this._stopPopulationPolling();
+  }
+
   hideOverlay() {
     this._stopPopulationPolling();
     this.el.overlay.classList.add('hidden');

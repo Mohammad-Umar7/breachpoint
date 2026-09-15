@@ -1838,8 +1838,22 @@ export class Game {
   dispose() {
     this.disposed = true;
     cancelAnimationFrame(this.rafId);
+    clearTimeout(this._dropInTimer);
     window.removeEventListener('resize', this._onResize);
     document.removeEventListener('visibilitychange', this._onVisibility);
+
+    /*
+     * The network first, so nothing arriving on the socket touches a system
+     * that is being torn down under it. These four were missing entirely: a
+     * hot reload during a match left the old socket open and pinging, the
+     * old bodies in the scene the new game then built into, and the menu's
+     * population poll hitting the server every ten seconds from a page that
+     * no longer existed.
+     */
+    this.net?.dispose();
+    this.remotes?.dispose();
+    this.flagObjects?.dispose();
+    this.menus?.dispose();
 
     this.input?.dispose();
     this.audio?.dispose();
