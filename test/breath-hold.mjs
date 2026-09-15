@@ -48,12 +48,22 @@ check('one breath out when the lungs run dry', outs === 1, `${outs} breathOut`);
 check('the hold is released once the breath is spent', ads.holding === false);
 check('the system remembers it is winded', ads.winded === true);
 
-// Let go for a moment, then press again before recovery: still refused.
+// Twelve seconds is long enough to have recovered while the key was down, so
+// letting go and pressing again is a legitimate new hold.
+for (let i = 0; i < 30; i++) ads.update(dt, sniper, true, { holdBreathPressed: false, moving: 0 });
+check('recovery continues while the key is held down uselessly', ads.breath > 0.9 && !ads.winded);
+
+// Now the short version: run out, let go for half a second, press again
+// before the lungs are back. Refused, and silently.
+ads.reset();
+for (let i = 0; i < 120; i++) ads.update(dt, sniper, true, { holdBreathPressed: false, moving: 0 });
+for (let i = 0; i < 3.6 * 60; i++) ads.update(dt, sniper, true, { holdBreathPressed: true, moving: 0 });
+check('a 3.6 s hold empties the lungs', ads.winded === true, ads.breath.toFixed(2));
 for (let i = 0; i < 30; i++) ads.update(dt, sniper, true, { holdBreathPressed: false, moving: 0 });
 played.length = 0;
 for (let i = 0; i < 30; i++) ads.update(dt, sniper, true, { holdBreathPressed: true, moving: 0 });
 check('a hold asked for before recovering is refused silently',
-  played.length === 0 && ads.holding === false, `${played.length} sounds`);
+  played.length === 0 && ads.holding === false, `${played.length} sounds, breath ${ads.breath.toFixed(2)}`);
 
 // Recover fully, then the hold works again.
 for (let i = 0; i < 6 * 60; i++) ads.update(dt, sniper, true, { holdBreathPressed: false, moving: 0 });
