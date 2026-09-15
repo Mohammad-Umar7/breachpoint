@@ -117,6 +117,17 @@ export class NetworkClient {
 
     /** @type {Array<{ts:number, at:number, players:Map}>} newest last */
     this.snapshots = [];
+    /**
+     * One reusable record per player for sample(), keyed by id.
+     *
+     * sample() runs every rendered frame and used to build a fresh object
+     * for every other player each time — at 60 fps in a full room that was
+     * over seven hundred short-lived objects a second, all garbage by the
+     * next frame, and the collector's pauses landed in the middle of
+     * firefights. The consumers read the fields and keep no references
+     * across frames, so the same record can be refilled in place.
+     */
+    this._sampleRecords = new Map();
     this._clockOffset = null;   // serverTime - localTime
     /** Recent snapshot arrival gaps, for sizing the interpolation buffer. */
     this._gaps = [];
@@ -372,6 +383,7 @@ export class NetworkClient {
     }
     this.players.clear();
     this.snapshots.length = 0;
+    this._sampleRecords.clear();
     this.selfId = null;
     this.selfFlags = 0;
     this.room = null;
@@ -826,28 +838,35 @@ export class NetworkClient {
 
     for (const [id, a] of older.players) {
       if (id === this.selfId) continue;         // never interpolate ourselves
+      let rec = this._sampleRecords.get(id);
+      if (!rec) {
+        rec = { id, x: 0, y: 0, z: 0, yaw: 0, pitch: 0, flags: 0, weapon: null, hp: 0, moving: 0 };
+        this._sampleRecords.set(id, rec);
+      }
       const b = newer?.players.get(id);
       if (!b) {
-        out.set(id, { ...a, moving: 0 });
+        rec.x = a.x; rec.y = a.y; rec.z = a.z;
+        rec.yaw = a.yaw; rec.pitch = a.pitch;
+        rec.flags = a.flags; rec.weapon = a.weapon; rec.hp = a.hp;
+        rec.moving = 0;
+        out.set(id, rec);
         continue;
       }
       const dx = b.x - a.x;
       const dz = b.z - a.z;
-      out.set(id, {
-        id,
-        x: a.x + dx * k,
-        y: a.y + (b.y - a.y) * k,
-        z: a.z + dz * k,
-        yaw: lerpAngle(a.yaw, b.yaw, k),
-        pitch: a.pitch + (b.pitch - a.pitch) * k,
-        // Newest authoritative values rather than interpolated ones: blending a
-        // flag bitfield or an integer HP produces nonsense.
-        flags: b.flags,
-        weapon: b.weapon,
-        hp: b.hp,
-        // Horizontal speed, for driving the walk cycle on remote bodies.
-        moving: span > 0 ? Math.hypot(dx, dz) / (span / 1000) : 0,
-      });
+      rec.x = a.x + dx * k;
+      rec.y = a.y + (b.y - a.y) * k;
+      rec.z = a.z + dz * k;
+      rec.yaw = lerpAngle(a.yaw, b.yaw, k);
+      rec.pitch = a.pitch + (b.pitch - a.pitch) * k;
+      // Newest authoritative values rather than interpolated ones: blending a
+      // flag bitfield or an integer HP produces nonsense.
+      rec.flags = b.flags;
+      rec.weapon = b.weapon;
+      rec.hp = b.hp;
+      // Horizontal speed, for driving the walk cycle on remote bodies.
+      rec.moving = span > 0 ? Math.hypot(dx, dz) / (span / 1000) : 0;
+      out.set(id, rec);
     }
     return out;
   }
