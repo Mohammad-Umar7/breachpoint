@@ -697,9 +697,22 @@ export class Game {
 
     this.fx.spawnExplosion(pos, radius * 0.75);
     this.audio.play('explosion', { position: pos, volume: 1 });
-    this._tmpB.set(0, 1, 0);
-    this.fx.addDecal({ x: pos.x, y: 0.02, z: pos.z }, this._tmpB, 'blood', radius * 0.5);
-
+    /*
+     * The scorch goes on the floor UNDER the blast, wherever that floor is.
+     *
+     * It used to be stamped at y = 0.02 — the ground plane of a map that has
+     * only one. LODGE has two: a grenade that went off in an upstairs
+     * bedroom left its mark on the living-room floor beneath, three and a
+     * half metres down through the ceiling. And on any map a barrel on a
+     * catwalk scorched the concrete under the catwalk. Probe for the surface
+     * instead, and stamp along its real normal; no floor within reach means
+     * no mark, which is what an explosion in mid-air leaves.
+     */
+    const floor = this.physics.raycast(pos, this._down, 4, {
+      excludeCollider: this.player.collider,
+      filter: (tag) => !!tag && tag.kind !== TAG_KIND.PLAYER && !(tag.prop && tag.prop.exploded),
+    });
+    if (floor) this.fx.addDecal(floor.point, floor.normal, 'blood', radius * 0.5);
   }
 
   _updatePendingExplosions(dt) {
