@@ -30,8 +30,22 @@ const QUALITY = 0.72;
 const VERSION = (typeof __ASSET_VERSION__ !== 'undefined' && __ASSET_VERSION__) || 'dev';
 const keyFor = (mapId) => `breachpoint.thumb.${VERSION}.${mapId}`;
 
+/**
+ * Photographs taken THIS SESSION, whether or not storage kept them.
+ *
+ * Without this, a browser that refuses localStorage — private windows, a
+ * full quota — re-took every photo on every boot, and the boot-time pass
+ * that photographs the maps nobody has played builds each of those maps in
+ * full to do it. Roughly a second of geometry per map, every launch, to
+ * produce a picture the page then failed to keep. WeaponPortrait has always
+ * had this memo; this file was written from it and dropped the line.
+ */
+const memo = new Map();
+
 /** The stored photograph for a map, or null if it has never been taken. */
 export function getThumbnail(mapId) {
+  const kept = memo.get(mapId);
+  if (kept) return kept;
   try {
     return localStorage.getItem(keyFor(mapId));
   } catch {
@@ -94,6 +108,7 @@ export function ensureThumbnail(renderer, scene, map) {
   if (getThumbnail(map.id)) return;
   const url = captureThumbnail(renderer, scene, map);
   if (!url) return;
+  memo.set(map.id, url);
   try {
     localStorage.setItem(keyFor(map.id), url);
     // Drop photographs from previous builds, or a long-lived browser slowly
