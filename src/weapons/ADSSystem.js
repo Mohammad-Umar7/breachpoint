@@ -29,6 +29,21 @@ const MOUSE_RIGHT = 2;
 /** Scope glass only takes over once the weapon is essentially shouldered. */
 const SCOPE_ENGAGE = 0.86;
 
+/**
+ * Breath hold hysteresis.
+ *
+ * Lungs are EMPTY below the first figure and cannot be held again until they
+ * have recovered past the second and the key has been released. Without the
+ * gap, a player who kept the key down after running out sat exactly on the
+ * threshold: one frame the hold was refused and released, the next frame
+ * recovery had nudged the meter back over the line and the hold re-engaged.
+ * That fired breathIn and breathOut on alternate frames — a gasping loop at
+ * half the frame rate — and jittered the sway between steady and unsteady
+ * with it.
+ */
+const BREATH_EMPTY = 0.02;
+const BREATH_RECOVERED = 0.35;
+
 export class ADSSystem {
   /**
    * @param {import('../core/Settings.js').Settings} settings
@@ -50,6 +65,8 @@ export class ADSSystem {
     // --- breath hold ---
     this.holding = false;
     this.breath = 1;          // 1 = full, 0 = spent
+    /** Out of breath: no hold until the meter recovers. See BREATH_RECOVERED. */
+    this.winded = false;
     this.swayPhase = Math.random() * 100;
     this.sway = new THREE.Vector2();
 
@@ -157,16 +174,28 @@ export class ADSSystem {
     const optic = weapon?.def?.optic;
     const canHold = !!optic?.breathHold && this.scopeProgress > 0.4;
 
-    if (canHold && ctx.holdBreathPressed && this.breath > 0.02) {
+    if (canHold && ctx.holdBreathPressed && !this.winded) {
       if (!this.holding) this.audio?.play('breathIn', { volume: 0.5 });
       this.holding = true;
       this.breath = Math.max(0, this.breath - dt / (optic.holdDuration ?? 3.5));
-      if (this.breath <= 0.02) this.audio?.play('breathOut', { volume: 0.6 });
+      if (this.breath <= BREATH_EMPTY) {
+        // Spent. ONE exhale, and no new hold until the lungs are back — the
+        // hysteresis is what stops the key being answered every other frame.
+        this.winded = true;
+        this.holding = false;
+        this.audio?.play('breathOut', { volume: 0.6 });
+      }
     } else {
       if (this.holding) this.audio?.play('breathOut', { volume: 0.45 });
       this.holding = false;
       const recovery = optic?.holdRecovery ?? 5;
       this.breath = Math.min(1, this.breath + dt / recovery);
+      // Back in play only once the lungs have recovered AND the key has been
+      // let go: a key held straight through must not quietly re-engage the
+      // moment the meter crosses the line.
+      if (this.winded && this.breath >= BREATH_RECOVERED && !ctx.holdBreathPressed) {
+        this.winded = false;
+      }
     }
   }
 
@@ -182,7 +211,7 @@ export class ADSSystem {
 
     // Two out-of-phase sine pairs read as an unsteady hand rather than a
     // mechanical wobble. Holding your breath nearly stops it.
-    const steady = this.holding && this.breath > 0.02 ? 0.06 : 1;
+    const steady = this.holding && this.breath > BREATH_EMPTY ? 0.06 : 1;
     const moveMul = 1 + clamp(ctx.moving ?? 0, 0, 1) * 2.2;
     const a = amp * this.scopeProgress * steady * moveMul;
 
@@ -232,6 +261,7 @@ export class ADSSystem {
     this.zoomIndex = 0;
     this.holding = false;
     this.breath = 1;
+    this.winded = false;
     this.sway.set(0, 0);
     this._lastAdsIntent = false;
     this._wasScoped = false;
