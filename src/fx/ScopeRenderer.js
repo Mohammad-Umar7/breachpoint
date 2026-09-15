@@ -302,22 +302,46 @@ export class ScopeRenderer {
     this._createOverlay();
     this.setSize();
 
-    this._onQuality = () => { this._createTarget(); this.setSize(); };
+    /*
+     * Coalesced: a preset change emits renderScale AND quality in the same
+     * burst, and each one used to throw the render target away and allocate
+     * a fresh multisampled one. The microtask runs once the burst is over.
+     * The target is also only replaced when its SIZE actually changes —
+     * changing renderScale alone leaves a 1024-pixel scope at 1024 pixels.
+     */
+    this._retargetQueued = false;
+    this._onQuality = () => {
+      if (this._retargetQueued) return;
+      this._retargetQueued = true;
+      queueMicrotask(() => {
+        this._retargetQueued = false;
+        if (!this.target) return;              // disposed in the meantime
+        this._createTarget();
+        this.setSize();
+      });
+    };
     settings.onChange('quality', this._onQuality);
     settings.onChange('renderScale', this._onQuality);
   }
 
+  /** Render-target resolution for a quality preset. */
+  static targetSizeFor(quality) {
+    return quality === 'low' ? 512 : quality === 'medium' ? 768 : quality === 'ultra' ? 1536 : 1024;
+  }
+
   _createTarget() {
-    this.target?.dispose();
     const q = this.settings.get('quality');
-    const size = q === 'low' ? 512 : q === 'medium' ? 768 : q === 'ultra' ? 1536 : 1024;
+    const size = ScopeRenderer.targetSizeFor(q);
+    const samples = q === 'low' ? 0 : 4;
+    if (this.target && this.target.width === size && this.target.samples === samples) return;
+    this.target?.dispose();
     this.target = new THREE.WebGLRenderTarget(size, size, {
       minFilter: THREE.LinearFilter,
       magFilter: THREE.LinearFilter,
       type: THREE.HalfFloatType,
       depthBuffer: true,
       stencilBuffer: false,
-      samples: q === 'low' ? 0 : 4,
+      samples,
     });
     this.target.texture.colorSpace = THREE.NoColorSpace;
     if (this.material) this.material.uniforms.uScope.value = this.target.texture;
@@ -429,6 +453,7 @@ export class ScopeRenderer {
 
   dispose() {
     this.target?.dispose();
+    this.target = null;
     this.quad.geometry.dispose();
     this.material.dispose();
   }
