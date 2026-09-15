@@ -292,6 +292,7 @@ export class WeaponSystem {
 
     // --- weapon state -----------------------------------------------------
     w.update(dt, (name) => this.audio.play(name, { volume: 0.9 }), this.ads.progress);
+    if (alive) this._updateMelee();
 
     // --- projectiles & grenades ------------------------------------------
     this._updateProjectiles(dt);
@@ -1106,9 +1107,27 @@ export class WeaponSystem {
     if (!w.startMelee()) return;
     this.audio.play(w.def.fireSound);
     w.cooldown = w.fireInterval;
+    // The blade lands partway into the swing. Resolved from `update`, on the
+    // weapon's own clock — see _updateMelee.
+  }
 
-    // Resolve the hit slightly into the swing, at the moment the blade lands.
-    setTimeout(() => this._resolveMelee(w), (w.def.hitTime ?? 0.15) * 1000);
+  /**
+   * Land the blade at the moment of the swing it belongs to.
+   *
+   * This used to be a `setTimeout` armed in _swingMelee, and a wall-clock
+   * timer is the wrong clock for a game: it fired while the game was paused
+   * — a swing started a frame before Esc registered its hit into a frozen
+   * world and sent the claim to the server from the pause menu — and it
+   * fired for a weapon that had already been holstered by a quick-switch.
+   * The weapon's own meleeTimer advances only while the game does, so the
+   * hit lands exactly `hitTime` into the animation and nowhere else.
+   */
+  _updateMelee() {
+    const w = this.current;
+    if (w.state !== WEAPON_STATE.MELEE || w.meleeHitDone) return;
+    if (w.meleeTimer < (w.def.hitTime ?? 0.15)) return;
+    w.meleeHitDone = true;
+    this._resolveMelee(w);
   }
 
   _resolveMelee(weapon) {
