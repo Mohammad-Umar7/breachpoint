@@ -835,7 +835,14 @@ export class MenuManager {
   }
 
   async _lobbyGo() {
-    const name = this.el.inputName.value.trim();
+    /*
+     * The same cleaning the main-menu field applies, so the two places a name
+     * can be typed cannot disagree about what was typed. This one saved the
+     * raw string — control and zero-width characters included, which the
+     * server would then strip, leaving the callsign shown on the menu
+     * different from the one shown to the room.
+     */
+    const name = sanitizeName(this.el.inputName.value, '');
     if (name) this.settings.set('playerName', name);
     this.refreshTags();
 
