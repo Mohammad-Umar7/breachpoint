@@ -833,6 +833,18 @@ export class ParticleManager {
     const mesh = this.sparkMesh;
     const alphaAttr = mesh.geometry.getAttribute('aAlpha');
     const colorAttr = mesh.geometry.getAttribute('aColor');
+    /*
+     * Upload only if the loop below will write anything.
+     *
+     * Every one of these systems flagged its instance matrices AND its alpha
+     * and colour attributes for re-upload on every frame, alive or not: six
+     * pools, about 85 KB of matrices plus the attributes, pushed to the GPU
+     * sixty times a second while nothing was moving — on the main menu, in
+     * the pause screen, and in every quiet second of a match. A death this
+     * frame only happens to something alive at the start of it, so "anything
+     * alive now" is exactly "anything about to be written".
+     */
+    const touched = this.sparkCount > 0;
 
     for (let i = 0; i < this.sparkCount; i++) {
       const p = this.sparks[i];
@@ -870,15 +882,18 @@ export class ParticleManager {
       colorAttr.array[p.idx * 3 + 1] = p.color.g;
       colorAttr.array[p.idx * 3 + 2] = p.color.b;
     }
-    mesh.instanceMatrix.needsUpdate = true;
-    alphaAttr.needsUpdate = true;
-    colorAttr.needsUpdate = true;
+    if (touched) {
+      mesh.instanceMatrix.needsUpdate = true;
+      alphaAttr.needsUpdate = true;
+      colorAttr.needsUpdate = true;
+    }
   }
 
   _updateSmoke(dt) {
     const mesh = this.smokeMesh;
     const alphaAttr = mesh.geometry.getAttribute('aAlpha');
     const colorAttr = mesh.geometry.getAttribute('aColor');
+    const touched = this.smokeCount > 0;   // see _updateSparks
 
     for (let i = 0; i < this.smokeCount; i++) {
       const s = this.smokes[i];
@@ -909,13 +924,16 @@ export class ParticleManager {
       colorAttr.array[s.idx * 3 + 1] = s.color.g;
       colorAttr.array[s.idx * 3 + 2] = s.color.b;
     }
-    mesh.instanceMatrix.needsUpdate = true;
-    alphaAttr.needsUpdate = true;
-    colorAttr.needsUpdate = true;
+    if (touched) {
+      mesh.instanceMatrix.needsUpdate = true;
+      alphaAttr.needsUpdate = true;
+      colorAttr.needsUpdate = true;
+    }
   }
 
   _updateDebris(dt) {
     const mesh = this.debrisMesh;
+    const touched = this.debrisCount > 0;   // see _updateSparks
     for (let i = 0; i < this.debrisCount; i++) {
       const p = this.debris[i];
       p.life += dt;
@@ -945,13 +963,14 @@ export class ParticleManager {
       this._m.compose(p.pos, this._q, this._tmpScale(Math.max(0, scale)));
       mesh.setMatrixAt(p.idx, this._m);
     }
-    mesh.instanceMatrix.needsUpdate = true;
+    if (touched) mesh.instanceMatrix.needsUpdate = true;
   }
 
   _updateTracers(dt) {
     const mesh = this.tracerMesh;
     const alphaAttr = mesh.geometry.getAttribute('aAlpha');
     const colorAttr = mesh.geometry.getAttribute('aColor');
+    const touched = this.tracerCount > 0;   // see _updateSparks
 
     for (let i = 0; i < this.tracerCount; i++) {
       const t = this.tracers[i];
@@ -991,13 +1010,16 @@ export class ParticleManager {
       colorAttr.array[t.idx * 3 + 1] = t.color.g;
       colorAttr.array[t.idx * 3 + 2] = t.color.b;
     }
-    mesh.instanceMatrix.needsUpdate = true;
-    alphaAttr.needsUpdate = true;
-    colorAttr.needsUpdate = true;
+    if (touched) {
+      mesh.instanceMatrix.needsUpdate = true;
+      alphaAttr.needsUpdate = true;
+      colorAttr.needsUpdate = true;
+    }
   }
 
   _updateShells(dt) {
     const mesh = this.shellMesh;
+    const touched = this.shellCount > 0;   // see _updateSparks
     for (let i = 0; i < this.shellCount; i++) {
       const s = this.shells[i];
       s.life += dt;
@@ -1028,13 +1050,14 @@ export class ParticleManager {
       this._m.compose(s.pos, this._q, this._tmpScale(s.scale * Math.max(0, shrink)));
       mesh.setMatrixAt(s.idx, this._m);
     }
-    mesh.instanceMatrix.needsUpdate = true;
+    if (touched) mesh.instanceMatrix.needsUpdate = true;
   }
 
   _updateFlashes(dt) {
     const mesh = this.flashMesh;
     const alphaAttr = mesh.geometry.getAttribute('aAlpha');
     const colorAttr = mesh.geometry.getAttribute('aColor');
+    const touched = this.flashCount > 0;   // see _updateSparks
 
     for (let i = 0; i < this.flashCount; i++) {
       const f = this.flashes[i];
@@ -1055,9 +1078,11 @@ export class ParticleManager {
       colorAttr.array[f.idx * 3 + 1] = f.color.g;
       colorAttr.array[f.idx * 3 + 2] = f.color.b;
     }
-    mesh.instanceMatrix.needsUpdate = true;
-    alphaAttr.needsUpdate = true;
-    colorAttr.needsUpdate = true;
+    if (touched) {
+      mesh.instanceMatrix.needsUpdate = true;
+      alphaAttr.needsUpdate = true;
+      colorAttr.needsUpdate = true;
+    }
 
     for (const fb of this.fireballs) {
       if (!fb.alive) continue;
