@@ -89,6 +89,9 @@ export function detectQuality(probe = {}) {
 
 const ORDER = ['low', 'medium', 'high', 'ultra'];
 
+/** Below this sustained frame rate the governor steps the preset down. */
+const LOW_FPS = 45;
+
 /**
  * Watches the frame rate and steps quality down if the machine is struggling.
  *
@@ -132,7 +135,15 @@ export class PerformanceGovernor {
     this._frames = 0;
     this._elapsed = 0;
 
-    if (fps >= 45) return;
+    if (fps >= LOW_FPS) return;
+
+    /*
+     * A frame rate the PLAYER chose is not a frame rate the machine failed to
+     * reach. With V-sync off and the limiter set to 30, every window measured
+     * exactly 30 and the preset was stepped down twice for obeying a setting.
+     */
+    const cap = this.settings.get('vsync') ? 0 : (this.settings.get('maxFps') || 0);
+    if (cap > 0 && cap < LOW_FPS) return;
 
     const current = this.settings.get('quality');
     const idx = ORDER.indexOf(current);

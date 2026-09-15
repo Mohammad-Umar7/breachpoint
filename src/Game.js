@@ -990,7 +990,17 @@ export class Game {
     dt = Math.min(Math.max(dt, 0), 0.1);
 
     this._updateFps(dt);
-    this.governor?.update(dt);
+    /*
+     * The governor judges GAMEPLAY frames only.
+     *
+     * The menu is capped at 30 fps on purpose (see above), and the governor
+     * steps the quality preset down whenever it measures under 45. Fed the
+     * menu's frames, it read the cap as a struggling machine: nine seconds on
+     * the main menu dropped High to Medium, six more dropped it to Low, and
+     * neither ever comes back in a session. Anyone who lingered in Settings
+     * watched their own preset change underneath them.
+     */
+    if (this.state === GAME_STATE.PLAYING) this.governor?.update(dt);
 
     // endFrame() clears the one-frame press edges, and it MUST run even if
     // something above it throws.

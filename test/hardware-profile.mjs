@@ -67,8 +67,8 @@ check('no integrated-graphics machine starts on high', anyHigh.length === 0,
 
 // --- the governor ---------------------------------------------------------
 console.log('\nperformance governor');
-function governorRun(fps, seconds = 40) {
-  const values = { quality: 'high' };
+function governorRun(fps, seconds = 40, extra = {}) {
+  const values = { quality: 'high', vsync: true, maxFps: 0, ...extra };
   const settings = { get: (k) => values[k], set: (k, v) => { values[k] = v; } };
   const gov = new PerformanceGovernor(settings);
   const dt = 1 / fps;
@@ -82,6 +82,17 @@ check('it stops stepping rather than falling to the floor', struggling.drops <= 
   `${struggling.drops} steps`);
 const healthy = governorRun(90);
 check('a machine running at 90 fps is left alone', healthy.quality === 'high' && healthy.drops === 0);
+
+// A frame rate the player CHOSE is not a machine failing to keep up. With
+// V-sync off and the limiter on 30, every window measured exactly 30 and the
+// preset was stepped down twice for obeying a setting.
+const capped = governorRun(30, 40, { vsync: false, maxFps: 30 });
+check('a deliberate 30 fps limiter is not mistaken for a slow machine',
+  capped.quality === 'high' && capped.drops === 0,
+  `high -> ${capped.quality} after ${capped.drops} step(s)`);
+const cappedHigh = governorRun(22, 40, { vsync: false, maxFps: 60 });
+check('a limiter above the threshold still lets a real slowdown be caught',
+  cappedHigh.quality !== 'high', `high -> ${cappedHigh.quality}`);
 
 console.log(`\n${passed}/${passed + failed} passed`);
 process.exit(failed ? 1 : 0);
