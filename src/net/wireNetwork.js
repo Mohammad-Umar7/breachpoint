@@ -613,6 +613,26 @@ export function wireNetwork(game) {
     }
     if (state === NET_STATE.OFFLINE && game.hasActiveRun) {
       game.ui.showNetWarning?.(detail || 'Disconnected from the match.');
+      /*
+       * A player who was DEAD when the socket went has nobody left to bring
+       * them back.
+       *
+       * The respawn is the server's: the countdown asks it, and it answers
+       * with the spawn. With the socket gone the countdown block in
+       * _updateNetwork never runs again, so they stood at their spawn point
+       * behind a "RESPAWNING 3" overlay that never moved, unable to walk or
+       * shoot, with LEAVE MATCH the only thing that worked. Offline there is
+       * no authority to wait for, so the client is the authority — through
+       * the same revive the offline void rescue uses, on the map's own
+       * spawn, and the countdown overlay goes with it.
+       */
+      if (!game.player.alive && game.level) {
+        game.player.revive(game.level.playerSpawn, { yaw: game.level.playerSpawnYaw });
+      }
+      game._respawnAt = 0;
+      game._respawnShown = false;
+      game._killedBy = null;
+      game.ui.hideRespawn?.();
     }
   };
 
