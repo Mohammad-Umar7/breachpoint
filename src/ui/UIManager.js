@@ -80,6 +80,15 @@ export class UIManager {
     /** team -> the objective-marker pill for that team's flag. */
     this._flagMarkerEls = new Map();
     this._bannerTimer = 0;
+    /**
+     * Scratch vector for projecting world points, borrowed from the first
+     * vector handed in. This class deliberately does not import three.js —
+     * it takes vectors and gives back pixels — so it cannot construct one,
+     * but `project()` mutates in place and a copy is needed every frame.
+     * Cloning per number per frame was the previous answer; one scratch is
+     * the right one.
+     */
+    this._proj = null;
     this._damageFlash = 0;
     this.statsVisible = false;
     this._slotEls = [];
@@ -496,7 +505,7 @@ export class UIManager {
         this._damageNumbers.splice(i, 1);
         continue;
       }
-      const p = d.pos.clone().project(camera);
+      const p = (this._proj ??= d.pos.clone()).copy(d.pos).project(camera);
       if (p.z > 1) { d.el.style.display = 'none'; continue; }
       d.el.style.display = '';
       d.el.style.left = `${(p.x * 0.5 + 0.5) * window.innerWidth}px`;
@@ -534,14 +543,11 @@ export class UIManager {
         this._flagMarkerEls.set(m.team, el);
       }
 
-      /*
-       * Cloned because `project` mutates in place, and `m.pos` is a scratch
-       * vector FlagObjects owns and reuses — projecting it directly would
-       * leave screen coordinates where the next frame expects world ones.
-       * Two clones a frame, matching how the damage numbers above work; this
-       * class deliberately does not import THREE and takes vectors instead.
-       */
-      const v = m.pos.clone();
+      // Copied into the scratch because `project` mutates in place, and
+      // `m.pos` is a vector FlagObjects owns and reuses — projecting it
+      // directly would leave screen coordinates where the next frame expects
+      // world ones.
+      const v = (this._proj ??= m.pos.clone()).copy(m.pos);
       const dist = Math.round(v.distanceTo(camera.position));
       const { x, y, edge } = markerScreenPos(v.project(camera));
 
