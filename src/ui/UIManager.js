@@ -212,19 +212,9 @@ export class UIManager {
     this.el.armorFill.style.width = `${ap * 100}%`;
     setText(this.el.armorNum, Math.ceil(s.armor));
 
-    /*
-     * The low-health pulse describes OUR condition, so it stands down whenever
-     * the view on screen is not our own body's.
-     */
-    this.el.lowHealth.style.opacity =
-      (hp < 0.3 && !s.spectating)
-        ? String(0.25 + Math.sin(performance.now() / 240) * 0.18 * (1 - hp / 0.3))
-        : '0';
-
-    // Same reasoning for the crosshair: it aims a weapon we are holding.
-    if (this.el.crosshair) {
-      this.el.crosshair.style.visibility = s.spectating ? 'hidden' : '';
-    }
+    this.el.lowHealth.style.opacity = hp < 0.3
+      ? String(0.25 + Math.sin(performance.now() / 240) * 0.18 * (1 - hp / 0.3))
+      : '0';
 
     // "Click to take control". Assigned only on a change: this runs every
     // frame, and writing `hidden` sixty times a second invalidates style on an
@@ -366,18 +356,6 @@ export class UIManager {
     void hm.offsetWidth; // force a reflow so rapid hits re-trigger the anim
     hm.classList.add('show');
     hm.style.filter = '';
-  }
-
-  addKill(text, points, headshot) {
-    const div = document.createElement('div');
-    div.className = `kill-entry${headshot ? ' headshot' : ''}`;
-    div.innerHTML = `${text}<span class="pts">+${points}</span>`;
-    this.el.killFeed.appendChild(div);
-    this._killFeed.push({ el: div, life: 4.5 });
-    while (this._killFeed.length > 6) {
-      const old = this._killFeed.shift();
-      old.el.remove();
-    }
   }
 
   _updateKillFeed(dt) {
@@ -581,10 +559,7 @@ export class UIManager {
   /** Clear every transient HUD element (used on restart). */
 
   // =========================================================== multiplayer
-  /**
-   * Kill feed line. Distinct from addKill(), which carries a score bonus that
-   * deathmatch does not have.
-   */
+  /** Kill feed line. */
   addKillFeed(text, byMe = false) {
     const div = document.createElement('div');
     div.className = 'kill-entry' + (byMe ? ' headshot' : '');
@@ -593,9 +568,6 @@ export class UIManager {
     this._killFeed.push({ el: div, life: 5 });
     while (this._killFeed.length > 6) this._killFeed.shift().el.remove();
   }
-
-  /** Convenience wrapper so Game can flash damage without knowing the shape. */
-  flashDamage(intensity) { this.showDamage(clamp(intensity, 0.05, 0.85)); }
 
   setScoreboard(roster, selfId, match) {
     this._roster = roster;

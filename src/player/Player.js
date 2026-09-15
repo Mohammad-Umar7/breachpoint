@@ -475,7 +475,6 @@ export class Player {
         this.audio.play(footstepSoundFor(this.currentSurface), {
           volume: this.crouching ? 0.32 : this.sprinting ? 1.0 : 0.68,
         });
-        this.onFootstep?.(this.sprinting ? 16 : this.crouching ? 3 : 8);
       }
     } else {
       this.stepDistance = Math.min(this.stepDistance, 1.2);
