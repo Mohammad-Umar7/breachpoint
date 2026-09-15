@@ -241,7 +241,17 @@ export class Level {
     this.objects.push(sun, sun.target);
     this.sun = sun;
 
-    this.settings.onChange('shadowQuality', () => this._configureSunShadow(this.sun));
+    /*
+     * Kept so dispose() can remove it. Every level build registered one of
+     * these and none was ever removed, and the game builds levels freely —
+     * every map at boot to photograph it, one more per map switch — so each
+     * became a permanent reference to a torn-down level and its sun, and
+     * changing the shadow setting reconfigured every one of them.
+     */
+    this._unsubShadow?.();
+    this._unsubShadow = this.settings.onChange('shadowQuality', () => {
+      if (this.sun) this._configureSunShadow(this.sun);
+    });
 
     // --- Fill lighting ---
     const hemi = new THREE.HemisphereLight(
@@ -627,6 +637,8 @@ export class Level {
    * exactly this moment, and the dynamic props take their own bodies with them.
    */
   dispose() {
+    this._unsubShadow?.();
+    this._unsubShadow = null;
     for (const obj of this.objects) {
       this.scene.remove(obj);
       if (obj.isMesh || obj.isInstancedMesh) {
