@@ -701,6 +701,14 @@ export const HAZARD_DEFS = [
     range: 1000,
     falloffStart: 1000, falloffEnd: 2000, falloffMinScale: 1,
     selfHarm: true,
+    /*
+     * ONLY THE SERVER MAY DEAL THIS. A client never legitimately claims a
+     * void hit — the kill plane is the server's own — so a SHOT message
+     * naming this weapon is either a bug or a cheat, and with 1000 damage
+     * and a 1000 m range it would have been a room-wide instant kill from
+     * anywhere. See handleShot's CLAIMABLE set.
+     */
+    serverOnly: true,
   },
   {
     id: 'barrel',

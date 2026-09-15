@@ -76,6 +76,20 @@ const WEAPON_BY_ID = new Map(
 const HELD_WEAPON_IDS = new Set(WEAPON_DEFS.map((w) => w.id));
 
 /**
+ * The subset a client may CLAIM A HIT WITH: every weapon, plus the hazards
+ * that go off in the client's world — a barrel it shot, priced by the server.
+ *
+ * NOT the void. The kill plane is this server's own, applied in handleInput,
+ * and no honest client ever sends a shot with it. Before this set existed the
+ * lookup was WEAPON_BY_ID, which also held the void: 1000 damage, a 1000 m
+ * range, self-harm permitted, and up to twelve victims per message. One
+ * hand-written SHOT killed the whole room from anywhere on the map.
+ */
+const CLAIMABLE_WEAPON_IDS = new Set(
+  [...WEAPON_DEFS, ...HAZARD_DEFS].filter((w) => !w.serverOnly).map((w) => w.id),
+);
+
+/**
  * How long after a DELIBERATE drop the dropper is ignored by their own flag.
  *
  * Long enough to walk off it, short enough that a pass that goes wrong is not
@@ -1372,7 +1386,9 @@ function handleShot(player, msg) {
   const room = player.room;
   if (!room || !player.alive) return;
   if (room.state === MATCH_STATE.OVER) return;
-  const weapon = WEAPON_BY_ID.get(typeof msg.w === 'string' ? msg.w : player.weapon);
+  const weaponId = typeof msg.w === 'string' ? msg.w : player.weapon;
+  if (!CLAIMABLE_WEAPON_IDS.has(weaponId)) return;
+  const weapon = WEAPON_BY_ID.get(weaponId);
   if (!weapon) return;
 
   /*
