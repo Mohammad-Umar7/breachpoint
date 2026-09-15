@@ -115,8 +115,12 @@ export const MODES = Object.freeze({
     teamBased: false,
     /** What the HUD counts, and what the scoreboard sorts by. */
     scoreLabel: 'KILLS',
+    /**
+     * The HUD and scoreboard say "FIRST TO <scoreTarget> <scoreLabel>" and
+     * nothing else does — there is deliberately no hand-written label to
+     * drift from the number. One did: it read 3 while the target was 5.
+     */
     scoreTarget: 25,
-    targetLabel: 'FIRST TO 25',
     timeLimitSec: 600,
     accent: '#66ddff',
   }),
@@ -131,8 +135,9 @@ export const MODES = Object.freeze({
       + 'flag is still home. Kill the carrier and it drops where they fall.',
     teamBased: true,
     scoreLabel: 'CAPTURES',
-    scoreTarget: 5,
-    targetLabel: 'FIRST TO 3 CAPTURES',
+    // Three, as the README has always said. A capture is a whole-map run
+    // past the other team, and ten minutes rarely holds five of them.
+    scoreTarget: 3,
     timeLimitSec: 600,
     accent: '#e1553f',
 

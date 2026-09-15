@@ -674,6 +674,22 @@ const undocumented = realSrc.filter((n) => !tree.includes(n));
 check('every source file appears in the README tree',
   undocumented.length === 0, undocumented.join(', ') || `${realSrc.length} files`);
 
+/*
+ * And the RULES the README states have to be the rules the server plays by.
+ *
+ * "First to 3 captures" sat in the README and in a hand-written label while
+ * the mode's scoreTarget said 5 — three places, two numbers, and the one the
+ * scoreboard showed was the one nobody had written down. Read straight off
+ * the mode table, so the prose fails the build the day the number moves.
+ */
+const { MODES } = await import('../src/net/modes.js');
+const readmeFfa = Number(readme.match(/First to (\d+) eliminations/i)?.[1]);
+const readmeCtf = Number(readme.match(/first to (\d+) captures/i)?.[1]);
+check('the README states the free-for-all target the server uses',
+  readmeFfa === MODES.ffa.scoreTarget, `README ${readmeFfa}, modes.js ${MODES.ffa.scoreTarget}`);
+check('the README states the capture target the server uses',
+  readmeCtf === MODES.ctf.scoreTarget, `README ${readmeCtf}, modes.js ${MODES.ctf.scoreTarget}`);
+
 // The lookbehind skips glob patterns: the tree legitimately says `*-test.js`,
 // and without it that reads as a phantom file called "test.js".
 const namedInTree = [...new Set(
