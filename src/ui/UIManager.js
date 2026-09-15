@@ -20,6 +20,24 @@ import {
 const SLOT_KEYS = ['1', '2', '3', '4'];
 
 /**
+ * Write text only when it changed.
+ *
+ * Assigning `textContent` is not a no-op when the string is the same: the
+ * browser discards the element's children and creates a fresh text node
+ * every time, which dirties layout for a run of ten readouts sixty times a
+ * second — health, armour, ammo, time, ping, room code — for strings that
+ * change a few times a minute. The last value is kept on the element itself,
+ * so every readout gets this without a field per readout.
+ */
+function setText(el, value) {
+  if (!el) return;
+  const str = String(value);
+  if (el._shownText === str) return;
+  el._shownText = str;
+  el.textContent = str;
+}
+
+/**
  * Turn a PROJECTED point into where its objective marker goes on screen.
  *
  * Exported and pure so it can be tested without a browser: it is the one piece
@@ -177,21 +195,12 @@ export class UIManager {
     const hp = clamp(s.health / s.maxHealth, 0, 1);
     this.el.healthFill.style.width = `${hp * 100}%`;
     this.el.healthFill.classList.toggle('low', hp < 0.3);
-    this.el.healthNum.textContent = Math.ceil(s.health);
+    setText(this.el.healthNum, Math.ceil(s.health));
 
-    /*
-     * Your own callsign, so you can see what the rest of the room sees you
-     * as. Names hang over every OTHER player and appeared nowhere for
-     * yourself, so there was no way to tell whether your own had taken.
-     *
-     * Only written when it changes: updateHud runs every frame and setting
-     * textContent unconditionally would dirty the layout 60 times a second
-     * for a string that changes about once a session.
-     */
-    if (this.el.callsign && s.callsign && this._shownCallsign !== s.callsign) {
-      this._shownCallsign = s.callsign;
-      this.el.callsign.textContent = s.callsign;
-    }
+    // Your own callsign, so you can see what the rest of the room sees you
+    // as. Names hang over every OTHER player and appeared nowhere for
+    // yourself, so there was no way to tell whether your own had taken.
+    if (s.callsign) setText(this.el.callsign, s.callsign);
 
     // Spawn protection. Same once-on-change rule as the callsign above, for
     // the same reason — this toggles twice a life, not sixty times a second.
@@ -202,7 +211,7 @@ export class UIManager {
 
     const ap = clamp(s.armor / s.maxArmor, 0, 1);
     this.el.armorFill.style.width = `${ap * 100}%`;
-    this.el.armorNum.textContent = Math.ceil(s.armor);
+    setText(this.el.armorNum, Math.ceil(s.armor));
 
     /*
      * The low-health pulse describes OUR condition, so it stands down whenever
@@ -228,10 +237,10 @@ export class UIManager {
     // --- weapon / ammo ---
     const w = s.weapon;
     this.buildSlots(w.slots);
-    this.el.weaponName.textContent = w.name;
-    this.el.ammoMag.textContent = w.magazine;
-    this.el.ammoReserve.textContent = w.reserve;
-    this.el.fireMode.textContent = w.mode;
+    setText(this.el.weaponName, w.name);
+    setText(this.el.ammoMag, w.magazine);
+    setText(this.el.ammoReserve, w.reserve);
+    setText(this.el.fireMode, w.mode);
     const magLow = Number.isFinite(w.magSize) && w.magazine > 0 && w.magazine <= Math.ceil(w.magSize * 0.25);
     this.el.ammoMag.classList.toggle('low', magLow);
     this.el.ammoMag.classList.toggle('empty', w.magazine === 0);
@@ -246,7 +255,7 @@ export class UIManager {
     const showZoom = w.scope > 0.3 && w.zoom > 1.5;
     this.el.zoomTag.classList.toggle('hidden', !showZoom);
     if (showZoom) {
-      this.el.zoomTag.textContent = `${w.zoom}×${w.zoomSteps > 1 ? ' [B]' : ''}`;
+      setText(this.el.zoomTag, `${w.zoom}×${w.zoomSteps > 1 ? ' [B]' : ''}`);
     }
 
     // --- breath meter (scoped rifles only) ---
@@ -286,7 +295,7 @@ export class UIManager {
     style.opacity = String(clamp(1 - w.ads * 1.6, 0, 1) * (w.scope > 0.2 ? 0 : 1));
 
     // --- counters ---
-    this.el.score.textContent = String(s.score ?? 0);
+    setText(this.el.score, s.score ?? 0);
 
     // Match state. Everything here is server-owned, so it simply mirrors
     // whatever the last snapshot said rather than counting locally.
@@ -294,38 +303,38 @@ export class UIManager {
       const secs = Math.max(0, s.match.timeLeft | 0);
       const mm = String(Math.floor(secs / 60)).padStart(2, '0');
       const ss = String(secs % 60).padStart(2, '0');
-      this.el.time.textContent = s.match.state === 'warmup' ? '--:--' : mm + ':' + ss;
+      setText(this.el.time, s.match.state === 'warmup' ? '--:--' : mm + ':' + ss);
       if (s.leader) {
-        this.el.leaderLabel.textContent = 'LEADER';
+        setText(this.el.leaderLabel, 'LEADER');
         // 'YOU' when it is you, so the panel reads as a standing rather than
         // as a name badge — which is how it read when it showed a stranger.
-        this.el.leader.textContent =
-          (s.leader.isSelf ? 'YOU' : s.leader.name) + '  ' + s.leader.kills;
+        setText(this.el.leader,
+          (s.leader.isSelf ? 'YOU' : s.leader.name) + '  ' + s.leader.kills);
       } else {
-        this.el.leaderLabel.textContent = 'STATUS';
-        this.el.leader.textContent = 'WAITING';
+        setText(this.el.leaderLabel, 'STATUS');
+        setText(this.el.leader, 'WAITING');
       }
-      this.el.room.textContent = s.room ?? '-----';
-      this.el.ping.textContent = s.ping ? String(s.ping) : '--';
+      setText(this.el.room, s.room ?? '-----');
+      setText(this.el.ping, s.ping ? s.ping : '--');
     } else {
-      this.el.time.textContent = '--:--';
-      this.el.leaderLabel.textContent = 'STATUS';
-      this.el.leader.textContent = 'OFFLINE';
-      this.el.room.textContent = '-----';
-      this.el.ping.textContent = '--';
+      setText(this.el.time, '--:--');
+      setText(this.el.leaderLabel, 'STATUS');
+      setText(this.el.leader, 'OFFLINE');
+      setText(this.el.room, '-----');
+      setText(this.el.ping, '--');
     }
 
     if (this.statsVisible) {
-      this.el.fps.textContent = Math.round(s.fps);
+      setText(this.el.fps, Math.round(s.fps));
       // Second line carries the multiplayer diagnostics too. `bodies` should
       // match the number of other players; `built` climbing while nobody joins
       // means bodies are being rebuilt every frame, which recompiles shaders
       // and stutters. That distinction is the difference between a network
       // problem and a rendering one, and it is not guessable from feel.
       const net = s.netDebug;
-      this.el.drawCalls.textContent =
+      setText(this.el.drawCalls,
         `${s.drawCalls} draws · ${(s.triangles / 1000).toFixed(1)}k tris`
-        + (net ? ` · ${net.bodies}b buf:${net.interp}ms hit:${net.confirmed}/${net.claimed}` : '');
+        + (net ? ` · ${net.bodies}b buf:${net.interp}ms hit:${net.confirmed}/${net.claimed}` : ''));
     }
 
     // --- damage vignette decay ---
