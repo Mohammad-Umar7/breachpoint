@@ -23,7 +23,7 @@ import {
   streakName, multiKillName,
 } from './protocol.js';
 import { NET_STATE } from './NetworkClient.js';
-import { TEAM_NAME, FLAG_EVENT, getMode } from './modes.js';
+import { TEAM, TEAM_NAME, FLAG_EVENT, getMode } from './modes.js';
 import { clamp } from '../core/MathUtils.js';
 
 /*
@@ -58,6 +58,37 @@ const _tail = new THREE.Vector3();
  * have been drawn, and the other way costs the frame.
  */
 const LENS_CLEAR = 1.25;
+
+/**
+ * The banner for a finished match.
+ *
+ * In a team mode the WINNER IS A SIDE. The wire carries a player id — the
+ * capturer, or the top scorer on the leading team at the whistle — so this
+ * used to read "GHOST WINS" to the whole room, including the four people on
+ * GHOST's team who had just won and were told a stranger had. Now it reads
+ * off the team scores the same message carries: YOUR TEAM WINS, RED WINS,
+ * or DRAW when the clock ran out level. A free-for-all is unchanged, except
+ * that no winner at all is now a draw rather than "SOMEONE WINS".
+ *
+ * Exported for the test; nothing else needs it.
+ *
+ * @param {{ selfId: number, team: number, nameOf: (id: number) => string }} net
+ * @param {{ winnerId: number|null, modeId?: string, teamScores?: object|null }} match
+ */
+export function matchOverHeadline(net, match) {
+  if (getMode(match.modeId).teamBased) {
+    const scores = match.teamScores ?? {};
+    const red = scores[TEAM.RED] ?? 0;
+    const blue = scores[TEAM.BLUE] ?? 0;
+    if (red === blue) return 'DRAW';
+    const winning = red > blue ? TEAM.RED : TEAM.BLUE;
+    if (net.team === winning) return 'YOUR TEAM WINS';
+    return `${TEAM_NAME[winning]} WINS`;
+  }
+  if (match.winnerId == null) return 'DRAW';
+  if (match.winnerId === net.selfId) return 'YOU WIN';
+  return `${net.nameOf(match.winnerId)} WINS`;
+}
 
 /** @param {import('../Game.js').Game} game */
 export function wireNetwork(game) {
@@ -465,8 +496,7 @@ export function wireNetwork(game) {
     game.ui.setMode?.(net.modeId);
     game.ui.setScoreboard?.(net.roster(), net.selfId, match);
     if (match.state === MATCH_STATE.OVER) {
-      const winner = net.nameOf(match.winnerId);
-      game.ui.showBanner((match.winnerId === net.selfId ? 'YOU WIN' : winner + ' WINS'), 4);
+      game.ui.showBanner(matchOverHeadline(net, match), 4);
       game.ui.setScoreboardVisible?.(true);
     } else if (match.state === MATCH_STATE.LIVE) {
       game.ui.setScoreboardVisible?.(false);

@@ -748,7 +748,18 @@ class Room {
 
     this.broadcastScore();
 
-    if (this.state === MATCH_STATE.LIVE && attacker.kills >= MATCH_RULES.killTarget) {
+    /*
+     * Kills end a match ONLY in a mode that is scored on kills.
+     *
+     * This read MATCH_RULES.killTarget for every mode, so a Capture the Flag
+     * round ended the moment anybody reached 25 eliminations — with the
+     * flags wherever they happened to be and the captures ignored — and the
+     * banner named the shooter as the winner of a game their team may have
+     * been losing. The mode's own scoreTarget is what ends it; in CTF that is
+     * captures, checked in tickCTF.
+     */
+    if (this.state === MATCH_STATE.LIVE && !this.mode.teamBased
+        && attacker.kills >= this.mode.scoreTarget) {
       this.endMatch(attacker.id);
     }
   }
@@ -928,6 +939,36 @@ class Room {
     }
   }
 
+  /**
+   * Who has won when the clock runs out, or null for a draw.
+   *
+   * In a team mode that is the side with more captures — represented by its
+   * top scorer, since the wire carries a player id — and a tie is a draw
+   * rather than whoever happened to have the most kills. That was the old
+   * answer for every mode, and in Capture the Flag it crowned a player on
+   * the losing side.
+   */
+  leaderAtTime() {
+    let best = null;
+    if (this.mode.teamBased) {
+      const red = this.teamScores[TEAM.RED];
+      const blue = this.teamScores[TEAM.BLUE];
+      if (red === blue) return null;
+      const winning = red > blue ? TEAM.RED : TEAM.BLUE;
+      for (const p of this.players.values()) {
+        if (p.team !== winning) continue;
+        if (!best || p.captures > best.captures
+          || (p.captures === best.captures && p.kills > best.kills)) best = p;
+      }
+      return best ? best.id : null;
+    }
+    for (const p of this.players.values()) {
+      if (!best || p.kills > best.kills) best = p;
+    }
+    // Nobody scored: a draw, not a win for whoever joined first.
+    return best && best.kills > 0 ? best.id : null;
+  }
+
   endMatch(winnerId) {
     this.state = MATCH_STATE.OVER;
     this.winnerId = winnerId;
@@ -1008,11 +1049,7 @@ class Room {
     this.tickCTF(now);
 
     if (this.state === MATCH_STATE.LIVE && now >= this.endsAt) {
-      let best = null;
-      for (const p of this.players.values()) {
-        if (!best || p.kills > best.kills) best = p;
-      }
-      this.endMatch(best ? best.id : null);
+      this.endMatch(this.leaderAtTime());
     } else if (this.state === MATCH_STATE.OVER && now >= this.restartAt) {
       this.restartMatch();
     }
