@@ -1231,16 +1231,6 @@ export class Game {
     this.postfx.setFocus(hit ? hit.distance : 60, dt);
   }
 
-  /**
-   * What another player is standing on, so their footsteps sound like it.
-   *
-   * Called from RemoteAudio, at most once per audible footstep — roughly two
-   * raycasts a second per nearby player, and none at all for the ones too far
-   * away to hear. Cheap enough not to need throttling of its own, unlike the
-   * local player's equivalent which runs every frame and therefore does.
-   *
-   * @returns {string|null} a SURFACE tag, or null to fall back to concrete
-   */
   // ================================================================== maps
   /**
    * Build a map, replacing whatever is standing.
@@ -1385,6 +1375,16 @@ export class Game {
     return true;
   }
 
+  /**
+   * What another player is standing on, so their footsteps sound like it.
+   *
+   * Called from RemoteAudio, at most once per audible footstep — roughly two
+   * raycasts a second per nearby player, and none at all for the ones too far
+   * away to hear. Cheap enough not to need throttling of its own, unlike the
+   * local player's equivalent which runs every frame and therefore does.
+   *
+   * @returns {string|null} a SURFACE tag, or null to fall back to concrete
+   */
   _surfaceUnder(x, y, z) {
     this._probeAt.set(x, y + 0.35, z);
     const hit = this.physics.raycast(this._probeAt, this._down, 1.4, {
