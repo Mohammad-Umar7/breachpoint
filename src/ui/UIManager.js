@@ -278,10 +278,21 @@ export class UIManager {
     const scale = this.settings.get('crosshairSize');
     const gap = clamp(px, 3, 110) * scale;
     const style = this.el.crosshair.style;
-    style.setProperty('--gap', `${gap.toFixed(1)}px`);
-    style.setProperty('--len', `${((6 + gap * 0.14) * scale).toFixed(1)}px`);
+    // Written only on a visible change. Standing still, the gap is the same
+    // number every frame, and a custom-property write invalidates the style
+    // of the crosshair and its five children each time.
+    const gapPx = gap.toFixed(1);
+    if (this._crosshairGap !== gapPx) {
+      this._crosshairGap = gapPx;
+      style.setProperty('--gap', `${gapPx}px`);
+      style.setProperty('--len', `${((6 + gap * 0.14) * scale).toFixed(1)}px`);
+    }
     // Fade out as the sights come up; hide entirely inside a scope.
-    style.opacity = String(clamp(1 - w.ads * 1.6, 0, 1) * (w.scope > 0.2 ? 0 : 1));
+    const chAlpha = (clamp(1 - w.ads * 1.6, 0, 1) * (w.scope > 0.2 ? 0 : 1)).toFixed(3);
+    if (this._crosshairAlpha !== chAlpha) {
+      this._crosshairAlpha = chAlpha;
+      style.opacity = chAlpha;
+    }
 
     // --- counters ---
     setText(this.el.score, s.score ?? 0);
