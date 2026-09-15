@@ -490,16 +490,34 @@ export function wireNetwork(game) {
     game.ui.setScoreboard?.(roster, net.selfId, net.match);
     refreshCtf();
   };
+  /*
+   * The match state as of the last MATCH message, so a change can be told
+   * from a repeat — a spawn carries the state too, and must not re-announce.
+   */
+  let lastMatchState = null;
   net.onMatch = (match) => {
     // The mode arrives with the match, and it decides what the HUD even has
     // on it — so it is applied before anything is drawn into that HUD.
     game.ui.setMode?.(net.modeId);
     game.ui.setScoreboard?.(net.roster(), net.selfId, match);
+    const changed = match.state !== lastMatchState;
+    lastMatchState = match.state;
     if (match.state === MATCH_STATE.OVER) {
-      game.ui.showBanner(matchOverHeadline(net, match), 4);
+      if (changed) game.ui.showBanner(matchOverHeadline(net, match), 4);
       game.ui.setScoreboardVisible?.(true);
     } else if (match.state === MATCH_STATE.LIVE) {
       game.ui.setScoreboardVisible?.(false);
+      /*
+       * The moment it starts counting. The first player in a room arrives to
+       * WAITING FOR PLAYERS and, until this, was never told that the wait
+       * had ended: the second person joined, the clock started, and the only
+       * sign was a timer in the corner changing from --:-- to 09:59.
+       */
+      if (changed && game.hasActiveRun) game.ui.showBanner('FIGHT', 2.4);
+    } else if (match.state === MATCH_STATE.WARMUP && changed && game.hasActiveRun) {
+      // Back to warmup mid-session: the other player left, and the match
+      // that was running no longer counts.
+      game.ui.showBanner('WAITING FOR PLAYERS', 2.4);
     }
   };
 
