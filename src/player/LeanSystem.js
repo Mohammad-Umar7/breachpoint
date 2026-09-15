@@ -45,6 +45,7 @@ export class LeanSystem {
 
     this.offset = 0;   // metres, signed
     this.roll = 0;     // radians, signed
+    this.pitchDip = 0; // radians, always <= 0
     this.limitLeft = 1;
     this.limitRight = 1;
 
@@ -92,14 +93,24 @@ export class LeanSystem {
     }
 
     // ------------------------------------------------- wall clearance
-    // Cast both ways every frame so the limit is already correct the instant
-    // the player starts to lean.
-    this._right.set(Math.cos(ctx.yaw), 0, -Math.sin(ctx.yaw));
-    this._origin.copy(ctx.eyePosition);
+    /*
+     * Probed only while a lean is wanted or still easing out.
+     *
+     * The limits are read in THIS call, a few lines down, so the first frame
+     * of a press is measured before it is applied — there is no "already
+     * correct" to keep warm, and casting both rays on every frame of a match
+     * spent walking and shooting was two raycasts a frame for nothing. A
+     * lean that is easing back to centre still probes, because the wall it
+     * is retreating from can move (a crate pushed into it) while it does.
+     */
+    if (this.intent !== 0 || this.amount !== 0) {
+      this._right.set(Math.cos(ctx.yaw), 0, -Math.sin(ctx.yaw));
+      this._origin.copy(ctx.eyePosition);
 
-    this.limitRight = this._probe(this._right, ctx.excludeCollider);
-    this._right.negate();
-    this.limitLeft = this._probe(this._right, ctx.excludeCollider);
+      this.limitRight = this._probe(this._right, ctx.excludeCollider);
+      this._right.negate();
+      this.limitLeft = this._probe(this._right, ctx.excludeCollider);
+    }
 
     const limit = this.intent > 0 ? this.limitRight : this.intent < 0 ? this.limitLeft : 1;
     const target = clamp(this.intent, -1, 1) * limit;
