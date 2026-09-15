@@ -152,6 +152,51 @@ export const QUALITY_PRESETS = Object.freeze({
 /** Keys governed by a quality preset — used to detect a "custom" setup. */
 export const PRESET_KEYS = Object.keys(QUALITY_PRESETS.high);
 
+/**
+ * The range each numeric setting is allowed to take, matching the sliders.
+ *
+ * Saved values are CLAMPED to these on load. localStorage is editable by
+ * anyone with dev tools and by any older build with different limits, and a
+ * value outside the slider is not merely odd — a sensitivity of 0 is a mouse
+ * that does nothing, a FOV of 0 is a camera that renders nothing, and neither
+ * can be fixed from a settings screen the player cannot aim at.
+ */
+const RANGES = Object.freeze({
+  sensitivity: [0.1, 5], sensitivityX: [0.5, 1.5], sensitivityY: [0.5, 1.5],
+  adsSensitivity: [0.2, 2], scopeSensitivity: [0.2, 4], zoomCompensation: [0, 1],
+  masterVolume: [0, 1], musicVolume: [0, 1], sfxVolume: [0, 1],
+  voiceVolume: [0, 1], menuVolume: [0, 1],
+  fov: [60, 120], weaponFov: [45, 95], exposure: [0.5, 1.6], bloomStrength: [0, 1],
+  renderScale: [0.5, 1], maxFps: [0, 240], particleDensity: [0.2, 1.5],
+  recoilScale: [0, 1.5], crosshairSize: [0.5, 2], screenShake: [0, 2],
+});
+
+/** Settings that are one of a fixed set of words. Anything else is dropped. */
+const CHOICES = Object.freeze({
+  quality: Object.keys(QUALITY_PRESETS),
+  textureQuality: ['low', 'medium', 'high', 'ultra'],
+  shadowQuality: ['off', 'low', 'medium', 'high'],
+  aimMode: ['hold', 'toggle'],
+  leanMode: ['hold', 'toggle'],
+});
+
+/**
+ * A saved value made safe to use, or undefined if it cannot be.
+ *
+ * Exported for the test; nothing else needs it.
+ */
+export function sanitizeSetting(key, value) {
+  const fallback = DEFAULT_SETTINGS[key];
+  if (value === undefined || typeof value !== typeof fallback) return undefined;
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) return undefined;
+    const range = RANGES[key];
+    return range ? Math.min(range[1], Math.max(range[0], value)) : value;
+  }
+  if (CHOICES[key] && !CHOICES[key].includes(value)) return undefined;
+  return value;
+}
+
 export class Settings {
   constructor() {
     this.values = { ...DEFAULT_SETTINGS };
@@ -256,9 +301,8 @@ export class Settings {
       // it switched off.
       this._firstRun = false;
       for (const key of Object.keys(DEFAULT_SETTINGS)) {
-        if (parsed[key] !== undefined && typeof parsed[key] === typeof DEFAULT_SETTINGS[key]) {
-          this.values[key] = parsed[key];
-        }
+        const value = sanitizeSetting(key, parsed[key]);
+        if (value !== undefined) this.values[key] = value;
       }
     } catch (err) {
       // Corrupt or unavailable storage must never block the game booting.
