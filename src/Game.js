@@ -147,6 +147,8 @@ export class Game {
     this.stats = this._blankStats();
     this._pendingExplosions = [];
     this._menuTime = 0;
+    /** The "dropping in..." hold between a WELCOME and startGame(). */
+    this._dropInTimer = 0;
     this._tmpA = new THREE.Vector3();
     this._tmpB = new THREE.Vector3();
     /** Straight down, for ground probes. Constant — never write to it. */
@@ -1431,7 +1433,25 @@ export class Game {
       // the player never asked for one. Creating a match holds for a moment so
       // the invite link is legible before the overlay goes.
       const hold = quick ? 250 : room ? 350 : 1400;
-      setTimeout(() => { if (this.net.connected) this.startGame(); }, hold);
+      /*
+       * ONE pending drop-in at a time, and only into the match it was armed
+       * for.
+       *
+       * The timer used to be anonymous. Two connects inside the hold — a
+       * double-click on CREATE, or a JOIN pressed while a CREATE was still
+       * counting — armed two timers, and each called startGame() for whatever
+       * the socket was connected to by then: the world was reset twice, the
+       * pointer lock re-requested, the FIGHT banner played over itself.
+       * Leaving the match during the hold let the survivor start a match the
+       * player had already walked out of.
+       */
+      clearTimeout(this._dropInTimer);
+      const armedFor = welcome.r;
+      this._dropInTimer = setTimeout(() => {
+        this._dropInTimer = 0;
+        if (this.net.connected && this.net.room === armedFor
+            && this.state !== GAME_STATE.PLAYING) this.startGame();
+      }, hold);
     } catch (err) {
       this.menus.setLobbyStatus(err.message || 'Could not connect.', 'error');
       if (quick) throw err;      // the PLAY button reports its own failures
@@ -1703,6 +1723,9 @@ export class Game {
   }
 
   leaveMatch() {
+    // A drop-in still counting down belongs to the match being left.
+    clearTimeout(this._dropInTimer);
+    this._dropInTimer = 0;
     this.net?.disconnect();
     this.remotes?.clear();
     // Or last match's shooters would still be on the map in the next one.
