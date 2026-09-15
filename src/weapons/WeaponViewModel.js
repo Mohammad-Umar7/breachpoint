@@ -387,6 +387,9 @@ export class WeaponViewModel {
   }
 
   reset() {
+    // A new round starts with the gun in hand whatever the last one ended
+    // with. WeaponSystem keeps this in step with `alive` once play begins.
+    this.holder.visible = true;
     this.sway.set(0, 0);
     this.swayRot.set(0, 0);
     this.bobPhase = 0;

@@ -298,6 +298,20 @@ export class WeaponSystem {
     this._updateGrenades(dt);
 
     // --- view model -------------------------------------------------------
+    /*
+     * The gun is in your hands exactly while you are alive. DERIVED, every
+     * frame, from the one flag that means it.
+     *
+     * It used to be two hand-written toggles in wireNetwork — hidden on the
+     * KILL message, shown on the respawn — and anything that left a match
+     * between the two kept the corpse's setting: quit to the menu during the
+     * countdown and the next match was played with no weapon on screen until
+     * the first death and respawn in THAT match put it back. Same for a
+     * connection dropping while dead. A value read from the state it depends
+     * on cannot be left behind by a path nobody thought of.
+     */
+    this.viewModel.holder.visible = this.player.alive;
+
     this.viewModel.update(dt, {
       weapon: w,
       adsProgress: this.ads.progress,

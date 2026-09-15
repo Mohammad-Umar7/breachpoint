@@ -155,7 +155,6 @@ export function wireNetwork(game) {
     game._revivePlayer(pos);
 
     game._respawnShown = false;
-    game.viewModel.holder.visible = true;      // gun back in hand
     game.ui.hideRespawn?.();
     game._respawnAt = 0;
     // Cleared so the next fall's first ask goes out immediately instead of
@@ -426,15 +425,8 @@ export function wireNetwork(game) {
       game._respawnAt = performance.now() + 1000 * Math.max(
         MATCH_RULES.respawnDelaySec, MATCH_RULES.respawnCountdownSec,
       );
-      /*
-       * Put the gun away while you are dead.
-       *
-       * The view model kept running its idle and walk sway through the whole
-       * countdown, so a corpse stood at the spawn point jogging on the spot
-       * with a rifle bobbing in front of it. Nothing else says 'you are dead'
-       * as loudly as the weapon simply not being there.
-       */
-      game.viewModel.holder.visible = false;
+      // The gun leaves your hands with `alive` — WeaponSystem.update hides
+      // the view model for exactly as long as the player is dead.
       // Anything still in flight belongs to the life that just ended.
       game.weapons?.clearGrenades?.();
       // Deliberately does NOT release pointer lock. Doing so fires
