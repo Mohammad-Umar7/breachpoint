@@ -127,6 +127,8 @@ export class NetworkClient {
     this._lastInputAt = 0;
     this._pingSentAt = 0;
     this._pingTimer = null;
+    /** Rejects the connect() in flight, if there is one. See connect(). */
+    this._abortConnect = null;
 
     // --- callbacks, assigned by Game -------------------------------------
     this.onStateChange = null;   // (netState, detail)
@@ -248,10 +250,22 @@ export class NetworkClient {
       const fail = (why) => {
         if (settled) return;
         settled = true;
+        this._abortConnect = null;
         this.lastError = why;
         this._setState(NET_STATE.FAILED, why);
         reject(new Error(why));
       };
+      /*
+       * An attempt still in flight when the next connect() or a disconnect()
+       * arrives is FAILED, not abandoned.
+       *
+       * disconnect() drops the socket's handlers so a teardown does not
+       * report itself as a lost connection — which also silenced the
+       * `onclose` that would have rejected this promise. The caller awaiting
+       * it then waited forever: JOIN pressed, Escape, CREATE pressed inside
+       * the same second, and the first lobby button's `finally` never ran.
+       */
+      this._abortConnect = () => { clearTimers(); fail('superseded by a newer connection'); };
 
       let socket;
       try {
@@ -306,6 +320,7 @@ export class NetworkClient {
         try { msg = JSON.parse(ev.data); } catch { return; }
         if (msg.t === MSG.WELCOME && !settled) {
           settled = true;
+          this._abortConnect = null;
           clearTimers();
           this._handleWelcome(msg);
           resolve(msg);
@@ -342,6 +357,10 @@ export class NetworkClient {
 
   disconnect() {
     this._stopPing();
+    // Settle a connect() still waiting on this socket before the handlers
+    // that would have settled it are dropped below.
+    this._abortConnect?.();
+    this._abortConnect = null;
     if (this.socket) {
       // Drop the handlers first so the close does not fire a "disconnected"
       // state change for a teardown we asked for.
